@@ -214,7 +214,8 @@ def parse_entry(path: Path, root: Path) -> Entry:
 # ---- 规则 ----------------------------------------------------------------
 
 
-def check_structure(e: Entry, findings: list[Finding]) -> None:
+def check_structure(e: Entry, findings: list[Finding],
+                    known_fields: frozenset | set = KNOWN_FIELDS) -> None:
     """CA1xx 结构规则。"""
     rel = e.rel
     if e.parse_error:
@@ -244,7 +245,7 @@ def check_structure(e: Entry, findings: list[Finding]) -> None:
             findings.append(Finding("CA105", "error", rel,
                                     f"id={e.meta['id']!r} 非法（仅允许小写字母/数字/连字符）"))
     for k in e.meta:
-        if k not in KNOWN_FIELDS and not str(k).startswith("x-"):
+        if k not in known_fields and not str(k).startswith("x-"):
             findings.append(Finding("CA106", "error", rel,
                                     f"未定义字段 `{k}`（扩展字段须 x- 前缀）"))
     # CA109: bool 字段类型
@@ -413,9 +414,10 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
                                 "存在 military/political 层承重墙条目，但全库无 layer=fiscal 条目"
                                 "——财政维度可能缺失（刚铎型盲区）"))
 
-    # CA502: 环检测（仅物质族子图；三色 DFS，迭代实现防深递归）
+    # CA502: 环检测（仅物质族子图；三色 DFS 迭代实现；同一环只报一次）
     WHITE, GRAY, BLACK = 0, 1, 2
     color = {k: WHITE for k in graph}
+    reported_cycles: set[frozenset] = set()
 
     for start in graph:
         if color[start] != WHITE:
@@ -428,11 +430,14 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
             for nxt in graph.get(node, []):
                 if color.get(nxt) == GRAY:
                     cycle = path[path.index(nxt):] + [nxt]
-                    findings.append(Finding("CA502", "error", index[node].rel,
-                                            f"depends_on 存在环（物质族）: {' → '.join(cycle)}"))
+                    key = frozenset(cycle)
+                    if key not in reported_cycles:
+                        reported_cycles.add(key)
+                        findings.append(Finding("CA502", "error", index[node].rel,
+                                                f"depends_on 存在环（物质族）: {' → '.join(cycle)}"))
                 elif color.get(nxt) == WHITE:
                     color[nxt] = GRAY
-                    stack.append((nxt, path + [nxt]))
+                    stack.append((nxt, path + [nxt]))  # path 逐层复制，深图 O(n²) 空间，世界观量级可接受
                     advanced = True
                     break
             if not advanced:
@@ -515,11 +520,13 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
     return all_entries, index, findings
 
 
-def run(root: Path, dup_threshold: float, impact_ids: list[str]):
+def run(root: Path, dup_threshold: float, impact_ids: list[str],
+        extra_known: frozenset[str] = frozenset()):
     all_entries, index, findings = collect(root)
+    known = KNOWN_FIELDS | extra_known
 
     for e in all_entries:
-        check_structure(e, findings)
+        check_structure(e, findings, known)
         check_content(e, findings)
     check_refs(index, findings)
     check_chain(index, findings)
@@ -534,7 +541,7 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str]):
 TYPE_DIRS = {"location": "locations", "faction": "factions",
              "character": "characters", "event": "events", "item": "items"}
 
-CONSTITUTION_SKELTON = """# 世界宪章 v0.1
+CONSTITUTION_SKELETON = """# 世界宪章 v0.1
 
 protocol: WGP 1.0
 
@@ -560,20 +567,22 @@ protocol: WGP 1.0
 
 
 def cmd_init(root: Path) -> int:
-    """初始化世界仓库：目录结构 + 宪章骨架 + pre-commit 钩子。"""
+    """初始化世界仓库：目录结构 + 宪章骨架 + pre-commit 钩子。
+    目录约定：entries/{type}/ 唯一条目位置；状态只认 frontmatter（协议 §2）。"""
     root.mkdir(parents=True, exist_ok=True)
-    for d in ["canon/main", "sandbox", "archive", "templates"]:
-        (root / d).mkdir(parents=True, exist_ok=True)
+    (root / "templates").mkdir(exist_ok=True)
     for sub in TYPE_DIRS.values():
         (root / "entries" / sub).mkdir(parents=True, exist_ok=True)
     con = root / "CONSTITUTION.md"
     if not con.exists():
-        con.write_text(CONSTITUTION_SKELTON, encoding="utf-8")
+        con.write_text(CONSTITUTION_SKELETON, encoding="utf-8")
     if (root / ".git").is_dir():
+        import shutil
+        exe = shutil.which("canonlint") or str(Path(__file__).resolve())
         hook = root / ".git/hooks/pre-commit"
         hook.write_text(
             "#!/bin/sh\n"
-            f"python3 {Path(__file__).resolve()} \"$(git rev-parse --show-toplevel)\" || exit 1\n",
+            f"{exe} \"$(git rev-parse --show-toplevel)\" || exit 1\n",
             encoding="utf-8")
         hook.chmod(0o755)
         print("pre-commit 钩子已装（审计不过则拒提交）")
@@ -589,22 +598,35 @@ def slugify(title: str) -> str:
     return s
 
 
+def _ask(prompt: str, default: str = "") -> str:
+    """交互式提问；非 TTY 环境（CI/管道）直接用默认值，绝不阻塞。"""
+    if not sys.stdin.isatty():
+        return default
+    return input(prompt).strip() or default
+
+
 def cmd_new(root: Path, type_: str | None, title: str | None,
-            entry_id: str | None) -> int:
-    """交互式建卡：生成合法 frontmatter，用户只管写正文。"""
+            entry_id: str | None, author: str | None = None,
+            load_bearing: bool = False, layer: str | None = None) -> int:
+    """建卡：生成合法 frontmatter，用户只管写正文。交互问答仅在 TTY 下启用。"""
+    tty = sys.stdin.isatty()
     if type_ is None:
-        type_ = input(f"类型 {sorted(VALID_TYPES)}: ").strip()
+        type_ = _ask(f"类型 {sorted(VALID_TYPES)}: ")
     if type_ not in VALID_TYPES:
-        print(f"error: type={type_!r} 非法", file=sys.stderr)
+        print(f"error: type={type_!r} 非法（非交互环境请传位置参数：canonlint new <type> <title>）",
+              file=sys.stderr)
         return 2
     if title is None:
-        title = input("标题: ").strip()
+        title = _ask("标题: ")
+    if not title:
+        print("error: 缺少标题（非交互环境请传：canonlint new <type> <title>）", file=sys.stderr)
+        return 2
     if entry_id is None:
         guess = slugify(title)
-        prompt = f"id（小写字母/数字/连字符）{f'[{guess}]' if guess else ''}: "
-        entry_id = input(prompt).strip() or guess
-    if not ID_RE.match(entry_id):
-        print(f"error: id={entry_id!r} 非法", file=sys.stderr)
+        entry_id = _ask(f"id（小写字母/数字/连字符）{f'[{guess}]' if guess else ''}: ",
+                        guess)
+    if not entry_id or not ID_RE.match(entry_id):
+        print(f"error: id={entry_id!r} 非法或缺失（中文标题请用 --id 指定）", file=sys.stderr)
         return 2
 
     _, index, _ = collect(root)
@@ -612,15 +634,23 @@ def cmd_new(root: Path, type_: str | None, title: str | None,
         print(f"error: id `{entry_id}` 已存在（{index[entry_id].rel}）", file=sys.stderr)
         return 1
 
-    lb = input("承重墙条目？[y/N]: ").strip().lower() == "y"
-    today = date.today().isoformat()
+    if tty and not load_bearing:
+        load_bearing = _ask("承重墙条目？[y/N]: ").lower() == "y"
+    if author is None:
+        author = _ask("署名: ", "anonymous")
+    if load_bearing and layer is None:
+        layer = _ask(f"层级 {LAYERS}: ")
+    if load_bearing and layer not in LAYER_INDEX:
+        print(f"error: 承重墙条目必须给 layer（{LAYERS}）", file=sys.stderr)
+        return 2
+
     meta_lines = [
         "---", f"id: {entry_id}", f"title: {title}", f"type: {type_}",
-        f"author: {input('署名: ').strip() or 'anonymous'}",
-        f"date: {today}", "status: draft", f"load_bearing: {'true' if lb else 'false'}",
+        f"author: {author}",
+        f"date: {date.today().isoformat()}", "status: draft",
+        f"load_bearing: {'true' if load_bearing else 'false'}",
     ]
-    if lb:
-        layer = input(f"层级 {LAYERS}: ").strip()
+    if load_bearing:
         meta_lines.append(f"layer: {layer}")
     meta_lines += ["canon_refs: []", "conflicts_with: []", "depends_on: []",
                    "superseded_by: null", "ai_assisted: false", "---", ""]
@@ -629,34 +659,73 @@ def cmd_new(root: Path, type_: str | None, title: str | None,
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(meta_lines) + "\n\n（正文 200 字起步）\n", encoding="utf-8")
     print(f"已建卡: {path.relative_to(root)}（draft）")
-    if lb:
+    if load_bearing:
         print(f"提示: 用 canonlint link {entry_id} <它靠谁养> --kind fiscal 连线")
     return 0
 
 
+def _insert_dep_text(fm_text: str, dep_block: list[str]) -> str | None:
+    """文本级插入 depends_on 条目，不重排 frontmatter、不丢注释。"""
+    lines = fm_text.split("\n")
+    for i, line in enumerate(lines):
+        m = re.match(r"^depends_on:\s*(\[\])?\s*(#.*)?$", line)
+        if not m:
+            if re.match(r"^depends_on:\s*\S", line):  # 行内非空值（非法形态），交给 lint 报
+                return None
+            continue
+        if m.group(1):  # 空列表（可带行尾注释）→ 转块列表，注释保留在键行
+            comment = f"  {m.group(2)}" if m.group(2) else ""
+            lines[i] = f"depends_on:{comment}"
+            return "\n".join(lines[:i + 1] + dep_block + lines[i + 1:])
+        # 块列表：块尾 = 下一个顶格键；跳过尾部空行后插入
+        j = i + 1
+        while j < len(lines) and (lines[j].startswith((" ", "-")) or not lines[j].strip()):
+            j += 1
+        k = j
+        while k > i + 1 and not lines[k - 1].strip():
+            k -= 1
+        return "\n".join(lines[:k] + dep_block + lines[k:])
+    return None  # frontmatter 里没有 depends_on 键
+
+
 def cmd_link(root: Path, src: str, dst: str, kind: str, critical: bool) -> int:
-    """连线：给 src 的 depends_on 追加一条供养边。"""
-    _, index, _ = collect(root)
-    if src not in index:
-        print(f"error: 源条目 `{src}` 不存在", file=sys.stderr); return 1
-    if dst not in index:
-        print(f"error: 目标条目 `{dst}` 不存在", file=sys.stderr); return 1
+    """连线：给 src 的 depends_on 追加一条供养边（文本级插入，diff 最小）。"""
+    all_entries, index, _ = collect(root)
+
+    def find(eid: str) -> str | None:
+        """返回 None=正常；否则为错误消息。"""
+        if eid in index:
+            return None
+        for x in all_entries:
+            if x.id == eid and x.parse_error:
+                return f"条目 `{eid}` 存在但解析失败：{x.parse_error}"
+        return f"条目 `{eid}` 不存在"
+
+    for eid in (src, dst):
+        err = find(eid)
+        if err:
+            print(f"error: {err}", file=sys.stderr)
+            return 1
     if kind not in KIND_INITIAL_SET and not kind.startswith("x-"):
         print(f"error: kind={kind!r} 须在 {sorted(KIND_INITIAL_SET)} 内或带 x- 前缀",
               file=sys.stderr)
         return 2
 
     e = index[src]
+    if any(d.id == dst and d.kind == kind for d in e.deps[0]):
+        print(f"边已存在: {src} --{kind}--> {dst}，不重复添加")
+        return 0
+
+    dep_block = [f"  - id: {dst}", f"    kind: {kind}",
+                 f"    critical: {'true' if critical else 'false'}"]
     text = e.path.read_text(encoding="utf-8")
     m = FRONTMATTER_RE.match(text)
-    meta = e.meta
-    deps = meta.get("depends_on")
-    if not isinstance(deps, list):
-        deps = [] if deps is None else deps
-    deps.append({"id": dst, "kind": kind, "critical": critical})
-    meta["depends_on"] = deps
-    new_fm = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False)
-    e.path.write_text(f"---\n{new_fm}---\n" + text[m.end():], encoding="utf-8")
+    new_fm = _insert_dep_text(m.group(1), dep_block)
+    if new_fm is None:
+        print("error: depends_on 形态无法文本级插入（可能是行内列表或键缺失），"
+              "请手动编辑该条目", file=sys.stderr)
+        return 2
+    e.path.write_text(f"---\n{new_fm}\n---\n" + text[m.end():], encoding="utf-8")
     print(f"已连线: {src} --{kind}{'(critical)' if critical else ''}--> {dst}")
     print("记得跑 canonlint 检查这条边是否合法（层级方向/环/状态）")
     return 0
@@ -676,6 +745,9 @@ def main() -> int:
             sp.add_argument("type", nargs="?", choices=sorted(VALID_TYPES))
             sp.add_argument("title", nargs="?")
             sp.add_argument("--id")
+            sp.add_argument("--author")
+            sp.add_argument("--load-bearing", action="store_true")
+            sp.add_argument("--layer", choices=LAYERS)
         if cmd == "link":
             sp.add_argument("src")
             sp.add_argument("dst")
@@ -685,7 +757,9 @@ def main() -> int:
         if cmd == "init":
             return cmd_init(a.root_pos or a.root)
         if cmd == "new":
-            return cmd_new(a.root, a.type, a.title, a.id)
+            return cmd_new(a.root, a.type, a.title, a.id,
+                           author=a.author, load_bearing=a.load_bearing,
+                           layer=a.layer)
         if cmd == "link":
             return cmd_link(a.root, a.src, a.dst, a.kind, a.critical)
 
@@ -701,9 +775,15 @@ def main() -> int:
     args = ap.parse_args()
 
     packs = []
+    extra_known: frozenset[str] = frozenset()
     if "econ" in args.pack:
-        import econ
-        KNOWN_FIELDS.update(econ.KNOWN_FIELDS)  # 扩展包字段注入，先于 CA106 检查
+        try:
+            import econ
+        except ImportError:
+            print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）",
+                  file=sys.stderr)
+            return 2
+        extra_known |= econ.KNOWN_FIELDS  # 扩展包字段注入，先于 CA106 检查
         packs.append(econ)
 
     root = args.root.resolve()
@@ -711,7 +791,8 @@ def main() -> int:
         print(f"error: {root} 不是目录", file=sys.stderr)
         return 2
 
-    all_entries, index, findings, reports = run(root, args.dup_threshold, args.impact)
+    all_entries, index, findings, reports = run(root, args.dup_threshold, args.impact,
+                                                extra_known=extra_known)
 
     for pack in packs:
         for e in index.values():

@@ -1,7 +1,12 @@
-# 世界观治理协议（World Governance Protocol）v1.0
+# 世界观治理协议（World Governance Protocol）v1.0.1
 
 **状态：已冻结（v1.0） ｜ 日期：2026-09-23**
 **本文件的读者：协议实现者。条款用词"必须/应当/可以"为规范性词汇，含义同 RFC 2119 的 MUST/SHOULD/MAY。**
+
+**v1.0.1 澄清（不改语义，只消歧义）：**
+- `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
+- §6.5 JSON schema 的 `entry` 字段允许伪值 `"(仓库级)"`，用于 CA505 等仓库级 finding
+- 目录约定明确：`entries/{type}/` 是唯一条目位置，目录纯组织、状态只认 frontmatter；`canon/`、`sandbox/`、`archive/` 仅为兼容旧仓库的扫描路径，新仓库不使用
 
 **v1.0 封版记录（三个测试世界 dogfood 完成）：**
 1. **kind 初始集封版**：六值冻结（resource/production/economy/fiscal/manpower/legitimacy）。证据：魔戒、冰与火、沙丘三个差异极大的世界中，物质五值零例外；装不下的全部落在规范族（`x-will-binding`、`x-magic-logistics`、`x-faith-engineering` 各出现一次，证据不足以升格，留档观察）
@@ -89,7 +94,7 @@ ai_assisted: false
 | `conflicts_with` | 必须 | 列表 | 元素为 id 或对象（§4.1），可以为空列表 |
 | `depends_on` | 条件必填 | 对象列表 | 见 §5.3 schema；`load_bearing: true` 时必填 |
 | `layer` | 条件必填 | enum | 见 §5.2；`load_bearing: true` 时必填 |
-| `superseded_by` | 条件必填 | id 或 null | 见 §3.4；仅 `archived` 条目使用 |
+| `superseded_by` | 条件必填 | id 或 null | 见 §3.4；`archived` 必填，其他状态可省略或填 null |
 | `ai_assisted` | 必须 | bool | 见 §7 AI 条款 |
 
 **扩展字段：** 实现可以添加任何 `x-` 前缀的自定义字段；不带前缀的未定义字段**必须**被审计器拒绝（CA106），防止私有字段渗透进协议。
@@ -325,6 +330,8 @@ geo → resource → production → economy → fiscal → military → politica
 ```
 
 `reports` 数组仅兼容治理级必须输出；`downstream` 为 `depends_on` 反向传递闭包的 `id` 列表，按链条序号降序排列（越靠后的越先复核）。
+
+`findings[].entry` 通常是被判条目的 id 或路径；仓库级 finding（如 CA505）使用伪值 `"(仓库级)"`。
 
 ### 6.6 中文文本预处理（CA104/CA201 的计数与比较算法）
 

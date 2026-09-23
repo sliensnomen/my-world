@@ -1,7 +1,7 @@
 # WGP 协作层示例：目录级所有权
-# canon/ 目录（已定档）的一切改动必须评审组 approve
-# 评审组成员用 GitHub/Gitea 用户名替换下面的占位符
+# 目录约定（协议 v1.0.1）：entries/{type}/ 是唯一条目位置，状态只认 frontmatter。
+# 因此保护粒度是"任何条目改动必须评审组 approve"——升格靠评审流程把关，
+# 不靠目录隔离。评审组成员用 GitHub/Gitea 用户名替换下面的占位符。
 
-canon/        @review-team
 entries/      @review-team
-# sandbox/ 与 archive/ 不设防：试水与封存来去自由
+CONSTITUTION.md  @review-team
