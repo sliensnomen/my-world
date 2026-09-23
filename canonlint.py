@@ -667,11 +667,14 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] in ("init", "new", "link"):
         cmd = sys.argv[1]
         sp = argparse.ArgumentParser(prog=f"canonlint {cmd}")
-        sp.add_argument("root", type=Path, nargs="?", default=Path("."),
+        sp.add_argument("--root", type=Path, default=Path("."),
                         help="世界仓库根目录（默认当前目录）")
+        if cmd == "init":
+            sp.add_argument("root_pos", type=Path, nargs="?", default=None,
+                            help="世界仓库目录（位置参数，等价 --root）")
         if cmd == "new":
-            sp.add_argument("--type", choices=sorted(VALID_TYPES))
-            sp.add_argument("--title")
+            sp.add_argument("type", nargs="?", choices=sorted(VALID_TYPES))
+            sp.add_argument("title", nargs="?")
             sp.add_argument("--id")
         if cmd == "link":
             sp.add_argument("src")
@@ -680,7 +683,7 @@ def main() -> int:
             sp.add_argument("--critical", action="store_true")
         a = sp.parse_args(sys.argv[2:])
         if cmd == "init":
-            return cmd_init(a.root)
+            return cmd_init(a.root_pos or a.root)
         if cmd == "new":
             return cmd_new(a.root, a.type, a.title, a.id)
         if cmd == "link":
