@@ -537,7 +537,15 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="机器可读输出（§6.5 schema）")
     ap.add_argument("--impact", nargs="*", default=[], metavar="ID",
                     help="CA504：输出指定条目的下游影响闭包")
+    ap.add_argument("--pack", action="append", default=[], choices=["econ"],
+                    help="启用协议扩展包（econ = WGP-econ 数值系统，CA6xx）")
     args = ap.parse_args()
+
+    packs = []
+    if "econ" in args.pack:
+        import econ
+        KNOWN_FIELDS.update(econ.KNOWN_FIELDS)  # 扩展包字段注入，先于 CA106 检查
+        packs.append(econ)
 
     root = args.root.resolve()
     if not root.is_dir():
@@ -545,6 +553,14 @@ def main() -> int:
         return 2
 
     all_entries, index, findings, reports = run(root, args.dup_threshold, args.impact)
+
+    for pack in packs:
+        for e in index.values():
+            if not e.parse_error:
+                pack.check_entry(
+                    e.meta, e.rel,
+                    lambda rule, level, msg, rel=e.rel:
+                        findings.append(Finding(rule, level, rel, msg)))
 
     order = {"error": 0, "warning": 1, "info": 2}
     findings.sort(key=lambda f: (order.get(f.level, 3), f.rule, f.entry))
