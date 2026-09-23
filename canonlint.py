@@ -529,7 +529,163 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str]):
     return all_entries, index, findings, reports
 
 
+# ---- 人类工作流命令（init / new / link）----------------------------------
+
+TYPE_DIRS = {"location": "locations", "faction": "factions",
+             "character": "characters", "event": "events", "item": "items"}
+
+CONSTITUTION_SKELTON = """# 世界宪章 v0.1
+
+protocol: WGP 1.0
+
+## Tone 锚（三个参照作品）
+1. 
+2. 
+3. 
+
+## 质量标准
+- 信息密度 / 咬合度 / 留钩子
+
+## 禁项
+- 现实政治影射 / 成人内容
+
+## 治理程序
+- 升格：评审通过，理由引用本宪章条款
+- 降级：不删稿，填 superseded_by，72 小时上诉期
+- 恢复：默认 archived → trial → canon（本宪章未声明快速通道）
+
+## AI 条款
+- AI 产出永不入 canon；辅助须标 ai_assisted: true
+"""
+
+
+def cmd_init(root: Path) -> int:
+    """初始化世界仓库：目录结构 + 宪章骨架 + pre-commit 钩子。"""
+    root.mkdir(parents=True, exist_ok=True)
+    for d in ["canon/main", "sandbox", "archive", "templates"]:
+        (root / d).mkdir(parents=True, exist_ok=True)
+    for sub in TYPE_DIRS.values():
+        (root / "entries" / sub).mkdir(parents=True, exist_ok=True)
+    con = root / "CONSTITUTION.md"
+    if not con.exists():
+        con.write_text(CONSTITUTION_SKELTON, encoding="utf-8")
+    if (root / ".git").is_dir():
+        hook = root / ".git/hooks/pre-commit"
+        hook.write_text(
+            "#!/bin/sh\n"
+            f"python3 {Path(__file__).resolve()} \"$(git rev-parse --show-toplevel)\" || exit 1\n",
+            encoding="utf-8")
+        hook.chmod(0o755)
+        print("pre-commit 钩子已装（审计不过则拒提交）")
+    else:
+        print("提示：git init 后重跑本命令可装 pre-commit 钩子")
+    print(f"世界仓库已初始化: {root}")
+    print("下一步: canonlint new location 灰港")
+    return 0
+
+
+def slugify(title: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return s
+
+
+def cmd_new(root: Path, type_: str | None, title: str | None,
+            entry_id: str | None) -> int:
+    """交互式建卡：生成合法 frontmatter，用户只管写正文。"""
+    if type_ is None:
+        type_ = input(f"类型 {sorted(VALID_TYPES)}: ").strip()
+    if type_ not in VALID_TYPES:
+        print(f"error: type={type_!r} 非法", file=sys.stderr)
+        return 2
+    if title is None:
+        title = input("标题: ").strip()
+    if entry_id is None:
+        guess = slugify(title)
+        prompt = f"id（小写字母/数字/连字符）{f'[{guess}]' if guess else ''}: "
+        entry_id = input(prompt).strip() or guess
+    if not ID_RE.match(entry_id):
+        print(f"error: id={entry_id!r} 非法", file=sys.stderr)
+        return 2
+
+    _, index, _ = collect(root)
+    if entry_id in index:
+        print(f"error: id `{entry_id}` 已存在（{index[entry_id].rel}）", file=sys.stderr)
+        return 1
+
+    lb = input("承重墙条目？[y/N]: ").strip().lower() == "y"
+    today = date.today().isoformat()
+    meta_lines = [
+        "---", f"id: {entry_id}", f"title: {title}", f"type: {type_}",
+        f"author: {input('署名: ').strip() or 'anonymous'}",
+        f"date: {today}", "status: draft", f"load_bearing: {'true' if lb else 'false'}",
+    ]
+    if lb:
+        layer = input(f"层级 {LAYERS}: ").strip()
+        meta_lines.append(f"layer: {layer}")
+    meta_lines += ["canon_refs: []", "conflicts_with: []", "depends_on: []",
+                   "superseded_by: null", "ai_assisted: false", "---", ""]
+
+    path = root / "entries" / TYPE_DIRS[type_] / f"{entry_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(meta_lines) + "\n\n（正文 200 字起步）\n", encoding="utf-8")
+    print(f"已建卡: {path.relative_to(root)}（draft）")
+    if lb:
+        print(f"提示: 用 canonlint link {entry_id} <它靠谁养> --kind fiscal 连线")
+    return 0
+
+
+def cmd_link(root: Path, src: str, dst: str, kind: str, critical: bool) -> int:
+    """连线：给 src 的 depends_on 追加一条供养边。"""
+    _, index, _ = collect(root)
+    if src not in index:
+        print(f"error: 源条目 `{src}` 不存在", file=sys.stderr); return 1
+    if dst not in index:
+        print(f"error: 目标条目 `{dst}` 不存在", file=sys.stderr); return 1
+    if kind not in KIND_INITIAL_SET and not kind.startswith("x-"):
+        print(f"error: kind={kind!r} 须在 {sorted(KIND_INITIAL_SET)} 内或带 x- 前缀",
+              file=sys.stderr)
+        return 2
+
+    e = index[src]
+    text = e.path.read_text(encoding="utf-8")
+    m = FRONTMATTER_RE.match(text)
+    meta = e.meta
+    deps = meta.get("depends_on")
+    if not isinstance(deps, list):
+        deps = [] if deps is None else deps
+    deps.append({"id": dst, "kind": kind, "critical": critical})
+    meta["depends_on"] = deps
+    new_fm = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False)
+    e.path.write_text(f"---\n{new_fm}---\n" + text[m.end():], encoding="utf-8")
+    print(f"已连线: {src} --{kind}{'(critical)' if critical else ''}--> {dst}")
+    print("记得跑 canonlint 检查这条边是否合法（层级方向/环/状态）")
+    return 0
+
+
 def main() -> int:
+    # 人类工作流子命令：init / new / link；其余按审计（check）处理
+    if len(sys.argv) > 1 and sys.argv[1] in ("init", "new", "link"):
+        cmd = sys.argv[1]
+        sp = argparse.ArgumentParser(prog=f"canonlint {cmd}")
+        sp.add_argument("root", type=Path, nargs="?", default=Path("."),
+                        help="世界仓库根目录（默认当前目录）")
+        if cmd == "new":
+            sp.add_argument("--type", choices=sorted(VALID_TYPES))
+            sp.add_argument("--title")
+            sp.add_argument("--id")
+        if cmd == "link":
+            sp.add_argument("src")
+            sp.add_argument("dst")
+            sp.add_argument("--kind", required=True)
+            sp.add_argument("--critical", action="store_true")
+        a = sp.parse_args(sys.argv[2:])
+        if cmd == "init":
+            return cmd_init(a.root)
+        if cmd == "new":
+            return cmd_new(a.root, a.type, a.title, a.id)
+        if cmd == "link":
+            return cmd_link(a.root, a.src, a.dst, a.kind, a.critical)
+
     ap = argparse.ArgumentParser(description=f"canonlint — WGP 协议参考实现 v{PROTOCOL_VERSION}")
     ap.add_argument("root", type=Path, help="世界仓库根目录")
     ap.add_argument("--strict", action="store_true", help="警告也算失败（pre-commit 用）")
