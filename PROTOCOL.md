@@ -1,7 +1,13 @@
-# 世界观治理协议（World Governance Protocol）草案 v0.5
+# 世界观治理协议（World Governance Protocol）v1.0
 
-**状态：草案，未冻结 ｜ 日期：2026-09-23**
+**状态：已冻结（v1.0） ｜ 日期：2026-09-23**
 **本文件的读者：协议实现者。条款用词"必须/应当/可以"为规范性词汇，含义同 RFC 2119 的 MUST/SHOULD/MAY。**
+
+**v1.0 封版记录（三个测试世界 dogfood 完成）：**
+1. **kind 初始集封版**：六值冻结（resource/production/economy/fiscal/manpower/legitimacy）。证据：魔戒、冰与火、沙丘三个差异极大的世界中，物质五值零例外；装不下的全部落在规范族（`x-will-binding`、`x-magic-logistics`、`x-faith-engineering` 各出现一次，证据不足以升格，留档观察）
+2. **`x-` 实验通道永久开放**：不作为过渡机制，作为协议的长期泄压阀（CA108 info 级收集）
+3. 一致性终审完成：规则表 22 条（CA100–CA109、CA201、CA301/302、CA401–CA405、CA501–CA505）与参考实现逐条互证；清除死代码（v0.4 的 CA503 旧阈值常量）
+4. 自本版起，结构性变更走 major 版本（§9）
 
 **v0.5 修订记录（魔戒/冰火真实数据 dogfood 回流）：**
 1. **kind 分族**：物质五 kind（resource/production/economy/fiscal/manpower）受层级方向约束；legitimacy 与 `x-` 实验 kind 属**规范流**——合法性、强制力、超自然力自上而下流动，豁免 CA501。依据：洛汗誓言→封邑征召、索伦意志→魔多大军、异鬼魔法→尸鬼军团三个真实案例
@@ -204,14 +210,14 @@ geo → resource → production → economy → fiscal → military → politica
 
 仅命中附录 A 关键词但未声明 `load_bearing` 的条目，CA301 发出 **warning**（提示作者考虑声明）。"必须"只落在显式声明上，审计器不替作者做决定。
 
-### 5.4 `depends_on` 对象 schema（kind 暂不封版）
+### 5.4 `depends_on` 对象 schema（kind 已封版，v1.0）
 
 每个元素**必须**恰好包含以下三个必填字段，可以加 `x-` 扩展字段：
 
 | 字段 | 类型 | 约束 |
 |---|---|---|
 | `id` | id 引用 | 必填 |
-| `kind` | string | 必填。初始集六值：`resource` / `production` / `economy` / `fiscal` / `manpower` / `legitimacy`；**初始集外允许 `x-` 前缀实验值**（如 `x-faith`），用于案例收集，集满后再议封版（附录 B） |
+| `kind` | string | 必填。**六值已封版（v1.0）**：`resource` / `production` / `economy` / `fiscal` / `manpower` / `legitimacy`；封版集外仅允许 `x-` 前缀实验值（如 `x-faith`），作为协议的长期泄压阀，CA108 info 级收集证据 |
 | `critical` | bool | 必填；`true` = 断供即崩塌 |
 
 缺字段、多字段（非 `x-`）= CA107 error；`kind` 在初始集外且无 `x-` 前缀 = CA108 error，有 `x-` 前缀 = CA108 info 级提示（计入案例收集）。
@@ -305,7 +311,7 @@ geo → resource → production → economy → fiscal → military → politica
 
 ```json
 {
-  "protocol_version": "0.5",
+  "protocol_version": "1.0",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",
@@ -382,5 +388,5 @@ geo → resource → production → economy → fiscal → military → politica
 4. ~~跨仓库引用~~ → 语法 `world:id` 保留，本版不实现，遇到必报 CA401（§2.3）。
 5. ~~恢复冷却期/次数上限~~ → 交宪章声明；默认路径 `archived → trial → canon`（§3.3）。
 
-**进行中：**
-- **kind 案例收集计划**：用 3–5 个真实世界观做供应链标注，落不进初始集六值的一律 `x-` 前缀记录；集满案例后评审是否扩集或封版。巫王世界为第一个样本（一个政权的钱与兵 + 一座城的人口与粮源）。
+**已封版（v1.0 落槌）：**
+- **kind 六值封版**：三个测试世界（魔戒/冰火/沙丘）案例收集完成。物质五值零例外；实验值 `x-will-binding`、`x-magic-logistics`、`x-faith-engineering` 各出现一次，证据不足以升格，留档观察。`x-` 通道永久开放。

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import yaml
 
-PROTOCOL_VERSION = "0.5"
+PROTOCOL_VERSION = "1.0"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
 
@@ -55,7 +55,6 @@ LOAD_BEARING_KEYWORDS = ["经济", "货币", "税收", "贸易", "铸币", "政�
 
 MIN_BODY_CHARS = 200        # CA104
 MIN_DUP_CHARS = 100         # CA201 最短参与长度
-AIRY_LAYER_MIN = 4          # CA503: 链条序号 >= fiscal
 
 ENTRY_DIRS = ("entries", "canon", "sandbox", "archive")  # 条目扫描目录
 SKIP_DIRS = {"templates", "scripts", ".git"}
