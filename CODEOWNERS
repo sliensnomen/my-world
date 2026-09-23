@@ -1,0 +1,7 @@
+# WGP 协作层示例：目录级所有权
+# canon/ 目录（已定档）的一切改动必须评审组 approve
+# 评审组成员用 GitHub/Gitea 用户名替换下面的占位符
+
+canon/        @review-team
+entries/      @review-team
+# sandbox/ 与 archive/ 不设防：试水与封存来去自由

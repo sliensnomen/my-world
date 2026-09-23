@@ -1,0 +1,27 @@
+# WGP 协作层示例：CI 审计
+# 每个 PR 跑 canonlint --strict；对变更条目自动生成 CA504 影响报告
+name: canonlint
+on: [pull_request]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - name: 确定性审计（警告也拦截）
+        run: python3 canonlint.py . --strict
+      - name: CA504 影响报告（不拦截，仅提示）
+        if: always()
+        run: |
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+                    | grep '\.md$' || true)
+          echo "变更条目: $CHANGED"
+          # 从变更文件提取 id，逐个生成下游影响报告
+          for f in $CHANGED; do
+            ID=$(grep -m1 '^id: ' "$f" | awk '{print $2}')
+            [ -n "$ID" ] && python3 canonlint.py . --json --impact "$ID"
+          done
