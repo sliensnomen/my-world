@@ -29,6 +29,8 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
     ],
     "pe003-ok": [],  # king↔pope 互锁但有 tradition 外部锚点，合法
     "clean": [],
+    # 真实作品 dogfood：结构自洽的世界应当零误报（真阴性回归锁）
+    "world-westeros": [],
     "structure-bad": [
         ("CL101", "error", "codex/no-title.md"),
         ("CL102", "error", "codex/dup-b.md"),
