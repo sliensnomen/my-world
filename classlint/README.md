@@ -21,6 +21,15 @@ python3 ../classlint.py check . --json  # 机器可读输出
 
 退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误。
 
+## 审计规则（协议 v0.1，见 [PROTOCOL.md](PROTOCOL.md)）
+
+- **CL1xx 结构规则**（不可关）：解析失败、缺必填字段、id 非法/重复、未定义字段、关系 schema 违规、关系目标不存在。
+- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）。
+
+PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以关，不能改定义。
+
+测试：`python3 tests/run_tests.py`（8 个夹具世界，正例/反例钉死期望判定）。
+
 ## 世界仓库结构
 
 ```
