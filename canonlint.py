@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""canonlint — 世界观治理协议（WGP）参考实现，协议版本 0.4
+"""canonlint — 世界观治理协议（WGP）参考实现，协议版本 1.0
 
 规则编号即协议：本文件实现 PROTOCOL.md §6.3 全部确定性规则（CA504 见 --impact）。
 用法:
