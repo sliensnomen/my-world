@@ -31,6 +31,10 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
     "clean": [],
     # 真实作品 dogfood：结构自洽的世界应当零误报（真阴性回归锁）
     "world-westeros": [],
+    # 真实作品 dogfood：帝位↔CHOAM 合法性闭环无锚（真阳性回归锁）
+    "world-arrakis": [
+        ("PE003", "error", "codex/choam.md"),
+    ],
     "structure-bad": [
         ("CL101", "error", "codex/no-title.md"),
         ("CL102", "error", "codex/dup-b.md"),
