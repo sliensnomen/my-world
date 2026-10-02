@@ -105,12 +105,19 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；clas
 | PE001 | error | **抽取必须有基础**：存在 `A —extracts→ B` 但 A 对 B 没有任何 `controls` / `coerces` / `owns` 边 |
 | PE002 | error/warning | **不能镇压自己的供养者**：存在 `A —coerces→ B` 且 `A —depends_on→ B`。`critical: true` = error，否则 warning |
 | PE003 | error | **合法性不得无锚闭环**：`legitimizes` 图的强连通分量（含自环）若没有任何来自分量外的 `legitimizes` 输入，报警。有外部锚点的互锁合法（依据：WGP v0.5 魔戒 dogfood，规范性互锁是常态） |
+| PE004 | error | **剩余必须收敛（定性版）**：`extracts` 子图存在环（含自环）——剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。定量判定（抽取量 vs 剩余量）待流量层数据就位后回填 |
+| PE005 | warning | **劳动者必须被覆盖（定性版）**：存在 `A —extracts→ B` 且 B 无任何 `extracts` / `depends_on` 出边——被抽取者的剩余/再生产在模型里不可见（隐形剥削嫌疑）。报在 B 侧：修法是标注 B 的来源侧边，或确认 B 为终端生产者。定量判定待流量层回填 |
+
+### 3.4 报告级输出（永不进退出码）
+
+- **关系图**：`classlint graph <仓库> [--format dot|json]`——节点 = 条目，边 = 七种关系；DOT 可直接喂 Graphviz，JSON 供任意前端消费。
+- **影响报告**：`classlint check <仓库> --impact ID...`——指定条目的 `depends_on` 反向传递闭包（"改 A 炸 B"的待复核队列），参考 WGP 的 CA504。
 
 **无传递违规原则：** 只判直接边。A 抽取 B、B 的供养断裂并不使 A 连带违规；间接影响是将来影响报告（Sprint 3）的职责。
 
 **判定一致性要求：** 同一仓库快照、同一协议版本，任何兼容实现的确定性判定**必须**逐条一致。
 
-### 3.4 规则的开关
+### 3.5 规则的开关
 
 CL1xx 结构规则不可关（它们是数据 sanity 本身）。PE 规则**可以关，不能改定义**——在 `classlint.yaml` 中：
 

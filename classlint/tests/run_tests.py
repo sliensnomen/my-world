@@ -35,6 +35,16 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
     "world-arrakis": [
         ("PE003", "error", "codex/choam.md"),
     ],
+    "pe004-bad": [
+        ("PE004", "error", "codex/chapter.md"),  # chapter↔collegium 互抽，报在最小 id 侧
+    ],
+    "pe005-bad": [
+        ("PE005", "warning", "codex/tenant-farmers.md"),  # 佃农再生产不可见，报在被抽取者侧
+    ],
+    # 三个经典结构：正确的参考结构应当全绿
+    "feudal-rent": [],
+    "merchant-capital": [],
+    "state-redistribution": [],
     "structure-bad": [
         ("CL101", "error", "codex/no-title.md"),
         ("CL102", "error", "codex/dup-b.md"),

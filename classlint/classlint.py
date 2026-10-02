@@ -239,6 +239,39 @@ class World:
 # ---- 规则注册机制（ESLint 插件模型：注册 → 配置开关 → 引擎喂模型 → emit）--------
 
 
+def _cyclic_sccs(adj: dict[str, set[str]]) -> list[list[str]]:
+    """有向图的环状强连通分量（含自环）。小图用互达性 + 并查集，世界观量级足够。
+    adj 须含所有涉及节点（含只有入边的）。返回成员列表的列表，无固定顺序。"""
+    def reachable(start: str) -> set[str]:
+        seen, stack = set(), [start]
+        while stack:
+            for nxt in adj.get(stack.pop(), ()):
+                if nxt not in seen:
+                    seen.add(nxt)
+                    stack.append(nxt)
+        return seen
+
+    parent = {n: n for n in adj}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    reach = {n: reachable(n) for n in adj}
+    for u in adj:
+        for v in adj[u]:
+            if u in reach[v]:  # v 能回到 u → 同一 SCC
+                parent[find(u)] = find(v)
+
+    groups: dict[str, list[str]] = {}
+    for n in adj:
+        groups.setdefault(find(n), []).append(n)
+    return [m for m in groups.values()
+            if len(m) > 1 or any(n in adj[n] for n in m)]
+
+
 @dataclass
 class Rule:
     id: str
@@ -284,53 +317,55 @@ def pe002(world: World, emit) -> None:
 
 @rule("PE003", "error", "合法性不得无锚闭环")
 def pe003(world: World, emit) -> None:
-    """legitimizes 子图的强连通分量（含自环）：无分量外输入边 = 无锚闭环。
-    小图用互达性 + 并查集，世界观量级足够。"""
+    """legitimizes 子图的环状 SCC：无分量外输入边 = 无锚闭环。有锚互锁合法（WGP v0.5 魔戒案例）。"""
     adj: dict[str, set[str]] = {}
     for src, e in world.edges_of("legitimizes"):
         if e.target in world.index:  # 悬空目标已由 CL105 报告
             adj.setdefault(src, set()).add(e.target)
             adj.setdefault(e.target, set())
 
-    def reachable(start: str) -> set[str]:
-        seen, stack = set(), [start]
-        while stack:
-            for nxt in adj.get(stack.pop(), ()):
-                if nxt not in seen:
-                    seen.add(nxt)
-                    stack.append(nxt)
-        return seen
-
-    parent = {n: n for n in adj}
-
-    def find(x: str) -> str:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    reach = {n: reachable(n) for n in adj}
-    for u in adj:
-        for v in adj[u]:
-            if u in reach[v]:  # v 能回到 u → 同一 SCC
-                parent[find(u)] = find(v)
-
-    groups: dict[str, list[str]] = {}
-    for n in adj:
-        groups.setdefault(find(n), []).append(n)
-
-    for members in groups.values():
+    for members in _cyclic_sccs(adj):
         ms = set(members)
-        cyclic = len(members) > 1 or any(m in adj[m] for m in members)
-        if not cyclic:
-            continue
         anchored = any(u not in ms for u in adj for v in adj[u] if v in ms)
         if anchored:
-            continue  # 有外部锚点的互锁合法（WGP v0.5 魔戒案例）
+            continue
         rep = min(members)
         loop = " ↔ ".join(sorted(members)) if len(members) > 1 else f"{members[0]}（自环）"
         emit(None, world.index[rep].rel,
              f"legitimizes 闭环无外部锚点: {loop}——合法性不能凭空互证")
+
+
+@rule("PE004", "error", "剩余必须收敛：extracts 子图无环（定性版）")
+def pe004(world: World, emit) -> None:
+    """定性版：环状 extracts SCC = 剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。
+    定量判定（抽取量 vs 剩余量）待流量层数据就位后回填。"""
+    adj: dict[str, set[str]] = {}
+    for src, e in world.edges_of("extracts"):
+        if e.target in world.index:
+            adj.setdefault(src, set()).add(e.target)
+            adj.setdefault(e.target, set())
+
+    for members in _cyclic_sccs(adj):
+        rep = min(members)
+        loop = " ↔ ".join(sorted(members)) if len(members) > 1 else f"{members[0]}（自环）"
+        emit(None, world.index[rep].rel,
+             f"extracts 存在环: {loop}——剩余在循环中不落地于生产（黑洞）")
+
+
+@rule("PE005", "warning", "劳动者必须被覆盖：被抽取者的再生产必须可见（定性版）")
+def pe005(world: World, emit) -> None:
+    """定性版：若 A —extracts→ B 且 B 无任何来源侧出边（不抽取谁、也不靠谁养），
+    则 B 的剩余/再生产在模型里不可见（隐形剥削嫌疑）。报在 B 侧——修法是标注 B 的
+    depends_on/extracts，或确认 B 为终端生产者。定量判定待流量层回填。"""
+    has_source_edge = {src for src, e in world.edges
+                       if e.rel in ("extracts", "depends_on")}
+    for src, e in world.edges_of("extracts"):
+        if e.target not in world.index:
+            continue  # CL105 已报
+        if e.target not in has_source_edge:
+            emit(None, world.index[e.target].rel,
+                 f"被 `{src}` 抽取，但本条目没有任何来源侧边——剩余从哪来不可见"
+                 f"（请标注本条的 depends_on/extracts，或确认为终端生产者）")
 
 
 class ConfigError(Exception):
@@ -390,7 +425,67 @@ def run_checks(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]
     return entries, index, findings, cfg["disabled"]
 
 
+def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
+    """影响报告：subject 的 depends_on 反向传递闭包（改 A 炸 B 的待复核队列）。
+    报告级，永不进退出码。"""
+    dependents: dict[str, list[str]] = {}
+    for e in index.values():
+        for edge in e.edges[0]:
+            if edge.rel == "depends_on" and edge.target in index:
+                dependents.setdefault(edge.target, []).append(e.id)
+
+    reports = []
+    for subj in subjects:
+        seen, order = set(), []
+        queue = [subj]
+        while queue:
+            cur = queue.pop(0)
+            for dep in dependents.get(cur, []):
+                if dep not in seen:
+                    seen.add(dep)
+                    order.append(dep)
+                    queue.append(dep)
+        reports.append({"subject": subj, "downstream": order})
+    return reports
+
+
 # ---- 命令 --------------------------------------------------------------------
+
+
+def cmd_graph(root: Path, fmt: str) -> int:
+    """关系图生成：节点 = 条目，边 = 七种关系。输出 DOT（Graphviz）或 JSON。"""
+    if not (root / "classlint.yaml").is_file():
+        print(f"error: {root} 不是 classlint 世界仓库（缺 classlint.yaml）",
+              file=sys.stderr)
+        return 2
+    try:
+        _, index, _, _ = run_checks(root)
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    if fmt == "json":
+        print(json.dumps({
+            "nodes": [{"id": e.id, "title": e.meta.get("title"),
+                       "type": e.meta.get("type")} for e in index.values()],
+            "edges": [{"src": s, "rel": edge.rel, "dst": edge.target,
+                       "attrs": edge.attrs}
+                      for s, edge in
+                      [(e.id, ed) for e in index.values() for ed in e.edges[0]]
+                      if edge.target in index],
+        }, ensure_ascii=False, indent=2, default=str))
+    else:
+        lines = ["digraph world {", "  rankdir=BT;"]
+        for e in index.values():
+            title = str(e.meta.get("title", e.id)).replace('"', "'")
+            lines.append(f'  "{e.id}" [label="{title}"];')
+        for e in index.values():
+            for edge in e.edges[0]:
+                if edge.target in index:
+                    lines.append(f'  "{e.id}" -> "{edge.target}" [label="{edge.rel}"];')
+        lines.append("}")
+        print("\n".join(lines))
+    return 0
 
 
 def cmd_init(root: Path) -> int:
@@ -419,8 +514,8 @@ def cmd_init(root: Path) -> int:
     return 0
 
 
-def cmd_check(root: Path, as_json: bool) -> int:
-    """审计：输出全部发现。"""
+def cmd_check(root: Path, as_json: bool, impact_ids: list[str]) -> int:
+    """审计：输出全部发现（--impact 报告不参与退出码）。"""
     if not (root / "classlint.yaml").is_file():
         print(f"error: {root} 不是 classlint 世界仓库（缺 classlint.yaml）",
               file=sys.stderr)
@@ -431,6 +526,7 @@ def cmd_check(root: Path, as_json: bool) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
+    reports = impact_report(index, impact_ids) if impact_ids else []
     order = {"error": 0, "warning": 1}
     findings.sort(key=lambda f: (order.get(f.level, 2), f.rule, f.entry))
     errors = [f for f in findings if f.level == "error"]
@@ -445,11 +541,14 @@ def cmd_check(root: Path, as_json: bool) -> int:
             ],
             "findings": [{"rule": f.rule, "level": f.level, "entry": f.entry,
                           "message": f.message} for f in findings],
+            "reports": reports,
             "rules_disabled": sorted(disabled),
         }, ensure_ascii=False, indent=2, default=str))
     else:
         for f in findings:
             print(f)
+        for r in reports:
+            print(f"[IMPACT] report  {r['subject']}: 下游待复核 → {r['downstream'] or '(无下游)'}")
         print(f"\n{len(entries)} 个条目 | {len(index)} 个有效 id | "
               f"{len(errors)} 错误 | {len(findings) - len(errors)} 警告"
               + (f" | 已关闭规则: {sorted(disabled)}" if disabled else ""))
@@ -465,6 +564,11 @@ def main() -> int:
     p_check = sp.add_parser("check", help="审计世界仓库")
     p_check.add_argument("root", type=Path, nargs="?", default=Path("."))
     p_check.add_argument("--json", action="store_true", help="机器可读输出")
+    p_check.add_argument("--impact", nargs="*", default=[], metavar="ID",
+                         help="影响报告：指定条目的 depends_on 下游闭包（不进退出码）")
+    p_graph = sp.add_parser("graph", help="关系图生成（DOT 或 JSON）")
+    p_graph.add_argument("root", type=Path, nargs="?", default=Path("."))
+    p_graph.add_argument("--format", choices=["dot", "json"], default="dot")
     args = ap.parse_args()
 
     root = args.root.resolve()
@@ -473,7 +577,9 @@ def main() -> int:
     if not root.is_dir():
         print(f"error: {root} 不是目录", file=sys.stderr)
         return 2
-    return cmd_check(root, args.json)
+    if args.cmd == "graph":
+        return cmd_graph(root, args.format)
+    return cmd_check(root, args.json, args.impact)
 
 
 if __name__ == "__main__":

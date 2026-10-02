@@ -24,11 +24,13 @@ python3 ../classlint.py check . --json  # 机器可读输出
 ## 审计规则（协议 v0.1，见 [PROTOCOL.md](PROTOCOL.md)）
 
 - **CL1xx 结构规则**（不可关）：解析失败、缺必填字段、id 非法/重复、未定义字段、关系 schema 违规、关系目标不存在。
-- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）。
+- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）；**PE004** 剩余必须收敛（extracts 子图无环，定性版）；**PE005** 劳动者必须被覆盖（被抽取者须有来源侧边，定性版 warning）。
 
 PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以关，不能改定义。
 
-测试：`python3 tests/run_tests.py`（8 个夹具世界，正例/反例钉死期望判定）。
+报告级输出（永不进退出码）：`classlint graph <仓库> [--format dot|json]` 关系图；`classlint check <仓库> --impact ID...` 下游影响报告。
+
+测试：`python3 tests/run_tests.py`（15 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood，期望判定钉死）。
 
 ## 世界仓库结构
 
