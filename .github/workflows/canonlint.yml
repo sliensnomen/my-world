@@ -1,27 +1,47 @@
-# WGP 协作层示例：CI 审计
-# 每个 PR 跑 canonlint --strict；对变更条目自动生成 CA504 影响报告
-name: canonlint
-on: [pull_request]
+# 项目 CI：跑测试，而不是拿工具自己的仓库当审计对象。
+#
+# 为什么不再对仓库根跑 `canonlint . --strict`：
+# 这个仓库里没有 entries/ canon/ sandbox/ archive/ 任何一个入口目录，canonlint
+# 会退化成扫描整个仓库（canonlint.py:508-510 的 fallback），把测试夹具当成待审计
+# 的世界——744 个错误，没有一条是真的。审计对象是「世界数据」，不是「工具源码」。
+# 那条命令一次也没能拦住任何东西：工作流只监听 pull_request，而本仓库一直只有
+# main 一条分支、全部直接推送，从来没有 PR。
+#
+# 世界数据仓库该跑什么（本仓库的 CI 是它自己的测试，不是它的模板）：
+#   python3 canonlint.py . --strict                     # error 与 warning 都拦
+#   python3 canonlint.py . --json --impact <条目 id>     # CA504 只读报告
+# --impact 的报告级别是 report，不参与退出码（见 tests/run_tests.py 的不变量）。
+name: tests
+on:
+  pull_request:
+  push:
+    branches: [main]
 
 jobs:
-  audit:
+  canonlint:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - run: pip install pyyaml
-      - name: 确定性审计（警告也拦截）
-        run: python3 canonlint.py . --strict
-      - name: CA504 影响报告（不拦截，仅提示）
-        if: always()
-        run: |
-          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
-                    | grep '\.md$' || true)
-          echo "变更条目: $CHANGED"
-          # 从变更文件提取 id，逐个生成下游影响报告
-          for f in $CHANGED; do
-            ID=$(grep -m1 '^id: ' "$f" | awk '{print $2}')
-            [ -n "$ID" ] && python3 canonlint.py . --json --impact "$ID"
-          done
+      - name: canonlint 夹具回归（逐字节快照 + 崩溃守卫 + CA504 只读性）
+        run: python3 tests/run_tests.py
+
+  classlint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install pyyaml
+      - name: classlint 夹具回归（钉死的期望值三元组）
+        run: python3 classlint/tests/run_tests.py

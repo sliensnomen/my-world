@@ -1,0 +1,6 @@
+exit=1
+[CA100] error   entries/bad-utf8.md: 文件无法读取: 'utf-8' codec can't decode byte 0xff in position 236: invalid start byte
+[CA102] error   entries/list-stance.md: stance=['official'] 非法，须为 ['heretic', 'official', 'unknown']
+[CA102] error   entries/list-type.md: type=['faction'] 非法，须为 ['character', 'event', 'faction', 'item', 'location']
+
+4 个条目 | 3 错误 | 0 警告

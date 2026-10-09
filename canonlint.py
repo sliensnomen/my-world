@@ -4,6 +4,7 @@
 规则编号即协议：本文件实现 PROTOCOL.md §6.3 全部确定性规则（CA504 见 --impact）。
 用法:
   canonlint.py <仓库根> [--strict] [--dup-threshold 0.85] [--json] [--impact ID...]
+  canonlint.py init|new|link ...   （人类工作流子命令，见 --help）
 退出码: 0=通过(或仅警告) 1=存在错误(--strict 下警告也算) 2=用法/环境错误
 """
 from __future__ import annotations
@@ -20,7 +21,11 @@ from datetime import date
 from functools import cached_property
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ImportError:  # 环境错误，不是逻辑分支
+    print("error: 缺少依赖 pyyaml（pip install pyyaml）", file=sys.stderr)
+    sys.exit(2)
 
 PROTOCOL_VERSION = "1.0"
 
@@ -197,7 +202,12 @@ HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 
 def parse_entry(path: Path, root: Path) -> Entry:
     rel = str(path.relative_to(root))
-    text = path.read_text(encoding="utf-8")
+    try:
+        # utf-8-sig：容忍 BOM，避免把带 BOM 的文件误判为「缺少 frontmatter」
+        text = path.read_text(encoding="utf-8-sig")
+    except (UnicodeDecodeError, OSError) as e:
+        # 无法读取也是「文件无法解析」，按 §6.3 CA100 报，而不是让 traceback 逃逸
+        return Entry(path, rel, {}, "", parse_error=f"文件无法读取: {e}")
     m = FRONTMATTER_RE.match(text)
     if not m:
         return Entry(path, rel, {}, text,
@@ -228,13 +238,16 @@ def check_structure(e: Entry, findings: list[Finding],
     if e.meta.get("status") == "archived" and "superseded_by" not in e.meta:
         findings.append(Finding("CA101", "error", rel,
                                 "archived 条目缺少 `superseded_by`（无承接者时填 null）"))
-    if "type" in e.meta and e.meta["type"] not in VALID_TYPES:
+    if "type" in e.meta and (not isinstance(e.meta["type"], str)
+                             or e.meta["type"] not in VALID_TYPES):
         findings.append(Finding("CA102", "error", rel,
                                 f"type={e.meta['type']!r} 非法，须为 {sorted(VALID_TYPES)}"))
-    if "status" in e.meta and e.meta["status"] not in VALID_STATUS:
+    if "status" in e.meta and (not isinstance(e.meta["status"], str)
+                               or e.meta["status"] not in VALID_STATUS):
         findings.append(Finding("CA102", "error", rel,
                                 f"status={e.meta['status']!r} 非法，须为 {sorted(VALID_STATUS)}"))
-    if "layer" in e.meta and e.meta["layer"] not in LAYER_INDEX:
+    if "layer" in e.meta and (not isinstance(e.meta["layer"], str)
+                              or e.meta["layer"] not in LAYER_INDEX):
         findings.append(Finding("CA102", "error", rel,
                                 f"layer={e.meta['layer']!r} 非法，须为 {LAYERS}"))
     if "date" in e.meta and not isinstance(e.meta["date"], date):
@@ -268,7 +281,8 @@ def check_structure(e: Entry, findings: list[Finding],
     for err in e.conflicts[1]:
         findings.append(Finding(err.rule, "error", rel, err.msg))
     for ref in e.conflicts[0]:
-        if ref.stance is not None and ref.stance not in VALID_STANCE:
+        if ref.stance is not None and (not isinstance(ref.stance, str)
+                                       or ref.stance not in VALID_STANCE):
             findings.append(Finding("CA102", "error", rel,
                                     f"stance={ref.stance!r} 非法，须为 {sorted(VALID_STANCE)}"))
     for err in e.canon_ref_ids[1]:
@@ -502,6 +516,9 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
     all_entries: list[Entry] = []
     for d in dirs:
         for p in sorted(d.rglob("*.md")):
+            if not p.is_file():
+                # rglob("*.md") 也会返回同名目录与悬空符号链接，跳过而非崩溃
+                continue
             if SKIP_DIRS & set(p.relative_to(root).parts):
                 continue
             all_entries.append(parse_entry(p, root))
@@ -763,7 +780,17 @@ def main() -> int:
         if cmd == "link":
             return cmd_link(a.root, a.src, a.dst, a.kind, a.critical)
 
-    ap = argparse.ArgumentParser(description=f"canonlint — WGP 协议参考实现 v{PROTOCOL_VERSION}")
+    ap = argparse.ArgumentParser(
+        description=f"canonlint — WGP 协议参考实现 v{PROTOCOL_VERSION}",
+        epilog=(
+            "人类工作流子命令（不走审计路径）：\n"
+            "  canonlint init [目录]                          新建世界仓库\n"
+            "                                                 （entries/ + 模板 + pre-commit 钩子）\n"
+            "  canonlint new <type> <标题> [--id ID]          新建一个草稿条目\n"
+            "  canonlint link <源id> <目标id> --kind K        添加一条依赖边\n"
+            "  canonlint <仓库根> --strict                    审计（error 与 warning 都拦）\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root", type=Path, help="世界仓库根目录")
     ap.add_argument("--strict", action="store_true", help="警告也算失败（pre-commit 用）")
     ap.add_argument("--dup-threshold", type=float, default=0.85)

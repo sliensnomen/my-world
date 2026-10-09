@@ -161,7 +161,12 @@ class Entry:
 
 def parse_entry(path: Path, root: Path) -> Entry:
     rel = str(path.relative_to(root))
-    text = path.read_text(encoding="utf-8")
+    try:
+        # utf-8-sig：容忍 BOM，避免把带 BOM 的文件误判为「缺少 frontmatter」
+        text = path.read_text(encoding="utf-8-sig")
+    except (UnicodeDecodeError, OSError) as e:
+        # 无法读取也是「文件无法解析」，按 CL100 报，而不是让 traceback 逃逸
+        return Entry(path, rel, {}, "", parse_error=f"文件无法读取: {e}")
     m = FRONTMATTER_RE.match(text)
     if not m:
         return Entry(path, rel, {}, text,
@@ -182,6 +187,9 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
     codex = root / ENTRY_ROOT
     if codex.is_dir():
         for p in sorted(codex.rglob("*.md")):
+            if not p.is_file():
+                # rglob("*.md") 也会返回同名目录与悬空符号链接，跳过而非崩溃
+                continue
             if SKIP_DIRS & set(p.relative_to(root).parts):
                 continue
             entries.append(parse_entry(p, root))
