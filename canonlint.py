@@ -197,7 +197,12 @@ HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 
 def parse_entry(path: Path, root: Path) -> Entry:
     rel = str(path.relative_to(root))
-    text = path.read_text(encoding="utf-8")
+    try:
+        # utf-8-sig：容忍 BOM，避免把带 BOM 的文件误判为「缺少 frontmatter」
+        text = path.read_text(encoding="utf-8-sig")
+    except (UnicodeDecodeError, OSError) as e:
+        # 无法读取也是「文件无法解析」，按 §6.3 CA100 报，而不是让 traceback 逃逸
+        return Entry(path, rel, {}, "", parse_error=f"文件无法读取: {e}")
     m = FRONTMATTER_RE.match(text)
     if not m:
         return Entry(path, rel, {}, text,
@@ -228,13 +233,16 @@ def check_structure(e: Entry, findings: list[Finding],
     if e.meta.get("status") == "archived" and "superseded_by" not in e.meta:
         findings.append(Finding("CA101", "error", rel,
                                 "archived 条目缺少 `superseded_by`（无承接者时填 null）"))
-    if "type" in e.meta and e.meta["type"] not in VALID_TYPES:
+    if "type" in e.meta and (not isinstance(e.meta["type"], str)
+                             or e.meta["type"] not in VALID_TYPES):
         findings.append(Finding("CA102", "error", rel,
                                 f"type={e.meta['type']!r} 非法，须为 {sorted(VALID_TYPES)}"))
-    if "status" in e.meta and e.meta["status"] not in VALID_STATUS:
+    if "status" in e.meta and (not isinstance(e.meta["status"], str)
+                               or e.meta["status"] not in VALID_STATUS):
         findings.append(Finding("CA102", "error", rel,
                                 f"status={e.meta['status']!r} 非法，须为 {sorted(VALID_STATUS)}"))
-    if "layer" in e.meta and e.meta["layer"] not in LAYER_INDEX:
+    if "layer" in e.meta and (not isinstance(e.meta["layer"], str)
+                              or e.meta["layer"] not in LAYER_INDEX):
         findings.append(Finding("CA102", "error", rel,
                                 f"layer={e.meta['layer']!r} 非法，须为 {LAYERS}"))
     if "date" in e.meta and not isinstance(e.meta["date"], date):
@@ -268,7 +276,8 @@ def check_structure(e: Entry, findings: list[Finding],
     for err in e.conflicts[1]:
         findings.append(Finding(err.rule, "error", rel, err.msg))
     for ref in e.conflicts[0]:
-        if ref.stance is not None and ref.stance not in VALID_STANCE:
+        if ref.stance is not None and (not isinstance(ref.stance, str)
+                                       or ref.stance not in VALID_STANCE):
             findings.append(Finding("CA102", "error", rel,
                                     f"stance={ref.stance!r} 非法，须为 {sorted(VALID_STANCE)}"))
     for err in e.canon_ref_ids[1]:
@@ -502,6 +511,9 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
     all_entries: list[Entry] = []
     for d in dirs:
         for p in sorted(d.rglob("*.md")):
+            if not p.is_file():
+                # rglob("*.md") 也会返回同名目录与悬空符号链接，跳过而非崩溃
+                continue
             if SKIP_DIRS & set(p.relative_to(root).parts):
                 continue
             all_entries.append(parse_entry(p, root))
