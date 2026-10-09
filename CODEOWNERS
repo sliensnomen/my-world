@@ -1,7 +1,45 @@
-# WGP 协作层示例：目录级所有权
-# 目录约定（协议 v1.0.1）：entries/{type}/ 是唯一条目位置，状态只认 frontmatter。
-# 因此保护粒度是"任何条目改动必须评审组 approve"——升格靠评审流程把关，
-# 不靠目录隔离。评审组成员用 GitHub/Gitea 用户名替换下面的占位符。
+# 定档保护（CODEOWNERS）
+#
+# 这份文件只是「谁必须复核哪一块」的路由表。它要真正生效，远端的 main
+# 分支保护必须同时打开——具体顺序见文件末尾。
+#
+# 旧版这份文件保护的是 entries/ 与 CONSTITUTION.md：那是**世界数据仓库**
+# （`canonlint init` 建出来的仓库）该保护的东西，而本仓库里两者都不存在；
+# 而且 @review-team 是个从未替换的占位符。所以它一次也没有生效过。
+#
+# 世界数据仓库该保护的是：
+#   /entries/         世界条目（内容只由世界所有者负责）
+#   /CONSTITUTION.md  世界宪章
+#   /works/           作品层（PR#2 之后才会有）
+#
+# 本仓库是**工具仓库**，所以这里保护的是工具自身的关键路径。
+# GitHub 的语义是「最后一个匹配的模式生效」，所以具体路径必须写在 * 之后。
 
-entries/      @review-team
-CONSTITUTION.md  @review-team
+*                        @sliensnomen
+
+# —— 关键路径：改了要让所有人看见（* 已覆盖，此处列出是为了表明意图）——
+/canonlint.py            @sliensnomen
+/econ.py                 @sliensnomen
+/classlint/classlint.py  @sliensnomen
+/tests/run_tests.py      @sliensnomen
+/tests/snapshots/        @sliensnomen
+/.github/workflows/      @sliensnomen
+/PROTOCOL.md             @sliensnomen
+/classlint/PROTOCOL.md   @sliensnomen
+
+# 远端当前**没有**任何保护（`gh api repos/sliensnomen/my-world/branches/main/protection`
+# 返回 404 "Branch not protected"）。而此前一直只有 main 一条分支、零个 PR，
+# 所以那份只监听 pull_request 的 CI 一次都没跑过。需要打开的：
+#
+#   第 1 步（现在就能开）：必须走 PR 才能改 main
+#   第 2 步（等第一个 PR 跑出检查名之后再开，否则会卡在
+#            "Expected — Waiting for status to be reported"）：
+#     必须通过这四项检查（matrix 展开成四个名字，别只填一半）：
+#       canonlint (3.12)   canonlint (3.14)
+#       classlint (3.12)   classlint (3.14)
+#     并勾选「合并前分支必须是最新的」
+#
+# 但**先不要**打开 "Require review from Code Owners"：现在唯一的 code owner
+# 就是仓库所有者本人，而 GitHub 不允许自己 approve 自己——一旦打开，所有者
+# 自己的 PR 就再也无法满足「须 code owner 复核」，只能靠管理员强推绕过。
+# 等有第二位 code owner 再打开这一条。
