@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/sliensnomen/my-world/main/world.schema.json",
+  "title": "世界文件契约 v0.1",
+  "description": "一个「世界」由若干条目文件组成（当前原生位置是 entries/<type>/<id>.md，classlint 用 codex/<id>.md）。每个条目 = YAML frontmatter + 正文；本文件只约束 frontmatter。契约只描述形状（存得下什么），不描述判断（什么算对）——type 的五值表、layer 的八层链、kind 的初始集都是「严格判定器」的判据，不是存储的门槛。散文会撒谎，这个文件不会：tests/test_schema.py 拿真实语料验证它，并把故意写坏的样本判红。",
+
+  "x-contract-version": "0.1",
+  "x-extension": {
+    "prefix": "x-",
+    "syntax": "x-<命名空间>-<键名>",
+    "examples": ["x-st-entry", "x-wgp-note"],
+    "note": "键名以 x- 开头的顶层字段与关系项键一律合法，任何规则都不会判错（canonlint.py:260-263 CA106 / classlint.py:145-146）。外来格式的原样载荷（例如酒馆世界书条目、角色卡的原始字段）都住在这里，且必须命名空间化。不要另开一个 extensions 键——它不在 KNOWN_FIELDS 里，会被 CA106 当成未定义字段。"
+  },
+
+  "x-profiles": {
+    "普通（自由）": "只有本文件。关系由用户自己定义，type/layer/kind 不受词表约束。",
+    "严格（政治经济学）": "在本文件之上追加 x-strict-required 与 x-strict-vocabulary。同一份数据可以今天严格判、明天自由判：模式是运行时的判定器选择，不是存在数据里的属性。"
+  },
+  "x-strict-required": ["id", "title", "type", "author", "date", "status", "load_bearing", "canon_refs", "conflicts_with", "ai_assisted"],
+  "x-strict-vocabulary": {
+    "type": ["character", "event", "faction", "item", "location"],
+    "status": ["draft", "trial", "canon", "archived"],
+    "layer": ["geo", "resource", "production", "economy", "fiscal", "military", "political", "ideology"],
+    "depends_on.kind": ["resource", "production", "economy", "fiscal", "manpower", "legitimacy"],
+    "depends_on.kind-exception": "以 x- 开头的实验值合法（CA108 记 info）"
+  },
+  "x-stricter-than-contract": [
+    "depends_on 的项：本契约只要求 id；canonlint 额外要求 kind 与 critical 一并给全（CA107），classlint 只要求 id。",
+    "type/status/layer：本契约只要求是字符串；严格判定器再查词表（CA102）。",
+    "id 非法在 canonlint 里报 CA105，在 classlint 里报 CL104。"
+  ],
+
+  "x-relation-source": {
+    "canonical": "relations",
+    "note": "一个关系 = 有向边（type, target）+ 若干可选注解。这是唯一规范形；下面所有具名字段都是兼容别名，读取时按本表规范化成 relations，写出时按 x-written-form 决定写哪一种。",
+    "written-form": "旧字段（canon_refs/conflicts_with/depends_on + classlint 七种）保留为可写形式：它们是一位创作者每天手写的形状，没有理由为了统一而破坏它。规范形 relations 供工具与外来格式使用。",
+    "aliases": {
+      "canon_refs": {"type": "canon-ref", "required": [], "attrs": [], "item": "id 字符串"},
+      "conflicts_with": {"type": "conflicts-with", "required": [], "attrs": ["stance"], "item": "id 字符串 或 {id, stance?}"},
+      "depends_on": {"type": "depends_on", "required": [], "attrs": ["kind", "critical", "note"], "item": "id 字符串 或 {id, kind?, critical?}"},
+      "owns": {"type": "owns", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}"},
+      "controls": {"type": "controls", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}"},
+      "extracts": {"type": "extracts", "required": [], "attrs": ["what", "note"], "item": "id 字符串 或 {id, what?, note?}"},
+      "coerces": {"type": "coerces", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}"},
+      "legitimizes": {"type": "legitimizes", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}"},
+      "owes": {"type": "owes", "required": [], "attrs": ["what", "note"], "item": "id 字符串 或 {id, what?, note?}"}
+    }
+  },
+
+  "x-packs": {
+    "econ": {
+      "fields": {"figures": {"type": "object"}},
+      "source": "econ.py KNOWN_FIELDS（存储扩展，在 CA106 之前注入）",
+      "note": "扩展包协议只有两个成员：KNOWN_FIELDS（存储）与 check_entry(meta, rel, add)（检测）。不带 --pack econ 时 figures 就是未定义字段（CA106 error）。"
+    }
+  },
+
+  "type": "object",
+  "required": ["id", "title", "type"],
+  "properties": {
+    "id": {"$ref": "#/$defs/id"},
+    "title": {"type": "string"},
+    "type": {"type": "string"},
+    "status": {"type": "string"},
+    "author": {"type": "string"},
+    "date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+    "layer": {"type": "string"},
+    "load_bearing": {"type": "boolean"},
+    "ai_assisted": {"type": "boolean"},
+    "superseded_by": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/id"}]},
+
+    "relations": {"type": "array", "items": {"$ref": "#/$defs/relation"}},
+
+    "canon_refs": {"$ref": "#/$defs/canonRefs"},
+    "conflicts_with": {"$ref": "#/$defs/conflictsWith"},
+    "depends_on": {"$ref": "#/$defs/relationList"},
+    "owns": {"$ref": "#/$defs/relationList"},
+    "controls": {"$ref": "#/$defs/relationList"},
+    "extracts": {"$ref": "#/$defs/relationList"},
+    "coerces": {"$ref": "#/$defs/relationList"},
+    "legitimizes": {"$ref": "#/$defs/relationList"},
+    "owes": {"$ref": "#/$defs/relationList"}
+  },
+  "patternProperties": {"^x-": {}},
+  "additionalProperties": false,
+
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "relation": {
+      "type": "object",
+      "required": ["type", "target"],
+      "properties": {
+        "type": {"type": "string"},
+        "target": {"$ref": "#/$defs/id"},
+        "kind": {"type": "string"},
+        "critical": {"type": "boolean"},
+        "stance": {"enum": ["heretic", "official", "unknown"]},
+        "note": {"type": "string"},
+        "what": {"type": "string"}
+      },
+      "patternProperties": {"^x-": {}},
+      "additionalProperties": false
+    },
+    "legacyItem": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "kind": {"type": "string"},
+        "critical": {"type": "boolean"},
+        "stance": {"enum": ["heretic", "official", "unknown"]},
+        "note": {"type": "string"},
+        "what": {"type": "string"}
+      },
+      "patternProperties": {"^x-": {}},
+      "additionalProperties": false
+    },
+    "relationList": {
+      "type": "array",
+      "items": {"oneOf": [{"$ref": "#/$defs/id"}, {"$ref": "#/$defs/legacyItem"}]}
+    },
+    "canonRefs": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/id"}
+    },
+    "conflictsWith": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {"$ref": "#/$defs/id"},
+          {"$ref": "#/$defs/legacyItem"}
+        ]
+      }
+    }
+  }
+}
