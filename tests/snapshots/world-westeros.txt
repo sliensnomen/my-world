@@ -1,0 +1,25 @@
+exit=0
+[CA104] warning entries/braavos-free-port.md: 正文 83 字，canon 档建议 ≥200 字
+[CA104] warning entries/cersei-default.md: 正文 83 字，canon 档建议 ≥200 字
+[CA104] warning entries/crown-debt-affc.md: 正文 69 字，canon 档建议 ≥200 字
+[CA104] warning entries/crown-debt-agot.md: 正文 51 字，canon 档建议 ≥200 字
+[CA104] warning entries/iron-bank.md: 正文 90 字，canon 档建议 ≥200 字
+[CA104] warning entries/iron-throne.md: 正文 73 字，canon 档建议 ≥200 字
+[CA104] warning entries/kings-landing.md: 正文 89 字，canon 档建议 ≥200 字
+[CA104] warning entries/night-watch-order.md: 正文 48 字，canon 档建议 ≥200 字
+[CA104] warning entries/robb-host-ledger.md: 正文 52 字，canon 档建议 ≥200 字
+[CA104] warning entries/robb-host-theon.md: 正文 12 字，canon 档建议 ≥200 字
+[CA104] warning entries/roseroad-grain.md: 正文 39 字，canon 档建议 ≥200 字
+[CA104] warning entries/stannis-north-campaign.md: 正文 53 字，canon 档建议 ≥200 字
+[CA104] warning entries/the-north.md: 正文 115 字，canon 档建议 ≥200 字
+[CA104] warning entries/the-others-magic.md: 正文 84 字，canon 档建议 ≥200 字
+[CA104] warning entries/the-wall-scale.md: 正文 86 字，canon 档建议 ≥200 字
+[CA104] warning entries/wight-army.md: 正文 84 字，canon 档建议 ≥200 字
+[CA301] warning entries/cersei-default.md: 命中承重墙关键词 ['政治']，但未声明 load_bearing——请考虑声明
+[CA503] warning entries/braavos-free-port.md: economy 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
+[CA503] warning entries/night-watch-order.md: military 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
+[CA503] warning entries/the-north.md: political 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
+[CA503] warning entries/wight-army.md: military 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
+[CA108] info    entries/wight-army.md: kind='x-magic-logistics' 为实验值，已计入案例收集
+
+16 个条目 | 0 错误 | 21 警告

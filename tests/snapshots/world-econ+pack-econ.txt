@@ -1,0 +1,6 @@
+exit=1
+[CA601] error   entries/no-unit.md: figures.population 缺 unit
+[CA104] warning entries/clean-city.md: 正文 24 字，canon 档建议 ≥200 字
+[CA602] warning entries/over-no-just.md: military_size=1000 / population=10000 = 10.0%，越参数表 standing-army-ratio 上界 2%（前现代常备军供养上限启发式（中世纪欧洲估算 1–2%）），且无 justification
+
+5 个条目 | 1 错误 | 2 警告

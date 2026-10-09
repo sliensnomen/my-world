@@ -1,0 +1,6 @@
+exit=0
+[CA104] warning entries/gh-customs.md: 正文 134 字，canon 档建议 ≥200 字
+[CA104] warning entries/gh-fleet.md: 正文 135 字，canon 档建议 ≥200 字
+[CA104] warning entries/grain-belt.md: 正文 150 字，canon 档建议 ≥200 字
+
+3 个条目 | 0 错误 | 3 警告

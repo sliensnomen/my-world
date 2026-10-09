@@ -1,0 +1,9 @@
+exit=1
+[CA106] error   entries/clean-city.md: 未定义字段 `figures`（扩展字段须 x- 前缀）
+[CA106] error   entries/missing-base.md: 未定义字段 `figures`（扩展字段须 x- 前缀）
+[CA106] error   entries/no-unit.md: 未定义字段 `figures`（扩展字段须 x- 前缀）
+[CA106] error   entries/over-no-just.md: 未定义字段 `figures`（扩展字段须 x- 前缀）
+[CA106] error   entries/over-with-just.md: 未定义字段 `figures`（扩展字段须 x- 前缀）
+[CA104] warning entries/clean-city.md: 正文 24 字，canon 档建议 ≥200 字
+
+5 个条目 | 5 错误 | 1 警告

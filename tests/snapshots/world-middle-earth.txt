@@ -1,0 +1,21 @@
+exit=0
+[CA104] warning entries/blue-wizards-pome.md: 正文 78 字，canon 档建议 ≥200 字
+[CA104] warning entries/blue-wizards-ut.md: 正文 49 字，canon 档建议 ≥200 字
+[CA104] warning entries/fief-muster-system.md: 正文 121 字，canon 档建议 ≥200 字
+[CA104] warning entries/gondor-realm.md: 正文 129 字，canon 档建议 ≥200 字
+[CA104] warning entries/minas-tirith.md: 正文 142 字，canon 档建议 ≥200 字
+[CA104] warning entries/mordor-host.md: 正文 85 字，canon 档建议 ≥200 字
+[CA104] warning entries/nurn-slave-fields.md: 正文 69 字，canon 档建议 ≥200 字
+[CA104] warning entries/orc-origin-corruption.md: 正文 71 字，canon 档建议 ≥200 字
+[CA104] warning entries/orc-origin-myths-transformed.md: 正文 97 字，canon 档建议 ≥200 字
+[CA104] warning entries/orc-origin-silmarillion.md: 正文 48 字，canon 档建议 ≥200 字
+[CA104] warning entries/pelennor-fields.md: 正文 43 字，canon 档建议 ≥200 字
+[CA104] warning entries/rohan-oath-2510.md: 正文 123 字，canon 档建议 ≥200 字
+[CA104] warning entries/sauron-dominion.md: 正文 114 字，canon 档建议 ≥200 字
+[CA104] warning entries/the-one-ring.md: 正文 139 字，canon 档建议 ≥200 字
+[CA503] warning entries/fief-muster-system.md: military 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
+[CA503] warning entries/rohan-oath-2510.md: political 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
+[CA505] warning (仓库级): 存在 military/political 层承重墙条目，但全库无 layer=fiscal 条目——财政维度可能缺失（刚铎型盲区）
+[CA108] info    entries/mordor-host.md: kind='x-will-binding' 为实验值，已计入案例收集
+
+14 个条目 | 0 错误 | 17 警告

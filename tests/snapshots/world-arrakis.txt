@@ -1,0 +1,26 @@
+exit=0
+[CA104] warning entries/arrakis.md: 正文 79 字，canon 档建议 ≥200 字
+[CA104] warning entries/bene-gesserit.md: 正文 76 字，canon 档建议 ≥200 字
+[CA104] warning entries/choam-dividends.md: 正文 45 字，canon 档建议 ≥200 字
+[CA104] warning entries/choam.md: 正文 63 字，canon 档建议 ≥200 字
+[CA104] warning entries/corrino-imperium.md: 正文 70 字，canon 档建议 ≥200 字
+[CA104] warning entries/fremen-bribes.md: 正文 55 字，canon 档建议 ≥200 字
+[CA104] warning entries/fremen.md: 正文 75 字，canon 档建议 ≥200 字
+[CA104] warning entries/harkonnen-fief.md: 正文 56 字，canon 档建议 ≥200 字
+[CA104] warning entries/kynes-terraform-plan.md: 正文 93 字，canon 档建议 ≥200 字
+[CA104] warning entries/missionaria-protectiva.md: 正文 71 字，canon 档建议 ≥200 字
+[CA104] warning entries/navigator-dune.md: 正文 41 字，canon 档建议 ≥200 字
+[CA104] warning entries/navigator-messiah.md: 正文 52 字，canon 档建议 ≥200 字
+[CA104] warning entries/paul-muaddib.md: 正文 80 字，canon 档建议 ≥200 字
+[CA104] warning entries/salusa-secundus.md: 正文 46 字，canon 档建议 ≥200 字
+[CA104] warning entries/sandworm-cycle.md: 正文 86 字，canon 档建议 ≥200 字
+[CA104] warning entries/sardaukar.md: 正文 65 字，canon 档建议 ≥200 字
+[CA104] warning entries/shield-lasgun-dune.md: 正文 43 字，canon 档建议 ≥200 字
+[CA104] warning entries/shield-lasgun-later.md: 正文 47 字，canon 档建议 ≥200 字
+[CA104] warning entries/spacing-guild.md: 正文 109 字，canon 档建议 ≥200 字
+[CA104] warning entries/spice-harvest.md: 正文 46 字，canon 档建议 ≥200 字
+[CA104] warning entries/spice-melange.md: 正文 78 字，canon 档建议 ≥200 字
+[CA104] warning entries/water-rings.md: 正文 53 字，canon 档建议 ≥200 字
+[CA108] info    entries/bene-gesserit.md: kind='x-faith-engineering' 为实验值，已计入案例收集
+
+22 个条目 | 0 错误 | 22 警告

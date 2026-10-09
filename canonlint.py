@@ -4,6 +4,7 @@
 规则编号即协议：本文件实现 PROTOCOL.md §6.3 全部确定性规则（CA504 见 --impact）。
 用法:
   canonlint.py <仓库根> [--strict] [--dup-threshold 0.85] [--json] [--impact ID...]
+  canonlint.py init|new|link ...   （人类工作流子命令，见 --help）
 退出码: 0=通过(或仅警告) 1=存在错误(--strict 下警告也算) 2=用法/环境错误
 """
 from __future__ import annotations
@@ -20,7 +21,11 @@ from datetime import date
 from functools import cached_property
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ImportError:  # 环境错误，不是逻辑分支
+    print("error: 缺少依赖 pyyaml（pip install pyyaml）", file=sys.stderr)
+    sys.exit(2)
 
 PROTOCOL_VERSION = "1.0"
 
@@ -775,7 +780,17 @@ def main() -> int:
         if cmd == "link":
             return cmd_link(a.root, a.src, a.dst, a.kind, a.critical)
 
-    ap = argparse.ArgumentParser(description=f"canonlint — WGP 协议参考实现 v{PROTOCOL_VERSION}")
+    ap = argparse.ArgumentParser(
+        description=f"canonlint — WGP 协议参考实现 v{PROTOCOL_VERSION}",
+        epilog=(
+            "人类工作流子命令（不走审计路径）：\n"
+            "  canonlint init [目录]                          新建世界仓库\n"
+            "                                                 （entries/ + 模板 + pre-commit 钩子）\n"
+            "  canonlint new <type> <标题> [--id ID]          新建一个草稿条目\n"
+            "  canonlint link <源id> <目标id> --kind K        添加一条依赖边\n"
+            "  canonlint <仓库根> --strict                    审计（error 与 warning 都拦）\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root", type=Path, help="世界仓库根目录")
     ap.add_argument("--strict", action="store_true", help="警告也算失败（pre-commit 用）")
     ap.add_argument("--dup-threshold", type=float, default=0.85)
