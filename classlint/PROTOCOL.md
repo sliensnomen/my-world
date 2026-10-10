@@ -52,11 +52,11 @@ depends_on:
 |---|---|---|---|
 | `owns` | 占有 | A 占有 B（所有/占有，区别于控制：管家控制、领主占有） | `note` |
 | `controls` | 控制 | A 控制 B | `note` |
-| `extracts` | 抽取 | A 从 B 抽取（地租、税、剩余劳动…） | `what`（抽取物） |
+| `extracts` | 抽取 | A 从 B 抽取（地租、税、剩余劳动…） | `what`（抽取物）、`note` |
 | `coerces` | 暴力 | A 对 B 施加暴力/镇压 | `note` |
 | `legitimizes` | 合法化 | A 给 B 合法性 | `note` |
-| `owes` | 债务 | A 欠 B | `what`（债务内容） |
-| `depends_on` | 供养 | A 靠 B 养（断供即崩的程度用 critical 标） | `critical`（bool）、`kind`（string，自由词汇） |
+| `owes` | 债务 | A 欠 B | `what`（债务内容）、`note` |
+| `depends_on` | 供养 | A 靠 B 养（断供即崩的程度用 critical 标） | `critical`（bool）、`kind`（string，自由词汇）、`note` |
 
 ### 2.1 元素形式
 
@@ -76,7 +76,7 @@ depends_on:
 
 ### 2.2 与 WGP 的差异说明
 
-WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；classlint 将二者降为可选、kind 改自由词汇——七层链与 kind 分族是 WGP 治理层的建模工具，classlint 的审计只关心边的存在性与方向。
+WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；classlint 将二者降为可选、kind 改自由词汇——八层链与 kind 分族是 WGP 治理层的建模工具，classlint 的审计只关心边的存在性与方向。
 
 ## 3. 审计规则注册表
 
@@ -85,7 +85,7 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；clas
 | 段 | 类别 |
 |---|---|
 | CL1xx | 结构（解析/frontmatter/schema/引用存在性） |
-| PE0xx | 政治经济学规则（核心八条，本版实现 PE001–PE003） |
+| PE0xx | 政治经济学规则（规划八条：本版已实现 PE001–PE005，PE006–PE008 属流量层，待数据模型就位） |
 
 ### 3.2 结构规则（确定性）
 

@@ -28,5 +28,5 @@
 
 ## 回归锁
 
-已登记 `run_tests.py` EXPECTED：`[("PE003", "error", "codex/choam.md")]`——
+已登记 `classlint/tests/run_tests.py` EXPECTED：`[("PE003", "error", "codex/choam.md")]`——
 既防 PE003 漏报，也防它在 westeros 上误报（两个真实世界一阴一阳互为对照）。

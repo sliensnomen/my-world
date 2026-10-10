@@ -4,19 +4,21 @@
 作者写文本，工具建模型，模型展示结构，审计报出作者看不见的矛盾。
 
 [项目文书](项目文书.md)（定位与三层架构） · [开发计划](开发计划.md) · [ROADMAP](ROADMAP.md)
-姊妹项目：[WGP 世界观治理协议](../PROTOCOL.md) + [canonlint](../canonlint.py)（本工具的解析器与 lint 架构来源）
+姊妹项目：[canonlint](../README.md)（本工具的条目格式与 lint 架构来源；canonlint 自己的解析器现在在 [`store/`](../store/README.md)）
 
-**状态：Sprint 0 基础层**——目前只有 `init` / `check`，PE 规则引擎从 Sprint 1 开始。
+**状态：生产关系层已完成（PE001–PE005 + `graph` + `--impact`）。** 流量层（四种线、守恒律、PE004/PE005 的定量回填）
+与 PE006–PE008 未开始——排期见 [ROADMAP.md](ROADMAP.md)。
 
 ## 用法
 
 ```bash
 pip install pyyaml
-python3 classlint.py init my-world      # 初始化世界仓库
-cd my-world
+# 从仓库根调用（路径写全，免得依赖当前目录在哪）
+python3 classlint/classlint.py init ~/worlds/econ          # 初始化世界仓库（建 codex/ + classlint.yaml）
 # ……在 codex/ 下写条目……
-python3 ../classlint.py check .         # 读取全部条目，输出结构化数据
-python3 ../classlint.py check . --json  # 机器可读输出
+python3 classlint/classlint.py check ~/worlds/econ         # 读取全部条目，输出结构化数据
+python3 classlint/classlint.py check ~/worlds/econ --json  # 机器可读输出
+python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（只读）
 ```
 
 退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误。
