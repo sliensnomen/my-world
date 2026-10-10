@@ -35,6 +35,8 @@ jobs:
         run: python3 tests/test_schema.py
       - name: 存储层边界（存储不认识理论、规范形与旧写法等价、写入路径可读回）
         run: python3 tests/test_store.py
+      - name: 文档一致性（规则编号 / 数字 / 路径 / 命令 / 检查名必须与代码一致）
+        run: python3 tests/test_docs.py
 
   classlint:
     runs-on: ubuntu-latest
