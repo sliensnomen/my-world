@@ -2,8 +2,8 @@
 #
 # 为什么不再对仓库根跑 `canonlint . --strict`：
 # 这个仓库里没有 entries/ canon/ sandbox/ archive/ 任何一个入口目录，canonlint
-# 会退化成扫描整个仓库（canonlint.py:508-510 的 fallback），把测试夹具当成待审计
-# 的世界——744 个错误，没有一条是真的。审计对象是「世界数据」，不是「工具源码」。
+# 会退化成扫描整个仓库（store/layout.py 里 collect 的 fallback），把测试夹具当成
+# 待审计的世界——744 个错误，没有一条是真的。审计对象是「世界数据」，不是「工具源码」。
 # 那条命令一次也没能拦住任何东西：工作流只监听 pull_request，而本仓库一直只有
 # main 一条分支、全部直接推送，从来没有 PR。
 #
@@ -33,6 +33,8 @@ jobs:
         run: python3 tests/run_tests.py
       - name: 世界文件契约（good 语料必须合规、坏样本必须判红、词表必须与代码一致）
         run: python3 tests/test_schema.py
+      - name: 存储层边界（存储不认识理论、规范形与旧写法等价、写入路径可读回）
+        run: python3 tests/test_store.py
 
   classlint:
     runs-on: ubuntu-latest
