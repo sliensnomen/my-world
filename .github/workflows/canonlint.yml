@@ -31,6 +31,8 @@ jobs:
       - run: pip install pyyaml
       - name: canonlint 夹具回归（逐字节快照 + 崩溃守卫 + CA504 只读性）
         run: python3 tests/run_tests.py
+      - name: 世界文件契约（good 语料必须合规、坏样本必须判红、词表必须与代码一致）
+        run: python3 tests/test_schema.py
 
   classlint:
     runs-on: ubuntu-latest
