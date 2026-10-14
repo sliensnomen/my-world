@@ -134,18 +134,33 @@ def check_layer_dictionary_matches_code():
     assert m and CN_DIGIT.get(m.group(1)) == len(layers), "项目文书.md 的层数不对"
 
 
+def test_suite_files() -> list[str]:
+    """tests/ 里真实存在的套件：run_tests.py + 每个 test_*.py。"""
+    return ["run_tests.py"] + sorted(p.name for p in (ROOT / "tests").glob("test_*.py"))
+
+
 def check_test_counts_match_docs():
     run_file = ROOT / "tests/run_tests.py"
     cases = list_len(run_file, "CASES")
-    # 套数不写死：tests/ 里多一套、少一套，文档的「N 套（a + b + …）」就必须跟着变
-    order = ["run_tests.py", "test_schema.py", "test_store.py", "test_docs.py"]
+    # 套数不写死：磁盘上有什么就以什么为准——新加一套，README / CONTRIBUTING / CI / 这里
+    # 四处都必须跟着变，否则这一项红。
+    order = ["run_tests.py", "test_schema.py", "test_store.py", "test_serve.py", "test_docs.py"]
+    on_disk = test_suite_files()
+    assert sorted(order) == sorted(on_disk), (
+        f"tests/ 里的套件与这份清单不一致：磁盘 {on_disk}，清单 {order}"
+        "（新加一套要同时更新 README.md / CONTRIBUTING.md / CI 工作流和这里）")
     totals = {
         "run_tests.py": (cases + list_len(run_file, "CRASH_INTENT")
                          + list_len(run_file, "extras", func="main")),
         "test_schema.py": list_len(ROOT / "tests/test_schema.py", "checks", func="main"),
         "test_store.py": list_len(ROOT / "tests/test_store.py", "CHECKS"),
+        "test_serve.py": list_len(ROOT / "tests/test_serve.py", "CHECKS"),
         "test_docs.py": list_len(ROOT / "tests/test_docs.py", "CHECKS"),
     }
+    ran = ci_scripts("canonlint")
+    for name in order:  # 每一套都得在 CI 里真的跑，不能只在文档里写着
+        assert f"tests/{name}" in ran, \
+            f"CI 的 canonlint job 没有跑 tests/{name}（实际跑的是 {ran}）"
     expected = tuple(totals[key] for key in order)
     fixtures = len(classlint_fixtures())
 
@@ -323,6 +338,18 @@ def check_hook_has_no_strict():
     assert "不带 `--strict`" in flow, "docs/协作流程.md 应写明 init 装的钩子不带 --strict"
 
 
+def check_version_strings_match_code():
+    """版本号只有一个来源（canonlint.py 的 PROTOCOL_VERSION）：文档里写的必须跟它一样。"""
+    want = canonlint.PROTOCOL_VERSION
+    found = []
+    for name in DOCS:
+        for value in re.findall(r'PROTOCOL_VERSION\s*=\s*"([^"]+)"', doc(name)):
+            found.append((name, value))
+    assert found, "文档里一处 PROTOCOL_VERSION 都没写（PROTOCOL.md 至少该说明版本号从哪来）"
+    bad = [f"{name} 写的是 {value}" for name, value in found if value != want]
+    assert not bad, f"协议版本号对不上代码（代码是 {want}）：{bad}"
+
+
 CHECKS = (
     ("规则编号在文档与代码之间双向一致", check_rule_ids_match_code),
     ("文档里的规则条数与代码一致", check_rule_counts_match_code),
@@ -336,6 +363,7 @@ CHECKS = (
     ("CI 检查名与文档双向一致", check_ci_check_names_match_docs),
     ("CI 跑的脚本与 CONTRIBUTING 写的一致", check_ci_steps_match_contributing),
     ("init 的钩子不含 --strict（与文档一致）", check_hook_has_no_strict),
+    ("文档里的协议版本号与代码一致", check_version_strings_match_code),
 )
 
 

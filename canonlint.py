@@ -31,7 +31,8 @@ except ImportError:  # 环境错误，不是逻辑分支
 import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 
-PROTOCOL_VERSION = "1.0"
+PROTOCOL_VERSION = "1.1"   # 1.1：type 允许 x- 前缀实验类型（放宽，按 §9.1 升 minor）
+CONTRACT_VERSION = "0.2"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
 
@@ -44,6 +45,9 @@ REQUIRED_FIELDS = [
 KNOWN_FIELDS = store.FIELD_TABLE
 
 VALID_TYPES = {"location", "faction", "character", "event", "item"}
+# 实验类型（1.1）：x-<命名空间>-<名称>，与 kind 的 x- 泄压阀同一套（§5.4）——
+# 能存、不判错，CA102 记 info；确定普适了再进 VALID_TYPES（那一步才是收紧词表）。
+X_TYPE_RE = re.compile(r"^x-[a-z0-9]+-[a-z0-9-]+$")
 VALID_STATUS = {"draft", "trial", "canon", "archived"}
 VALID_STANCE = {"official", "heretic", "unknown"}
 LAYERS = ["geo", "resource", "production", "economy", "fiscal", "military",
@@ -103,8 +107,12 @@ def check_structure(e: Entry, findings: list[Finding],
                                 "archived 条目缺少 `superseded_by`（无承接者时填 null）"))
     if "type" in e.meta and (not isinstance(e.meta["type"], str)
                              or e.meta["type"] not in VALID_TYPES):
-        findings.append(Finding("CA102", "error", rel,
-                                f"type={e.meta['type']!r} 非法，须为 {sorted(VALID_TYPES)}"))
+        if isinstance(e.meta["type"], str) and X_TYPE_RE.match(e.meta["type"]):
+            findings.append(Finding("CA102", "info", rel,
+                                    f"type={e.meta['type']!r} 为实验类型（x- 前缀），已计入案例收集"))
+        else:
+            findings.append(Finding("CA102", "error", rel,
+                                    f"type={e.meta['type']!r} 非法，须为 {sorted(VALID_TYPES)}"))
     if "status" in e.meta and (not isinstance(e.meta["status"], str)
                                or e.meta["status"] not in VALID_STATUS):
         findings.append(Finding("CA102", "error", rel,
@@ -370,6 +378,146 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
     return reports
 
 
+# ---- 导出（前端 / 其他出口用的数据集）------------------------------------
+
+EXPORT_EXCERPT_CHARS = 200  # 与 CA104 的 MIN_BODY_CHARS 同一个量级：够看开头，不当正文用
+LEVEL_ORDER = {"error": 0, "warning": 1, "info": 2}
+
+
+def _entry_export(e: Entry) -> dict:
+    """一个条目的导出形态：选定字段 + 统一视图的边。前端不该自己解析 Markdown。"""
+    meta = e.meta
+    d = meta.get("date")
+    return {
+        "id": e.id,
+        "path": e.rel,
+        "title": meta.get("title"),
+        "type": meta.get("type"),
+        "status": meta.get("status"),
+        "layer": meta.get("layer"),
+        "author": meta.get("author"),
+        "date": d.isoformat() if isinstance(d, date) else d,
+        "load_bearing": meta.get("load_bearing"),
+        "ai_assisted": meta.get("ai_assisted"),
+        "superseded_by": meta.get("superseded_by"),
+        "parse_error": e.parse_error,
+        "body_chars": len(e.body or ""),
+        "body_excerpt": (e.body or "").strip()[:EXPORT_EXCERPT_CHARS],
+        "x_fields": {k: v for k, v in meta.items() if str(k).startswith("x-")},
+        "relations": [{"source": e.id, "type": r.type, "target": r.target, **r.attrs}
+                      for r in e.relations],
+    }
+
+
+def _counts(values) -> dict:
+    """vocabularies 计数：只数字符串值。写坏的值（如 `type: [faction]`）不该拖垮导出——
+    它自己已经由 CA102 报出来了，条目里也照原样留着。"""
+    out: dict = {}
+    for v in values:
+        if not isinstance(v, str):
+            continue
+        out[v] = out.get(v, 0) + 1
+    return {k: out[k] for k in sorted(out)}
+
+
+def build_export(all_entries: list[Entry], findings: list[Finding],
+                 reports: list[dict], root: Path) -> dict:
+    """把已算好的审计结果整理成自描述数据集。确定性：无时间戳、无绝对路径。"""
+    entries = sorted((_entry_export(e) for e in all_entries), key=lambda d: d["path"])
+    known = {e.id for e in all_entries if e.id}
+    relations = [edge for d in entries for edge in d["relations"]]
+    dangling = []
+    for edge in relations:
+        if edge["target"] in known:
+            continue
+        dangling.append({
+            "source": edge["source"], "type": edge["type"], "target": edge["target"],
+            "reason": "world-ref" if WORLD_REF_RE.match(edge["target"]) else "missing-id",
+        })
+    assets = []
+    assets_dir = root / "assets"
+    if assets_dir.is_dir():
+        for p in sorted(assets_dir.rglob("*")):
+            if p.is_file() and ".git" not in p.parts:
+                assets.append({"path": str(p.relative_to(root)), "bytes": p.stat().st_size})
+    parsed = [d for d in entries if not d["parse_error"]]
+    dep_kinds = [a.get("kind") for d in parsed for a in d["relations"]
+                 if a["type"] == "depends_on" and a.get("kind") is not None]
+    stances = [a.get("stance") for d in parsed for a in d["relations"]
+               if a.get("stance") is not None]
+    levels = _counts(f.level for f in findings)
+    return {
+        "protocol_version": PROTOCOL_VERSION,
+        "contract_version": CONTRACT_VERSION,
+        "counts": {
+            "entries": len(entries),
+            "unparsed": len(entries) - len(parsed),
+            "relations": len(relations),
+            "dangling": len(dangling),
+            "assets": len(assets),
+            "findings": len(findings),
+            "errors": levels.get("error", 0),
+            "warnings": levels.get("warning", 0),
+            "infos": levels.get("info", 0),
+        },
+        "vocabularies": {
+            "types": _counts(d["type"] for d in parsed if d["type"] is not None),
+            "statuses": _counts(d["status"] for d in parsed if d["status"] is not None),
+            "layers": _counts(d["layer"] for d in parsed if d["layer"] is not None),
+            "kinds": _counts(dep_kinds),
+            "stances": _counts(stances),
+            "relation_types": _counts(a["type"] for d in parsed for a in d["relations"]),
+            "fields": _counts(k for e in all_entries if not e.parse_error for k in e.meta),
+        },
+        "entries": entries,
+        "relations": relations,
+        "dangling": dangling,
+        "assets": assets,
+        "findings": [{"rule": f.rule, "level": f.level, "entry": f.entry,
+                      "message": f.message} for f in findings],
+        "reports": reports,
+    }
+
+
+def export_world(root: Path, packs=(), impact=(), extra_known=frozenset(),
+                 dup_threshold: float = 0.85) -> dict:
+    """世界目录 → 导出数据集。CLI 的 `export` 与 serve.py 共用这一条路径。
+
+    导出不是判定：这里绝不改退出码，也不吞掉 findings——它们原样进数据集。
+    """
+    all_entries, index, findings, reports = run(root, dup_threshold, list(impact),
+                                                extra_known=extra_known)
+    _apply_packs(packs, index, findings)
+    findings.sort(key=lambda f: (LEVEL_ORDER.get(f.level, 3), f.rule, f.entry))
+    return build_export(all_entries, findings, reports, root)
+
+
+def _load_packs(names: list[str]):
+    """扩展包加载。返回 (pack 模块列表, 扩展字段集)；不可用时返回 (None, None)。"""
+    packs: list = []
+    extra_known: frozenset[str] = frozenset()
+    for name in names:
+        if name != "econ":
+            continue
+        try:
+            import econ
+        except ImportError:
+            return None, None
+        extra_known |= econ.KNOWN_FIELDS  # 扩展包字段注入，先于 CA106 检查
+        packs.append(econ)
+    return packs, extra_known
+
+
+def _apply_packs(packs, index: dict, findings: list[Finding]) -> None:
+    for pack in packs:
+        for e in index.values():
+            if not e.parse_error:
+                pack.check_entry(
+                    e.meta, e.rel,
+                    lambda rule, level, msg, rel=e.rel:
+                        findings.append(Finding(rule, level, rel, msg)))
+
+
 # ---- 主流程 --------------------------------------------------------------
 
 
@@ -393,7 +541,7 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
 
 def main() -> int:
     # 人类工作流子命令：init / new / link；其余按审计（check）处理
-    if len(sys.argv) > 1 and sys.argv[1] in ("init", "new", "link"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("init", "new", "link", "export"):
         cmd = sys.argv[1]
         sp = argparse.ArgumentParser(prog=f"canonlint {cmd}")
         sp.add_argument("--root", type=Path, default=Path("."),
@@ -413,6 +561,15 @@ def main() -> int:
             sp.add_argument("dst")
             sp.add_argument("--kind", required=True)
             sp.add_argument("--critical", action="store_true")
+        if cmd == "export":
+            sp.add_argument("root_pos", type=Path, nargs="?", default=None,
+                            help="世界仓库目录（位置参数，等价 --root）")
+            sp.add_argument("--out", type=Path, default=None,
+                            help="写到文件（默认打到 stdout）")
+            sp.add_argument("--impact", nargs="*", default=[], metavar="ID",
+                            help="附带指定条目的下游影响闭包（CA504）")
+            sp.add_argument("--pack", action="append", default=[], choices=["econ"],
+                            help="启用协议扩展包（econ = WGP-econ 数值系统，CA6xx）")
         a = sp.parse_args(sys.argv[2:])
         if cmd == "init":
             # exe 从这里传进去：store 里算不出「用户敲的 canonlint 在哪」
@@ -426,6 +583,26 @@ def main() -> int:
         if cmd == "link":
             return store.cmd_link(a.root, a.src, a.dst, a.kind, a.critical,
                                   kind_choices=KIND_INITIAL_SET)
+        if cmd == "export":
+            root = (a.root_pos or a.root).resolve()
+            if not root.is_dir():
+                print(f"error: {root} 不是目录", file=sys.stderr)
+                return 2
+            packs, extra_known = _load_packs(a.pack)
+            if packs is None:
+                print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）",
+                      file=sys.stderr)
+                return 2
+            data = export_world(root, packs, a.impact, extra_known)
+            text = json.dumps(data, ensure_ascii=False, indent=2)
+            if a.out:
+                a.out.parent.mkdir(parents=True, exist_ok=True)
+                a.out.write_text(text + "\n", encoding="utf-8")
+                print(f"导出 {data['counts']['entries']} 个条目 / "
+                      f"{data['counts']['relations']} 条边 → {a.out}")
+            else:
+                print(text)
+            return 0  # 导出不是判定：要门禁请用 canonlint <root> --strict
 
     ap = argparse.ArgumentParser(
         description=f"canonlint — WGP 协议参考实现 v{PROTOCOL_VERSION}",
@@ -435,6 +612,7 @@ def main() -> int:
             "                                                 （entries/ + 模板 + pre-commit 钩子）\n"
             "  canonlint new <type> <标题> [--id ID]          新建一个草稿条目\n"
             "  canonlint link <源id> <目标id> --kind K        添加一条依赖边\n"
+            "  canonlint export [目录] [--out 文件]           导出数据集（前端/其他出口用，不判定）\n"
             "  canonlint <仓库根> --strict                    审计（error 与 warning 都拦）\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -448,17 +626,11 @@ def main() -> int:
                     help="启用协议扩展包（econ = WGP-econ 数值系统，CA6xx）")
     args = ap.parse_args()
 
-    packs = []
-    extra_known: frozenset[str] = frozenset()
-    if "econ" in args.pack:
-        try:
-            import econ
-        except ImportError:
-            print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）",
-                  file=sys.stderr)
-            return 2
-        extra_known |= econ.KNOWN_FIELDS  # 扩展包字段注入，先于 CA106 检查
-        packs.append(econ)
+    packs, extra_known = _load_packs(args.pack)
+    if packs is None:
+        print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）",
+              file=sys.stderr)
+        return 2
 
     root = args.root.resolve()
     if not root.is_dir():
@@ -468,16 +640,9 @@ def main() -> int:
     all_entries, index, findings, reports = run(root, args.dup_threshold, args.impact,
                                                 extra_known=extra_known)
 
-    for pack in packs:
-        for e in index.values():
-            if not e.parse_error:
-                pack.check_entry(
-                    e.meta, e.rel,
-                    lambda rule, level, msg, rel=e.rel:
-                        findings.append(Finding(rule, level, rel, msg)))
+    _apply_packs(packs, index, findings)
 
-    order = {"error": 0, "warning": 1, "info": 2}
-    findings.sort(key=lambda f: (order.get(f.level, 3), f.rule, f.entry))
+    findings.sort(key=lambda f: (LEVEL_ORDER.get(f.level, 3), f.rule, f.entry))
     errors = [f for f in findings if f.level == "error"]
     warnings = [f for f in findings if f.level == "warning"]
     n_entries = sum(1 for e in all_entries if not e.parse_error)

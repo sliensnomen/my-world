@@ -40,6 +40,13 @@ python3 classlint/classlint.py check ~/worlds/grey-harbor-econ --impact some-id 
 python3 classlint/classlint.py graph ~/worlds/grey-harbor-econ --format dot       # 只读
 ```
 
+```bash
+# ── 出口：把世界数据交给前端（只读，不判定）
+python3 canonlint.py export ~/worlds/grey-harbor --out world.json   # 导出数据集（合同见 docs/接口说明.md）
+python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口：/api/world、/api/entry/<id> …
+# 前端读 /api/world 或 world.json；wgp-client.js 负责补默认值、给出思维导图要的形状
+```
+
 退出码：`0` 通过 · `1` 有 error（`--strict` 时 warning 也算）· `2` 用法/环境错误（例如没装 pyyaml）。
 `report` 级别的发现（CA504 影响报告、`graph`）**永不进退出码**。
 
@@ -64,7 +71,7 @@ python3 classlint/classlint.py graph ~/worlds/grey-harbor-econ --format dot     
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
 - ✅ **能判**：23 条 CA 规则（结构 / 引用 / 承重链条 / 重复 / 影响报告）+ CL1xx + PE001–PE005
-- ✅ **有回归网**：`tests/` 四套（17 + 10 + 12 + 12 项检查）+ `classlint/tests/` 一套（15 个夹具世界），
+- ✅ **有回归网**：`tests/` 五套（17 + 10 + 12 + 15 + 13 项检查）+ `classlint/tests/` 一套（15 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ⬜ **没有界面** —— 前端最后做：没有判定，就没有值得渲染的东西；渲染器是别人能写的东西
 - ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）

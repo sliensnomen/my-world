@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**23 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.0"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.1"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -97,7 +97,7 @@ ai_assisted: false
 |---|---|---|---|
 | `id` | **必须** | string | 全库唯一；小写字母/数字/连字符；**一旦发布永不更改、永不复用** |
 | `title` | 必须 | string | 显示名，可含任意字符 |
-| `type` | 必须 | enum | `location` / `faction` / `character` / `event` / `item` |
+| `type` | 必须 | enum | `location` / `faction` / `character` / `event` / `item`；`x-<命名空间>-<名称>`（如 `x-wgp-religion`）为实验类型：能存、不判错，CA102 记 info（协议 1.1 起，与 `kind` 的泄压阀同一套） |
 | `author` | 必须 | string | 实名/笔名皆可；实名映射表属实现细节，不入协议 |
 | `date` | 必须 | date | ISO 8601（YYYY-MM-DD），首次创建日期 |
 | `status` | 必须 | enum | 见 §3 状态机 |
@@ -293,7 +293,7 @@ geo → resource → production → economy → fiscal → military → politica
 |---|---|---|
 | CA100 | error | 文件无法解析（无 frontmatter / YAML 错误 / 非映射） |
 | CA101 | error | 缺少必填字段（按 §2.2，含条件必填） |
-| CA102 | error | 枚举字段非法（`type`/`status`/`layer`/`stance`） |
+| CA102 | error | 枚举字段非法（`type`/`status`/`layer`/`stance`）；`type` 是 `x-` 实验类型时降为 info（协议 1.1） |
 | CA103 | error | `date` 非合法 ISO 日期 |
 | CA104 | warning | `trial`/`canon` 条目正文少于 200 字（计数算法见 §6.6） |
 | CA105 | error | `id` 重复，或含小写字母/数字/连字符以外字符 |
@@ -393,6 +393,7 @@ geo → resource → production → economy → fiscal → military → politica
 2. 仓库在 `CONSTITUTION.md` 或 frontmatter 中声明所遵循的协议版本；major 版本不同的实现不得混用判定结果。
 3. 变更提案必须附：**动机、对现有仓库的迁移成本、参考实现中的对应 diff**。没有实现背书的协议变更是空谈。
 4. **扩展包机制：** 数值系统（WGP-econ）、地理坐标（WGP-geo）等作为独立扩展包维护，独立版本号；仓库声明启用哪些包，lint 只跑启用包的规则。core 保持最小。
+5. **实验值泄压阀（协议 1.1 起）：** `type` 与 `depends_on.kind` 一样，允许 `x-<命名空间>-<名称>` 形式的实验值——**能存、不判错**，`type` 记 CA102 info、`kind` 记 CA108 info。词表要扩，先攒真实案例，再按第 1 条升版本。
 
 ---
 

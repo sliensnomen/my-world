@@ -99,6 +99,7 @@ python3 classlint/tests/run_tests.py
 python3 tests/run_tests.py            # 9 个世界夹具 + 17 项检查，逐字节比对快照
 python3 tests/test_schema.py          # 契约 ↔ 代码常量
 python3 tests/test_store.py           # 存储层边界与写入路径
+python3 tests/test_serve.py           # 接口（serve.py）与解析器（wgp-client.js）
 python3 tests/test_docs.py            # 文档里的数字 ↔ 代码
 python3 classlint/tests/run_tests.py  # 15 个 classlint 夹具
 ```
@@ -114,7 +115,7 @@ python3 classlint/tests/run_tests.py  # 15 个 classlint 夹具
 
 | 检查名（分支保护依赖） | 跑什么 |
 |---|---|
-| `canonlint (3.12)` / `canonlint (3.14)` | `tests/run_tests.py` → `tests/test_schema.py` → `tests/test_store.py` → `tests/test_docs.py` |
+| `canonlint (3.12)` / `canonlint (3.14)` | `tests/run_tests.py` → `tests/test_schema.py` → `tests/test_store.py` → `tests/test_serve.py` → `tests/test_docs.py` |
 | `classlint (3.12)` / `classlint (3.14)` | `classlint/tests/run_tests.py` |
 
 **CI 不审计这个仓库本身**（为什么：本仓库没有 `entries/` 之类的入口目录，`canonlint . --strict`
