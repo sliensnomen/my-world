@@ -245,6 +245,25 @@ def check_文档里的_JSON_样例与真实导出一致():
     assert not extra, f"样例的边里有真实导出不会给的键：{sorted(extra)}"
 
 
+def check_字段说明覆盖真实导出的每个字段():
+    """第四节的字段表就是对方的字典：真实导出里有的字段，一个都不许漏（漏了只能猜）。"""
+    doc = ROOT / "docs" / "给前端的说明.md"
+    text = doc.read_text(encoding="utf-8")
+    assert "## 四、字段是什么意思" in text, "给前端的说明里找不到「字段是什么意思」那一节"
+    body = text.split("## 四、字段是什么意思", 1)[1].split("\n## ", 1)[0]
+    documented = set(re.findall(r"`([a-z_]{2,})`", body))
+    documented |= set(re.findall(r"([a-z_]{2,})\\\[\\\]", body))  # 形如 entries\[\] 的小标题
+    real = canonlint.export_world(WORLD, impact=("arrakis",))     # 带上 report，字段才全
+    fields = set(real)
+    for key in ("entries", "relations", "dangling", "findings", "reports", "assets"):
+        for item in real.get(key, []):
+            fields |= set(item)
+    fields |= set(real.get("counts", {}))
+    fields |= set(real.get("vocabularies", {}))
+    missing = sorted(f for f in fields if f not in documented)
+    assert not missing, f"字段说明里没写到这些字段：{missing}"
+
+
 CHECKS = [
     ("接口给的数据 = CLI 导出的数据", check_world_同_CLI_导出),
     ("两次请求一致，且不漏绝对路径", check_两次请求一致_且没有绝对路径),
@@ -261,6 +280,7 @@ CHECKS = [
     ("解析器 wgp-client.js 在 node 下行为正确", check_解析器在_node_下的行为),
     ("文档里写的路由都真实存在", check_文档写的路由都是真的),
     ("文档里的 JSON 样例与真实导出一致", check_文档里的_JSON_样例与真实导出一致),
+    ("字段说明覆盖真实导出的每个字段", check_字段说明覆盖真实导出的每个字段),
 ]
 
 
