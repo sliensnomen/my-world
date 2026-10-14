@@ -212,11 +212,61 @@ def check_文档写的路由都是真的():
     assert not undocumented, f"接口里有文档没写的路由：{undocumented}"
 
 
+def _strip_jsonc(text: str) -> str:
+    """把 // 注释去掉（字符串里的不算），好让带注释的说明版也能被机器核对。"""
+    out, i, in_string, quote = [], 0, False, ""
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if ch == "\\":
+                out.append(text[i + 1] if i + 1 < len(text) else "")
+                i += 2
+                continue
+            if ch == quote:
+                in_string = False
+            i += 1
+            continue
+        if ch in "\"'":
+            in_string, quote = True, ch
+            out.append(ch)
+            i += 1
+            continue
+        if text.startswith("//", i):
+            while i < len(text) and text[i] != "\n":
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _verify_sample(sample, real, where: str):
+    """一份样例必须和真实导出逐字段对得上——干净版和带注释版都要过这一关。"""
+    assert set(sample) == set(real), (
+        f"{where} 顶层键 {sorted(sample)} 与真实导出 {sorted(real)} 不一致")
+    assert sample["protocol_version"] == canonlint.PROTOCOL_VERSION, (
+        f"{where} 的 protocol_version={sample['protocol_version']}，代码是 {canonlint.PROTOCOL_VERSION}")
+    assert sample["contract_version"] == canonlint.CONTRACT_VERSION, (
+        f"{where} 的 contract_version={sample['contract_version']}，代码是 {canonlint.CONTRACT_VERSION}")
+    assert sample["entries"], f"{where} 里一个条目都没有"
+    want, got = set(real["entries"][0]), set(sample["entries"][0])
+    assert got == want, (
+        f"{where} 的条目键与真实导出不一致：多了 {sorted(got - want)}，少了 {sorted(want - got)}")
+    assert sample["relations"], f"{where} 里一条边都没有"
+    rel_keys = set()
+    for edge in real["relations"]:
+        rel_keys |= set(edge)
+    extra = set(sample["relations"][0]) - rel_keys
+    assert not extra, f"{where} 的边里有真实导出不会给的键：{sorted(extra)}"
+
+
 def check_文档里的_JSON_样例与真实导出一致():
-    """文档里的样例是别人开工的依据：顶层键与条目键必须跟真实导出**逐字段**对得上。"""
+    """文档里的样例是别人开工的依据：干净版和带注释版都必须与真实导出逐字段对得上。"""
     doc = ROOT / "docs" / "给前端的说明.md"
     text = doc.read_text(encoding="utf-8")
-    # 样例块优先找 ```json，没有就逐个试（编辑器保存时可能把语言标记抹掉）
+    real = canonlint.export_world(WORLD)
+    # 干净版：优先找 ```json，没有就逐个试（编辑器保存时可能把语言标记抹掉）
     blocks = re.findall(r"```json\n(.*?)```", text, re.S) or re.findall(r"```\n(.*?)```", text, re.S)
     sample = None
     for block in blocks:
@@ -226,23 +276,12 @@ def check_文档里的_JSON_样例与真实导出一致():
         except ValueError:
             continue
     assert sample is not None, "给前端的说明里找不到能解析的 JSON 样例（样例就是合同的一半）"
-    real = canonlint.export_world(WORLD)
-    assert set(sample) == set(real), (
-        f"样例顶层键 {sorted(sample)} 与真实导出 {sorted(real)} 不一致")
-    assert sample["protocol_version"] == canonlint.PROTOCOL_VERSION, (
-        f"样例的 protocol_version={sample['protocol_version']}，代码是 {canonlint.PROTOCOL_VERSION}")
-    assert sample["contract_version"] == canonlint.CONTRACT_VERSION, (
-        f"样例的 contract_version={sample['contract_version']}，代码是 {canonlint.CONTRACT_VERSION}")
-    assert sample["entries"], "样例里一个条目都没有"
-    want, got = set(real["entries"][0]), set(sample["entries"][0])
-    assert got == want, (
-        f"样例的条目键与真实导出不一致：样例多了 {sorted(got - want)}，少了 {sorted(want - got)}")
-    assert sample["relations"], "样例里一条边都没有"
-    rel_keys = set()
-    for edge in real["relations"]:
-        rel_keys |= set(edge)
-    extra = set(sample["relations"][0]) - rel_keys
-    assert not extra, f"样例的边里有真实导出不会给的键：{sorted(extra)}"
+    _verify_sample(sample, real, "干净样例")
+    # 带注释的说明版：去掉 // 之后必须跟干净版说得一样（不然两份会漂）
+    jsonc = re.findall(r"```jsonc\n(.*?)```", text, re.S)
+    assert jsonc, "带注释的说明版不见了（它是给人看的那一份）"
+    annotated = json.loads(_strip_jsonc(jsonc[0]))
+    _verify_sample(annotated, real, "带注释的说明版")
 
 
 def check_字段说明覆盖真实导出的每个字段():
