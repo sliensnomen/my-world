@@ -27,18 +27,22 @@
 /PROTOCOL.md             @sliensnomen
 /classlint/PROTOCOL.md   @sliensnomen
 
-# 远端当前**没有**任何保护（`gh api repos/sliensnomen/my-world/branches/main/protection`
-# 返回 404 "Branch not protected"）。需要打开的：
+# 远端保护**已经打开**，而且与本文件列的清单一致（2026-10-15 实测
+# `gh api repos/sliensnomen/my-world/branches/main/protection`）：
 #
-#   第 1 步（现在就能开）：必须走 PR 才能改 main
-#   第 2 步（等第一个 PR 跑出检查名之后再开，否则会卡在
-#            "Expected — Waiting for status to be reported"）：
-#     必须通过这四项检查（matrix 展开成四个名字，别只填一半）：
-#       canonlint (3.12)   canonlint (3.14)
-#       classlint (3.12)   classlint (3.14)
-#     并勾选「合并前分支必须是最新的」
+#   required_status_checks.contexts = ["canonlint (3.12)", "canonlint (3.14)",
+#                                      "classlint (3.12)", "classlint (3.14)"]
+#   required_status_checks.strict   = true      ← 合并前分支必须是最新的
+#   required_pull_request_reviews   = 存在      ← 必须走 PR 才能改 main
+#   required_approving_review_count = 0         ← 还没要求人工复核
+#   enforce_admins                  = false     ← 所以管理员仍能直推（被记为
+#                                                 "Bypassed rule violations"）
 #
-# 但**先不要**打开 "Require review from Code Owners"：现在唯一的 code owner
+# 之前这里写「远端当前没有任何保护、gh api 返回 404」是**错的**：那只说明当时
+# 用的 token 权限不够——GitHub 对无权限的 token 回 404 而不是 403。仓库所有者
+# 自己的 push 会被明确告知绕过了哪几条，别再把「查不到」当成「没开」。
+#
+# 仍然**先不要**打开 "Require review from Code Owners"：现在唯一的 code owner
 # 就是仓库所有者本人，而 GitHub 不允许自己 approve 自己——一旦打开，所有者
 # 自己的 PR 就再也无法满足「须 code owner 复核」，只能靠管理员强推绕过。
 # 等有第二位 code owner 再打开这一条。
