@@ -140,22 +140,25 @@ def check_structure(e: Entry, findings: list[Finding],
     # CA107/CA108: depends_on schema 与 kind；CA109: conflicts/canon_refs 类型
     for err in e.deps[1]:
         findings.append(Finding(err.rule, "error", rel, err.msg))
-    for dep in e.deps[0]:
-        if dep.kind in KIND_INITIAL_SET:
-            continue
-        if dep.kind.startswith("x-"):
+    # 边的判定一律读**统一视图**：旧具名字段与规范形 `relations` 一视同仁
+    for dep in e.edges_of("depends_on"):
+        kind = dep.attrs.get("kind")
+        if kind is None or kind in KIND_INITIAL_SET:
+            continue  # 规范形不强制 kind；旧写法的缺 kind 已由上面的 schema 错误报掉
+        if isinstance(kind, str) and kind.startswith("x-"):
             findings.append(Finding("CA108", "info", rel,
-                                    f"kind={dep.kind!r} 为实验值，已计入案例收集"))
+                                    f"kind={kind!r} 为实验值，已计入案例收集"))
         else:
             findings.append(Finding("CA108", "error", rel,
-                                    f"kind={dep.kind!r} 不在初始集且未带 x- 前缀"))
+                                    f"kind={kind!r} 不在初始集且未带 x- 前缀"))
     for err in e.conflicts[1]:
         findings.append(Finding(err.rule, "error", rel, err.msg))
-    for ref in e.conflicts[0]:
-        if ref.stance is not None and (not isinstance(ref.stance, str)
-                                       or ref.stance not in VALID_STANCE):
+    for ref in e.edges_of("conflicts_with"):
+        stance = ref.attrs.get("stance")
+        if stance is not None and (not isinstance(stance, str)
+                                   or stance not in VALID_STANCE):
             findings.append(Finding("CA102", "error", rel,
-                                    f"stance={ref.stance!r} 非法，须为 {sorted(VALID_STANCE)}"))
+                                    f"stance={stance!r} 非法，须为 {sorted(VALID_STANCE)}"))
     for err in e.canon_ref_ids[1]:
         findings.append(Finding(err.rule, "error", rel, err.msg))
     # 规范形 relations：这里只报**形状**；关系名是否成立由判定器决定（PR#3）
@@ -172,7 +175,11 @@ def check_content(e: Entry, findings: list[Finding]) -> None:
         findings.append(Finding("CA104", "warning", rel,
                                 f"正文 {len(e.clean_body)} 字，{e.status} 档建议 ≥{MIN_BODY_CHARS} 字"))
     if e.meta.get("load_bearing") is True:
-        missing = [f for f in ("layer", "depends_on") if f not in e.meta]
+        missing = []
+        if "layer" not in e.meta:
+            missing.append("layer")
+        if "depends_on" not in e.meta and not e.edges_of("depends_on"):
+            missing.append("depends_on")
         if missing:
             findings.append(Finding("CA302", "error", rel,
                                     f"load_bearing: true 但缺 {missing}"))
@@ -202,7 +209,7 @@ def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
                                         f"{via} 引用指向不存在的 id `{ref_id}`"))
             return target
 
-        for ref_id in e.canon_ref_ids[0]:
+        for ref_id in [r.target for r in e.edges_of("canon_refs")]:
             target = check_target(ref_id, "canon_refs")
             if target is None or target.status == "canon":
                 continue
@@ -215,13 +222,13 @@ def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
             else:
                 findings.append(Finding("CA402", "error", rel,
                                         f"canon_refs 目标 `{ref_id}` 状态为 {target.status}，须为 canon"))
-        for dep in e.deps[0]:
-            target = check_target(dep.id, "depends_on")
+        for dep in e.edges_of("depends_on"):
+            target = check_target(dep.target, "depends_on")
             if target is not None and e.status == "canon" and target.status != "canon":
                 findings.append(Finding("CA404", "error", rel,
-                                        f"canon 条目的 depends_on 目标 `{dep.id}` 状态为 {target.status}，须为 canon"))
-        for ref in e.conflicts[0]:
-            check_target(ref.id, "conflicts_with")
+                                        f"canon 条目的 depends_on 目标 `{dep.target}` 状态为 {target.status}，须为 canon"))
+        for ref in e.edges_of("conflicts_with"):
+            check_target(ref.target, "conflicts_with")
 
         # superseded_by 的目标存在性（CA401）
         sb = e.meta.get("superseded_by")
@@ -239,7 +246,7 @@ def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
         referenced = any(
             ref_id == e.id
             for o in index.values() if not o.parse_error
-            for ref_id in o.canon_ref_ids[0]
+            for ref_id in (r.target for r in o.edges_of("canon_refs"))
         )
         if referenced and "superseded_by" not in e.meta:
             findings.append(Finding("CA405", "error", e.rel,
@@ -249,16 +256,16 @@ def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
     for e in index.values():
         if e.parse_error:
             continue
-        for ref in e.conflicts[0]:
-            target = index.get(ref.id)
+        for ref in e.edges_of("conflicts_with"):
+            target = index.get(ref.target)
             if target is None or target.parse_error:
                 continue
-            if any(r.id == e.id for r in target.conflicts[0]):
+            if any(r.target == e.id for r in target.edges_of("conflicts_with")):
                 continue  # 有回指即对称，不究形式
-            if ref.stance is not None:
+            if ref.attrs.get("stance") is not None:
                 continue  # 本方对象式 = 有意不对称
             findings.append(Finding("CA403", "warning", e.rel,
-                                    f"与 `{ref.id}` 的矛盾标注不对称（对方未回指）"))
+                                    f"与 `{ref.target}` 的矛盾标注不对称（对方未回指）"))
 
 
 def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
@@ -267,9 +274,9 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
     for e in index.values():
         if e.parse_error or not e.id:
             continue
-        deps = e.deps[0]
-        graph[e.id] = [d.id for d in deps
-                       if d.id in index and d.kind in MATERIAL_KINDS]
+        deps = e.edges_of("depends_on")
+        graph[e.id] = [d.target for d in deps
+                       if d.target in index and d.attrs.get("kind") in MATERIAL_KINDS]
 
         if e.meta.get("load_bearing") is not True:
             continue
@@ -277,19 +284,19 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
         if layer not in LAYER_INDEX:
             continue  # CA102/CA302 已报
         for d in deps:
-            if d.kind not in MATERIAL_KINDS:
+            if d.attrs.get("kind") not in MATERIAL_KINDS:
                 continue  # 规范族边豁免方向检查（§5.5）
-            target = index.get(d.id)
+            target = index.get(d.target)
             if target is None:
                 continue  # CA401 已报
             tl = target.meta.get("layer")
             if tl in LAYER_INDEX and LAYER_INDEX[tl] > LAYER_INDEX[layer]:
                 findings.append(Finding("CA501", "error", e.rel,
-                                        f"depends_on 目标 `{d.id}` 层级 {tl}（序号 {LAYER_INDEX[tl]}）"
+                                        f"depends_on 目标 `{d.target}` 层级 {tl}（序号 {LAYER_INDEX[tl]}）"
                                         f"高于本条目 {layer}（序号 {LAYER_INDEX[layer]}）"))
         # CA503: economy/fiscal/military/political 层须有物质族 critical 依赖；ideology 豁免
         if layer in CA503_LAYERS and not any(
-                d.critical and d.kind in MATERIAL_KINDS for d in deps):
+                d.attrs.get("critical") and d.attrs.get("kind") in MATERIAL_KINDS for d in deps):
             findings.append(Finding("CA503", "warning", e.rel,
                                     f"{layer} 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）"))
 
@@ -353,8 +360,8 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
     for e in index.values():
         if e.parse_error or not e.id:
             continue
-        for d in e.deps[0]:
-            dependents.setdefault(d.id, []).append(e.id)
+        for d in e.edges_of("depends_on"):
+            dependents.setdefault(d.target, []).append(e.id)
 
     reports = []
     for subj in subjects:

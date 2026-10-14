@@ -131,8 +131,11 @@ def check_unknown_relation_names_are_kept():
 
 def check_undeclared_annotations_are_visible():
     with tempfile.TemporaryDirectory() as td:
-        root = make_world(Path(td), {"a-node": entry_text(
-            "a-node", "relations:\n  - type: depends_on\n    target: b-node\n")})
+        root = make_world(Path(td), {
+            "a-node": entry_text(
+                "a-node", "relations:\n  - type: depends_on\n    target: b-node\n"),
+            "b-node": entry_text("b-node"),  # 目标要真的在，才测得到「缺注解」这件事
+        })
         e = parsed(root, "a-node")
         assert e.undeclared_annotations and e.undeclared_annotations[0].undeclared == (
             "kind", "critical"), e.undeclared_annotations
@@ -304,10 +307,44 @@ def check_write_path_round_trip():
         assert rc == 2 and "承重墙条目必须给 layer" in err, f"rc={rc} out={out!r} err={err!r}"
 
 
+def check_canonical_edges_are_judged():
+    """规范形 `relations` 和旧具名字段必须**判定等价**：关系到不到得了人，两种写法一样判。
+
+    这是 Codex 评审第 3 条（统一视图 `Entry.relations` 当时还没接给判定器）的回归锁：
+    以前写成 `relations:` 就一条都不报、退出码 0。
+    """
+    canonical = ("relations:\n"
+                 "  - type: depends_on\n    target: missing-node\n"
+                 "  - type: canon_refs\n    target: also-missing\n"
+                 "  - type: conflicts_with\n    target: third-missing\n")
+    legacy = ("depends_on:\n  - id: missing-node\n    kind: resource\n    critical: true\n"
+              "canon_refs:\n  - also-missing\n"
+              "conflicts_with:\n  - third-missing\n")
+
+    def judged(text):
+        """只看 CA4xx/CA5xx 那些真的在读边的规则。"""
+        return sorted(l.strip() for l in text.splitlines()
+                      if l.strip().startswith(("[CA4", "[CA5")))
+
+    with tempfile.TemporaryDirectory() as td:
+        new_root = make_world(Path(td) / "a", {"a-node": entry_text(
+            "a-node", canonical, legacy_empty=False)})
+        old_root = make_world(Path(td) / "b", {"a-node": entry_text(
+            "a-node", legacy, legacy_empty=False)})
+        rc_new, out_new, _ = run([new_root])
+        rc_old, out_old, _ = run([old_root])
+        assert judged(out_new), f"规范形写法一条都没判：\n{out_new}"
+        assert rc_new == rc_old == 1, (rc_new, rc_old, out_new, out_old)
+        assert judged(out_new) == judged(out_old), (
+            "两种写法的判定结果不一样：\n规范形：\n" + "\n".join(judged(out_new))
+            + "\n旧写法：\n" + "\n".join(judged(out_old)))
+
+
 CHECKS = (
     ("规范形与旧写法等价（三种关系）", check_canonical_equals_legacy),
     ("规范形的形状错误会出现在报告里", check_shape_errors_reach_the_report),
     ("未知关系名原样保留、不下判语", check_unknown_relation_names_are_kept),
+    ("规范形的边与旧写法判定等价", check_canonical_edges_are_judged),
     ("缺注解的边可查、且不算错误", check_undeclared_annotations_are_visible),
     ("两种写法混用被记录（旧字段在前）", check_mixed_forms_are_recorded),
     ("字段表与判定侧常量一致", check_field_table_matches_rules),

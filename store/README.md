@@ -52,6 +52,10 @@ python3 tests/test_store.py       # 存储层边界（包括本文件的规矩�
 3. 判定器那边（`rules/`）决定它参不参与检查；存储层不判断关系名是否有意义，
    未知关系名**原样保留**。
 
+判定器**只读 `Entry.edges_of("关系名")`**（归一化视图），不再自己翻旧具名字段——
+所以旧写法与规范形 `relations` 走同一条路，新增的别名只要归一化进 `Entry.relations`，
+现有规则（CA401/402/403/404/405/501/502/503/504、CA108 kind）立刻就能看见它。
+
 **改 id 语法**
 
 只改 `store/model.py` 的 `ID_RE`。它会同时影响解析（`depends_on[].id`）、
@@ -81,5 +85,7 @@ python3 tests/test_store.py       # 存储层边界（包括本文件的规矩�
 契约的 `x-relation-source.aliases` 列了九个别名，本工具目前能读三种。其余六种
 （`owns` / `controls` / `extracts` / `coerces` / `legitimizes` / `owes`）今天会被
 CA106 报成「未定义字段」——它们在世界格式里合法，只是还没接上判定器。
+**归一化与判定已经接好**（判定器读 `Entry.edges_of(...)`，旧字段与规范形 `relations`
+一视同仁）；待收口的是关系名本身的词表——那属于理论，归判定层。
 `tests/test_store.py::check_relation_alias_drift` 把这个状态钉住了：收口那天，
 那个测试会失败，提醒你把它一起改掉。

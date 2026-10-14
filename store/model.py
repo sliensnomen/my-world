@@ -302,6 +302,13 @@ class Entry:
         out.extend(self.canonical_relations[0])
         return out
 
+    def edges_of(self, type_: str) -> list[Relation]:
+        """按关系名取边：**判定层只应该读这里**，别自己去翻旧具名字段。
+
+        统一视图里旧写法与规范形 `relations` 并列，所以同一条规则对两种写法一视同仁。
+        """
+        return [r for r in self.relations if r.type == type_]
+
     @cached_property
     def relation_errors(self) -> list[SchemaError]:
         """规范形 `relations` 的形状问题（旧字段的问题仍在 `deps`/`conflicts`/`canon_ref_ids` 里）。"""
