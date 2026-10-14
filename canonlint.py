@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""canonlint — 世界观治理协议（WGP）参考实现，协议版本 1.0
+"""canonlint — 世界观治理协议（WGP）参考实现。
+
+协议版本见下方 PROTOCOL_VERSION 常量（也是 JSON 输出里的 protocol_version），
+本 docstring 不重复数字，避免两处各写一份而对不上。
 
 规则编号即协议：本文件实现 PROTOCOL.md §6.3 全部确定性规则（CA504 见 --impact）。
 本文件只放**判定**（什么组合算错）；世界文件的读写契约在 store/（见 store/README.md）。
 用法:
-  canonlint.py <仓库根> [--strict] [--dup-threshold 0.85] [--json] [--impact ID...]
-  canonlint.py init|new|link ...   （人类工作流子命令，见 --help）
+  canonlint.py <仓库根> [--strict] [--dup-threshold 0.85] [--json] [--pack econ] [--impact ID...]
+  canonlint.py init|new|link|export ...   （人类工作流子命令，见 --help）
 退出码: 0=通过(或仅警告) 1=存在错误(--strict 下警告也算) 2=用法/环境错误
 """
 from __future__ import annotations
@@ -91,6 +94,17 @@ class Finding:
 # ---- 规则 ----------------------------------------------------------------
 
 
+def _has_successor(e: Entry) -> bool:
+    """archived 条目是否真有承接者。
+
+    `superseded_by` 字段缺 或 显式为 null，都表示**没有**承接者——契约把 null
+    定义为「无承接者」的合法写法（§4.1 / CA101 文案），所以降级级联的两条规则
+    （CA402 报在引用方、CA405 报在目标方）必须把 null 与字段缺当成同一件事，
+    否则填一个 null 就能把 CA405 关掉（评审 F4）。
+    """
+    return e.meta.get("superseded_by") is not None
+
+
 def check_structure(e: Entry, findings: list[Finding],
                     known_fields: frozenset | set = KNOWN_FIELDS) -> None:
     """CA1xx 结构规则。"""
@@ -161,9 +175,23 @@ def check_structure(e: Entry, findings: list[Finding],
                                     f"stance={stance!r} 非法，须为 {sorted(VALID_STANCE)}"))
     for err in e.canon_ref_ids[1]:
         findings.append(Finding(err.rule, "error", rel, err.msg))
+    # 六个后接线的具名字段（owns/controls/extracts/coerces/legitimizes/owes）：
+    # 形状问题必须报出来，否则「接线」等于把它们从 CA106 硬错误降级成静默
+    for err in e.named_relation_errors:
+        findings.append(Finding(err.rule, "error", rel, err.msg))
     # 规范形 relations：这里只报**形状**；关系名是否成立由判定器决定（PR#3）
     for err in e.relation_errors:
         findings.append(Finding(err.rule, "error", rel, err.msg))
+    # CA110: 关系名拼写近失守卫（契约 x-relation-vocabulary.spelling-guard）。
+    # 自由档允许自定义关系名（PROTOCOL §254 fail-open），所以这里只对「与已知规范名
+    # 编辑距离 ≤1」的名字发 warning——正是这条缝让 depends-on 这种拼写同时漏判又误判。
+    for raw_name in e.raw_relation_names:
+        near = store.nearest_relation_name(raw_name)
+        if near is not None:
+            findings.append(Finding("CA110", "warning", rel,
+                                    f"关系名 `{raw_name}` 与规范名 `{near}` 只差一个字符，"
+                                    f"疑似拼写错误，已按 `{near}` 判定；"
+                                    f"确是新关系请改用其它名字或加 `x-` 前缀"))
 
 
 def check_content(e: Entry, findings: list[Finding]) -> None:
@@ -178,15 +206,20 @@ def check_content(e: Entry, findings: list[Finding]) -> None:
         missing = []
         if "layer" not in e.meta:
             missing.append("layer")
-        if "depends_on" not in e.meta and not e.edges_of("depends_on"):
+        # 「声明」而不是「有边」：两种写法的同一句话必须判成同一个结果（§5.3）。
+        if not e.declares_dependencies and not e.edges_of("depends_on"):
             missing.append("depends_on")
         if missing:
             findings.append(Finding("CA302", "error", rel,
                                     f"load_bearing: true 但缺 {missing}"))
     else:
+        # CA301 只对**已定档**的条目发（trial/canon）：draft 还没到做决定的时候，而
+        # `--strict` 会让任何 warning 变成失败——以前一条把「政治/经济」写在正文里的
+        # 草稿在 --strict 下无法提交，审计器等于替作者做了决定（评审 F8，与 CA104
+        # 只对 trial/canon 报篇幅是同一个口径）。
         hay = str(e.meta.get("title", "")) + e.clean_body
         hits = [kw for kw in LOAD_BEARING_KEYWORDS if kw in hay]
-        if hits:
+        if hits and e.status in ("trial", "canon"):
             findings.append(Finding("CA301", "warning", rel,
                                     f"命中承重墙关键词 {hits}，但未声明 load_bearing——请考虑声明"))
 
@@ -213,8 +246,8 @@ def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
             target = check_target(ref_id, "canon_refs")
             if target is None or target.status == "canon":
                 continue
-            if target.status == "archived" and "superseded_by" not in target.meta:
-                continue  # 由 CA405 在 archived 条目侧报告，避免双报
+            if target.status == "archived" and not _has_successor(target):
+                continue  # 没有承接者，由 CA405 在 archived 条目侧报告，避免双报
             if target.status == "archived":
                 findings.append(Finding("CA402", "error", rel,
                                         f"canon_refs 目标 `{ref_id}` 已 archived，"
@@ -239,7 +272,9 @@ def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
             else:
                 check_target(sb, "superseded_by")
 
-    # CA405: archived 被引用且未填 superseded_by（报在目标侧，定位到处置责任人）
+    # CA405: archived、被 canon_refs 引用、且**没有承接者**（字段缺 或 显式 null）
+    # 报在目标侧，定位到处置责任人。`superseded_by: null` 是 CA101 允许的写法，
+    # 意思是「没有承接者」——那正是降级不完整的情形，不能因为填了 null 就放行。
     for e in index.values():
         if e.parse_error or e.status != "archived":
             continue
@@ -248,9 +283,11 @@ def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
             for o in index.values() if not o.parse_error
             for ref_id in (r.target for r in o.edges_of("canon_refs"))
         )
-        if referenced and "superseded_by" not in e.meta:
+        if referenced and not _has_successor(e):
+            why = ("未填 `superseded_by`" if "superseded_by" not in e.meta
+                   else "声称没有承接者（`superseded_by: null`）")
             findings.append(Finding("CA405", "error", e.rel,
-                                    "archived 条目仍被 canon_refs 引用且未填 superseded_by（降级处置不完整）"))
+                                    f"archived 条目仍被 canon_refs 引用，但{why}——降级处置不完整"))
 
     # CA403: 无回指且本方简式才报（对方是否有 stance 与本关系无关，见 §4.2 第 3 条）
     for e in index.values():
@@ -340,17 +377,42 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
                 color[node] = BLACK
 
 
+def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:
+    """`superseded_by` 声明的降级承接对（无序）。
+
+    承接条目按定义要**接着**旧条目的内容写，正文天然高度相似——那正是降级处置的样子，
+    不是重复。评审 F9：这条豁免以前不存在，于是每一对正常的 archived→承接者都会在
+    `--strict` 下把世界判红。
+    """
+    pairs = set()
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        sb = e.meta.get("superseded_by")
+        if isinstance(sb, str) and sb and sb != e.id:
+            pairs.add(frozenset((e.id, sb)))
+    return pairs
+
+
 def check_duplicates(index: dict[str, Entry], threshold: float,
                      findings: list[Finding]) -> None:
-    """CA201: 正文相似度（§6.6 预处理，双方 ≥100 字符才参与）。"""
-    items = [(e.rel, e.clean_body) for e in index.values() if not e.parse_error]
-    items = [(rel, t) for rel, t in items if len(t) >= MIN_DUP_CHARS]
+    """CA201: 正文相似度（§6.6 预处理，双方 ≥100 字符才参与）。
+
+    降级承接对（`superseded_by` 声明的两方）豁免：相似是**要求的**，不是疑似重复。
+    """
+    exempt = _supersede_pairs(index)
+    items = [(e.id, e.rel, e.clean_body) for e in index.values() if not e.parse_error]
+    items = [it for it in items if len(it[2]) >= MIN_DUP_CHARS]
     for i in range(len(items)):
         for j in range(i + 1, len(items)):
-            ratio = difflib.SequenceMatcher(None, items[i][1], items[j][1]).ratio()
+            id_i, rel_i, text_i = items[i]
+            id_j, rel_j, text_j = items[j]
+            if id_i and id_j and frozenset((id_i, id_j)) in exempt:
+                continue
+            ratio = difflib.SequenceMatcher(None, text_i, text_j).ratio()
             if ratio >= threshold:
                 findings.append(Finding(
-                    "CA201", "warning", f"{items[i][0]} ↔ {items[j][0]}",
+                    "CA201", "warning", f"{rel_i} ↔ {rel_j}",
                     f"正文相似度 {ratio:.0%} ≥ {threshold:.0%}，疑似重复"))
 
 
@@ -374,6 +436,9 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
                     seen.add(dep)
                     order.append(dep)
                     queue.append(dep)
+        # 主体不上榜：`--impact x` 问的是「谁依赖 x」，x 自己不是自己的下游。
+        # 只有 x 落在环里时闭包才会把它带回来，而环由 CA502 单独报（评审 F6）。
+        order = [x for x in order if x != subj]
 
         def layer_key(eid: str) -> int:
             e = index.get(eid)
@@ -632,6 +697,13 @@ def main() -> int:
     ap.add_argument("--pack", action="append", default=[], choices=["econ"],
                     help="启用协议扩展包（econ = WGP-econ 数值系统，CA6xx）")
     args = ap.parse_args()
+
+    # 相似度阈值必须落在 (0, 1]：>1 会让 CA201 永远不触发（静默关掉一条规则），
+    # ≤0 会让任意两条都算重复。越界是用法错误（退出码 2），不是「安静地换个行为」。
+    if not 0.0 < args.dup_threshold <= 1.0:
+        print(f"error: --dup-threshold 必须在 (0, 1] 内，收到 {args.dup_threshold}",
+              file=sys.stderr)
+        return 2
 
     packs, extra_known = _load_packs(args.pack)
     if packs is None:

@@ -28,8 +28,7 @@
 /classlint/PROTOCOL.md   @sliensnomen
 
 # 远端当前**没有**任何保护（`gh api repos/sliensnomen/my-world/branches/main/protection`
-# 返回 404 "Branch not protected"）。而此前一直只有 main 一条分支、零个 PR，
-# 所以那份只监听 pull_request 的 CI 一次都没跑过。需要打开的：
+# 返回 404 "Branch not protected"）。需要打开的：
 #
 #   第 1 步（现在就能开）：必须走 PR 才能改 main
 #   第 2 步（等第一个 PR 跑出检查名之后再开，否则会卡在

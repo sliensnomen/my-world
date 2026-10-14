@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -242,23 +243,47 @@ def _strip_jsonc(text: str) -> str:
 
 
 def _verify_sample(sample, real, where: str):
-    """一份样例必须和真实导出逐字段对得上——干净版和带注释版都要过这一关。"""
+    """一份样例必须和真实导出**逐字段、逐值**对得上——干净版和带注释版都要过这一关。
+
+    以前这里只比**键名**：把 counts 改成 999、dangling 塞进两条压根不存在的边、
+    findings 写成世界不会报的 CA301、fields 换成 `{"totally_fake": 1}`，四种改法全都
+    照样通过（评审 F2 的变异实验）。文档那句话写的是「真实输出，没有手编」——那就得
+    真的按值比：样例允许**截短列表**，但不许出现真实导出里没有的东西。
+    """
     assert set(sample) == set(real), (
         f"{where} 顶层键 {sorted(sample)} 与真实导出 {sorted(real)} 不一致")
     assert sample["protocol_version"] == canonlint.PROTOCOL_VERSION, (
         f"{where} 的 protocol_version={sample['protocol_version']}，代码是 {canonlint.PROTOCOL_VERSION}")
     assert sample["contract_version"] == canonlint.CONTRACT_VERSION, (
         f"{where} 的 contract_version={sample['contract_version']}，代码是 {canonlint.CONTRACT_VERSION}")
-    assert sample["entries"], f"{where} 里一个条目都没有"
-    want, got = set(real["entries"][0]), set(sample["entries"][0])
-    assert got == want, (
-        f"{where} 的条目键与真实导出不一致：多了 {sorted(got - want)}，少了 {sorted(want - got)}")
-    assert sample["relations"], f"{where} 里一条边都没有"
-    rel_keys = set()
-    for edge in real["relations"]:
-        rel_keys |= set(edge)
-    extra = set(sample["relations"][0]) - rel_keys
-    assert not extra, f"{where} 的边里有真实导出不会给的键：{sorted(extra)}"
+
+    # counts 与 vocabularies 是「速览」，不是列表——必须整个相等，不许截短
+    assert sample["counts"] == real["counts"], (
+        f"{where} 的 counts 与真实导出不一致：\n  样例 {sample['counts']}\n  真实 {real['counts']}")
+    assert sample["vocabularies"] == real["vocabularies"], (
+        f"{where} 的 vocabularies 与真实导出不一致：\n  样例 {sample['vocabularies']}\n"
+        f"  真实 {real['vocabularies']}")
+
+    # 列表允许截短：样例里出现的每一项，都必须能在真实导出里**原样**找到
+    for key in ("entries", "relations", "dangling", "findings", "assets", "reports"):
+        assert isinstance(sample.get(key), list), f"{where} 的 {key} 不是列表"
+        for item in sample[key]:
+            assert item in real[key], (
+                f"{where} 的 {key} 里有真实导出里不存在的项（文档在编数据）："
+                f"\n  {item}\n真实导出里同类项有 {len(real[key])} 条")
+
+    # 条目与边的「形状」也要对：真实导出会给的键，样例一条都不能少
+    if sample["entries"]:
+        want = set(real["entries"][0])
+        got = set(sample["entries"][0])
+        assert got == want, (
+            f"{where} 的条目键与真实导出不一致：多了 {sorted(got - want)}，少了 {sorted(want - got)}")
+    if sample["relations"]:
+        rel_keys = set()
+        for edge in real["relations"]:
+            rel_keys |= set(edge)
+        extra = set(sample["relations"][0]) - rel_keys
+        assert not extra, f"{where} 的边里有真实导出不会给的键：{sorted(extra)}"
 
 
 def check_文档里的_JSON_样例与真实导出一致():
@@ -340,12 +365,22 @@ def main() -> int:
                 print(f"SKIP {label}（{note}）")
             else:
                 print(f"PASS {label}")
+    # 跳过必须是**被看见**的：CI 里没有 node 时，这一套以前是 exit 0 + 一行「1 跳过」，
+    # 外部无法区分「JS 解析器检查真的跑了」和「它根本没跑」。想接受跳过就显式设
+    # CANONLINT_ALLOW_SKIP=1——沉默的绿不算绿。
+    skip_is_failure = bool(skipped) and os.environ.get("CANONLINT_ALLOW_SKIP") != "1"
+
     tail = f"{len(CHECKS)} 项检查 | {len(CHECKS) - failed - skipped} 通过"
     if skipped:
         tail += f" | {skipped} 跳过"
-    tail += f" | {failed} 失败" if failed else " | 全部通过"
+    if failed:
+        tail += f" | {failed} 失败"
+    elif skip_is_failure:
+        tail += " | 未通过（跳过未获授权，设 CANONLINT_ALLOW_SKIP=1 才接受）"
+    else:
+        tail += " | 全部通过"
     print("\n" + tail)
-    return 1 if failed else 0
+    return 1 if (failed or skip_is_failure) else 0
 
 
 if __name__ == "__main__":

@@ -4,8 +4,10 @@
 # 这个仓库里没有 entries/ canon/ sandbox/ archive/ 任何一个入口目录，canonlint
 # 会退化成扫描整个仓库（store/layout.py 里 collect 的 fallback），把测试夹具当成
 # 待审计的世界——744 个错误，没有一条是真的。审计对象是「世界数据」，不是「工具源码」。
-# 那条命令一次也没能拦住任何东西：工作流只监听 pull_request，而本仓库一直只有
-# main 一条分支、全部直接推送，从来没有 PR。
+# 那条命令一次也没能拦住任何东西：它只出现在最初的 workflow 版本（f7ffdd4，
+# `on: [pull_request]`）里，而那个版本**一次都没被触发过**（带它的运行记录 0 条）。
+# 旧注释写「本仓库从来没有 PR」是错的——`Merge pull request #4`–`#7` 就在 git log 里；
+# 错的是「之前没有 PR」，不是「这条命令有多余」。
 #
 # 世界数据仓库该跑什么（本仓库的 CI 是它自己的测试，不是它的模板）：
 #   python3 canonlint.py . --strict                     # error 与 warning 都拦
@@ -29,6 +31,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install pyyaml
+      # test_serve 里有「wgp-client.js 在 node 下行为正确」一项；不给 node 的话
+      # 那一项会被跳过。test_serve 现在会在跳过时把退出码弄红（除非显式设
+      # CANONLINT_ALLOW_SKIP=1），所以这里必须真的把 node 装上。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: canonlint 夹具回归（逐字节快照 + 崩溃守卫 + CA504 只读性）
         run: python3 tests/run_tests.py
       - name: 世界文件契约（good 语料必须合规、坏样本必须判红、词表必须与代码一致）

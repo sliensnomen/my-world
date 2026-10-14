@@ -9,14 +9,31 @@ frontmatter），所以 diff 小到能被人评审——这正是 PR 流程要�
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
+import tempfile
 from collections.abc import Container, Sequence
 from datetime import date
 from pathlib import Path
 
 from .layout import TYPE_DIRS, collect
 from .model import FRONTMATTER_RE, ID_RE
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """同目录临时文件 + `os.replace`：写到一半被杀不会留下半个条目。"""
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".canonlint-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 CONSTITUTION_SKELETON = """# 世界宪章 v0.1
 
@@ -73,10 +90,20 @@ def cmd_init(root: Path, *, exe: str) -> int:
         hook = root / ".git/hooks/pre-commit"
         # .git 在但 hooks/ 不在（别的工具造的仓库、被清过的仓库）——补上，别让 traceback 逃逸
         hook.parent.mkdir(parents=True, exist_ok=True)
-        hook.write_text(
-            "#!/bin/sh\n"
-            f"{exe} \"$(git rev-parse --show-toplevel)\" || exit 1\n",
-            encoding="utf-8")
+        want = ("#!/bin/sh\n"
+                f"{exe} \"$(git rev-parse --show-toplevel)\" || exit 1\n")
+        # 别人可能已经装了自己的钩子：覆盖前先备份，不静默吃掉别人的东西
+        if hook.exists() and hook.read_text(encoding="utf-8", errors="replace") != want:
+            backup = hook.with_name("pre-commit.bak")
+            if not backup.exists():
+                backup.write_text(hook.read_text(encoding="utf-8", errors="replace"),
+                                  encoding="utf-8")
+                backup.chmod(0o755)
+                print(f"原有 pre-commit 钩子已备份到 {backup.relative_to(root)}")
+            else:
+                print(f"警告：原有 pre-commit 钩子已被覆盖过一次，备份仍在 "
+                      f"{backup.relative_to(root)}（本次未再备份）")
+        hook.write_text(want, encoding="utf-8")
         hook.chmod(0o755)
         print("pre-commit 钩子已装（审计不过则拒提交）")
     else:
@@ -139,6 +166,12 @@ def cmd_new(root: Path, type_: str | None, title: str | None,
 
     path = root / "entries" / TYPE_DIRS[type_] / f"{entry_id}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
+    # id 索引查不到不等于路是空的：同路径可能有 id 写坏、id 不同、或手写的文件。
+    # 无条件写下去会把它静默吃掉（然后世界多出几条悬空引用），所以这里最后再挡一道。
+    if path.exists():
+        print(f"error: {path.relative_to(root)} 已存在，拒绝覆盖"
+              f"（若那是同一条目请换 id，或先确认它该不该留）", file=sys.stderr)
+        return 1
     path.write_text("\n".join(meta_lines) + "\n\n（正文 200 字起步）\n", encoding="utf-8")
     print(f"已建卡: {path.relative_to(root)}（draft）")
     if load_bearing:
@@ -195,20 +228,29 @@ def cmd_link(root: Path, src: str, dst: str, kind: str, critical: bool,
         return 2
 
     e = index[src]
-    if any(d.id == dst and d.kind == kind for d in e.deps[0]):
+    # 去重要按**规范化后的边**判：只查 depends_on 具名字段会漏掉规范形
+    # `relations: [{type: depends_on, target: …}]` 里已经写下的同一条边。
+    if any(r.target == dst and r.attrs.get("kind") == kind
+           for r in e.edges_of("depends_on")):
         print(f"边已存在: {src} --{kind}--> {dst}，不重复添加")
         return 0
 
     dep_block = [f"  - id: {dst}", f"    kind: {kind}",
                  f"    critical: {'true' if critical else 'false'}"]
     text = e.path.read_text(encoding="utf-8")
-    m = FRONTMATTER_RE.match(text)
+    bom = "\ufeff" if text.startswith("\ufeff") else ""
+    body = text[len(bom):]
+    m = FRONTMATTER_RE.match(body)
+    if m is None:
+        print("error: 该条目没有可解析的 frontmatter（或带 BOM），"
+              "无法文本级插入，请手动编辑", file=sys.stderr)
+        return 2
     new_fm = _insert_dep_text(m.group(1), dep_block)
     if new_fm is None:
         print("error: depends_on 形态无法文本级插入（可能是行内列表或键缺失），"
               "请手动编辑该条目", file=sys.stderr)
         return 2
-    e.path.write_text(f"---\n{new_fm}\n---\n" + text[m.end():], encoding="utf-8")
+    _atomic_write(e.path, bom + f"---\n{new_fm}\n---\n" + body[m.end():])
     print(f"已连线: {src} --{kind}{'(critical)' if critical else ''}--> {dst}")
     print("记得跑 canonlint 检查这条边是否合法（层级方向/环/状态）")
     return 0

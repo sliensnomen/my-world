@@ -5,6 +5,7 @@
 退出码: 0=全部符合期望 1=有偏差
 """
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -57,6 +58,30 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
 }
 
 
+def check_cl100_intent() -> int:
+    """CL100（文件读不出来）必须有**意图断言**，不能只靠夹具碰巧覆盖。
+
+    变异实验：把 `classlint.py` 里发 CL100 的那一处改成永不发射，15 个夹具世界全绿
+    ——因为没有一个夹具里有读不出来的文件。这条断言直接构造那个形态。
+    """
+    failures = 0
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td)
+        (world / "codex").mkdir()
+        (world / "classlint.yaml").write_text("name: probe\nclasslint: \"0.1\"\n",
+                                              encoding="utf-8")
+        (world / "codex" / "bad.md").write_bytes(b"---\nid: bad\ntitle: \xff\xfe\n---\n\xff\n")
+        _, _, findings, _ = classlint.run_checks(world)
+        got = [(f.rule, f.level, f.entry) for f in findings]
+        if not any(r == "CL100" and lv == "error" and e == "codex/bad.md"
+                   for r, lv, e in got):
+            print(f"FAIL CL100 意图断言：读不出来的文件没报 CL100，实际 {sorted(got)}")
+            failures += 1
+        else:
+            print("PASS CL100 意图断言（读不出来的文件必须报 CL100）")
+    return failures
+
+
 def main() -> int:
     failures = 0
     worlds = sorted(p.name for p in TESTS.iterdir()
@@ -80,6 +105,7 @@ def main() -> int:
             for item in want:
                 if item not in got:
                     print(f"  漏报: {item}")
+    failures += check_cl100_intent()
     extra = set(EXPECTED) - set(worlds)
     for name in sorted(extra):
         print(f"FAIL {name}: EXPECTED 登记了期望但夹具目录不存在")

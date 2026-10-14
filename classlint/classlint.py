@@ -17,6 +17,8 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
+import unicodedata
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -30,8 +32,9 @@ VERSION = "0.1"
 # 实体 ID 规范：小写字母/数字/连字符，全库唯一，一旦发布永不更改、永不复用
 ID_RE = re.compile(r"^[a-z0-9-]+$")
 
-# 七种生产关系（协议 §2，固定语法）：relation → 允许的 optional 属性键
-RELATIONS: dict[str, set[str]] = {
+# 七种生产关系（协议 §2，固定语法）：relation → 允许的 optional 属性键。
+# 这是本引擎**必须懂**的结构性子集，用来建图跑 PE 规则；它不是关系名的真值表。
+RELATION_ATTRS: dict[str, set[str]] = {
     "owns": {"note"},
     "controls": {"note"},
     "extracts": {"what", "note"},
@@ -41,8 +44,63 @@ RELATIONS: dict[str, set[str]] = {
     "depends_on": {"critical", "kind", "note"},
 }
 ATTR_TYPES = {"what": str, "note": str, "kind": str, "critical": bool}
-KNOWN_FIELDS = {"id", "title", "type"} | set(RELATIONS)
+
+# ---- 关系名词表：唯一真值在契约 world.schema.json ------------------------------
+# 契约 `x-relation-vocabulary` 是唯一真值。本引擎不自己维护第二份表：下面读它、
+# 归一化“同一关系的所有历史拼法”（canon-ref / canon_refs …），并**照单收下具名字段**，
+# 不再对契约列过的关系名报 CL103。读不到契约时退化为机械变换（连字符↔下划线），
+# 仍然让三族关系互通。
+SCHEMA_NAME = "world.schema.json"
+SCHEMA_PATH = Path(__file__).resolve().parent.parent / SCHEMA_NAME
+
+# `relations:` 规范形（契约 x-relation-source.canonical）允许的项键
+CANONICAL_RELATION_ITEMS = {"type", "target", "kind", "critical", "stance", "note", "what"}
+
+
+def _load_relation_vocabulary() -> dict[str, tuple[str, ...]]:
+    """从契约读关系名词表：{规范名: (可接受的拼法…)}。契约缺席时不静默。"""
+    try:
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        names = schema["x-relation-vocabulary"]["names"]
+        return {k: tuple(v["accept"]) for k, v in names.items()}
+    except (OSError, ValueError, KeyError, TypeError):
+        # 契约不在树里（单独拷走 classlint.py）时退化：只做连字符/下划线互换。
+        return {}
+
+
+def _shape_variants(word: str) -> set[str]:
+    """同一关系名的历史拼法：原样、连字符、下划线、去掉分隔符。"""
+    return {word, word.replace("-", "_"), word.replace("_", "-"),
+            word.replace("-", "").replace("_", "")}
+
+
+RELATION_VOCABULARY: dict[str, tuple[str, ...]] = _load_relation_vocabulary()
+ALL_RELATION_NAMES: tuple[str, ...] = tuple(RELATION_VOCABULARY) or tuple(RELATION_ATTRS)
+CONTRACT_ATTESTED: frozenset[str] = frozenset(
+    v for accepts in RELATION_VOCABULARY.values() for v in accepts)
+
+# 关系名 → 规范名（含 _shape_variants 的机械化兜底，契约缺位时也能互通）
+RELATION_CANONICAL: dict[str, str] = {}
+for _name in ALL_RELATION_NAMES:
+    for _variant in (RELATION_VOCABULARY.get(_name) or ()) or _shape_variants(_name):
+        RELATION_CANONICAL[_variant] = _name
+    for _variant in _shape_variants(_name):
+        RELATION_CANONICAL.setdefault(_variant, _name)
+
+
+def canonical_rel(name: str) -> str:
+    """把任意历史拼法的关系名归一到规范名；未知名原样返回（自由档保留自定义关系）。"""
+    return RELATION_CANONICAL.get(name, name)
+
+
+# F14 修复：契约列过的九种关系及其历史拼法不再报 CL103；契约之外的关系名仍然报。
+# 判据是契约认证拼法 ∪ 规范名（而非机械变体）：自由档的自定义字段仍该被 CL103 拦下。
+KNOWN_FIELDS = ({"id", "title", "type", "relations"}
+                | set(ALL_RELATION_NAMES) | set(CONTRACT_ATTESTED))
 REQUIRED_FIELDS = ["id", "title", "type"]
+
+# 兼容旧名（本文件与测试夹具用过 RELATIONS）——同一对象，避免悄悄分叉
+RELATIONS = RELATION_ATTRS
 
 ENTRY_ROOT = "codex"   # 条目唯一位置；目录纯组织，身份只认 frontmatter
 SKIP_DIRS = {".git"}
@@ -82,7 +140,7 @@ FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
 
 @dataclass
 class Edge:
-    """一条关系边：src 条目 —rel→ target。rel ∈ RELATIONS。"""
+    """一条关系边：src 条目 —rel→ target。`rel` **一律是契约规范名**（见 RELATION_CANONICAL）。"""
     rel: str
     target: str
     attrs: dict
@@ -115,21 +173,30 @@ class Entry:
 
     @cached_property
     def edges(self) -> tuple[list[Edge], list[Finding]]:
-        """解析七种关系字段（协议 §2.1：简式 id 字符串或对象式），结果缓存。"""
+        """全部边 = 九个具名字段 + 规范形 `relations`，结果缓存。
+
+        契约 `world.schema.json` 是关系的唯一真值表：具名字段照单全收（契约列过的
+        九个，含连字符/下划线变体），`relations:` 里的 `type` 走同一张归一化表。
+        这样「同一条边写在哪、报的都一样」才成立（协议 §1 等价性承诺）。
+        """
         out: list[Edge] = []
         errs: list[Finding] = []
-        for rel, allowed_attrs in RELATIONS.items():
-            raw = self.meta.get(rel)
+        # 1) 具名字段（契约 x-relation-source.aliases）
+        field_names = tuple(RELATION_ATTRS) + tuple(
+            sorted(set(ALL_RELATION_NAMES) - set(RELATION_ATTRS)))
+        for field in field_names:
+            raw = self.meta.get(field)
             if raw is None:
                 continue
+            name = canonical_rel(field)
+            allowed = RELATION_ATTRS.get(name, set())
             if not isinstance(raw, list):
-                errs.append(Finding("CL104", "error", self.rel,
-                                    f"{rel} 必须是列表"))
+                errs.append(Finding("CL104", "error", self.rel, f"{field} 必须是列表"))
                 continue
             for i, item in enumerate(raw):
-                where = f"{rel}[{i}]"
+                where = f"{field}[{i}]"
                 if isinstance(item, str):
-                    out.append(Edge(rel, item, {}))
+                    out.append(Edge(name, item, {}))
                     continue
                 if not isinstance(item, dict):
                     errs.append(Finding("CL104", "error", self.rel,
@@ -144,18 +211,66 @@ class Entry:
                 for k, v in item.items():
                     if k == "id" or str(k).startswith("x-"):
                         continue
-                    if k not in allowed_attrs:
+                    if k not in allowed:
                         errs.append(Finding("CL104", "error", self.rel,
-                                            f"{where} 含 {rel} 未定义的属性 `{k}`"))
+                                            f"{where} 含 {field} 未定义的属性 `{k}`"))
                         bad = True
-                    elif not isinstance(v, ATTR_TYPES[k]):
+                    elif not isinstance(v, ATTR_TYPES.get(k, object)):
                         errs.append(Finding("CL104", "error", self.rel,
                                             f"{where}.{k}={v!r} 类型错误"
-                                            f"（须为 {ATTR_TYPES[k].__name__}）"))
+                                            f"（须为 {ATTR_TYPES.get(k, object).__name__}）"))
                         bad = True
                 if not bad:
-                    out.append(Edge(rel, tid,
+                    out.append(Edge(name, tid,
                                     {k: v for k, v in item.items() if k != "id"}))
+        # 2) 规范形 relations（契约新写法；修复前它对本引擎完全隐形）
+        out.extend(self.canonical_edges[0])
+        errs.extend(self.canonical_edges[1])
+        return out, errs
+
+    @cached_property
+    def canonical_edges(self) -> tuple[list[Edge], list[Finding]]:
+        """解析规范形 `relations:`：项键 `type`/`target`（**不是** `id`）。"""
+        raw = self.meta.get("relations")
+        if raw is None:
+            return [], []
+        if not isinstance(raw, list):
+            return [], [Finding("CL104", "error", self.rel, "relations 必须是列表")]
+        out: list[Edge] = []
+        errs: list[Finding] = []
+        for i, item in enumerate(raw):
+            where = f"relations[{i}]"
+            if not isinstance(item, dict):
+                errs.append(Finding("CL104", "error", self.rel, f"{where} 必须是对象"))
+                continue
+            missing = [k for k in ("type", "target") if k not in item]
+            for m in missing:
+                errs.append(Finding("CL104", "error", self.rel, f"{where} 缺字段 `{m}`"))
+            extra = [k for k in item if k not in CANONICAL_RELATION_ITEMS
+                     and not str(k).startswith("x-")]
+            for x in extra:
+                errs.append(Finding("CL104", "error", self.rel,
+                                    f"{where} 含未定义字段 `{x}`（扩展须 x- 前缀）"))
+            if missing or extra:
+                continue
+            bad = False
+            for key in ("type", "target"):
+                if not isinstance(item[key], str) or not item[key]:
+                    errs.append(Finding("CL104", "error", self.rel,
+                                        f"{where}.{key} 必须是字符串"))
+                    bad = True
+            for key, want in (("kind", str), ("stance", str), ("note", str),
+                              ("what", str), ("critical", bool)):
+                if key in item and not isinstance(item[key], want):
+                    errs.append(Finding("CL104", "error", self.rel,
+                                        f"{where}.{key} 类型错误（须为 {want.__name__}）"))
+                    bad = True
+            if bad:
+                continue
+            # 未知名原样保留、不下判语（契约 x-profiles 自由档；见 store/model.py 同名 note）
+            name = canonical_rel(item["type"])
+            out.append(Edge(name, item["target"],
+                            {k: v for k, v in item.items() if k not in ("type", "target")}))
         return out, errs
 
 
@@ -235,7 +350,10 @@ class World:
                 self.edges.append((e.id, edge))
 
     def edges_of(self, rel: str) -> list[tuple[str, Edge]]:
-        return [(s, e) for s, e in self.edges if e.rel == rel]
+        """按关系名取边。入参允许任意历史拼法（canon-ref / canon_refs / canon_refs），
+        与存储层 `Entry.edges_of` 同一语义：查的是规范名。"""
+        want = canonical_rel(rel)
+        return [(s, e) for s, e in self.edges if e.rel == want]
 
     def find_edge(self, src: str, rels: set[str], dst: str) -> Edge | None:
         for s, e in self.edges:

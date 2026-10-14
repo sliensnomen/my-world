@@ -33,6 +33,10 @@ PY = sys.executable
 # (快照名, 命令行参数)。退出码与标准输出一起被快照钉死。
 CASES: list[tuple[str, list[str]]] = [
     ("world-clean", ["tests/world-clean"]),
+    # --strict（warning 也算失败）以前**一条夹具都没钉**：README 把 world-clean 称作
+    # 「唯一的全绿基准」，而它在 --strict 下曾是 exit 1（三条 CA104），没有测试变红。
+    # 这一条把那句话变成可回归的事实：基准世界在两种模式下都必须 exit 0。
+    ("world-clean+strict", ["tests/world-clean", "--strict"]),
     ("world-bad", ["tests/world-bad"]),
     ("world-arrakis", ["tests/world-arrakis"]),
     ("world-westeros", ["tests/world-westeros"]),
@@ -207,6 +211,151 @@ def check_missing_dependency_is_clean() -> list[str]:
     return []
 
 
+# ---- 评审修复的意图断言 ---------------------------------------------------
+# 上面五条 extras 与快照网证明「没变」；下面这组证明「评审发现的四个失效模式
+# 真的被堵住了」——它们各自对应六域评审里的一条可复现发现，且修复前必然变红。
+
+
+def _card(entry_id: str, extra: str = "", status: str = "canon",
+          body: str | None = None) -> str:
+    return (f"---\nid: {entry_id}\ntitle: {entry_id}\ntype: location\nauthor: t\n"
+            f"date: 2026-01-01\nstatus: {status}\nload_bearing: false\n"
+            f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+            f"---\n\n{body if body is not None else '正文' * 120}\n")
+
+
+def _temp_world(prefix: str, entries: dict[str, str]) -> tuple[str, Path]:
+    tmp = tempfile.TemporaryDirectory(prefix=prefix)
+    world = Path(tmp.name)
+    (world / "entries").mkdir(parents=True, exist_ok=True)
+    for name, text in entries.items():
+        (world / "entries" / f"{name}.md").write_text(text, encoding="utf-8")
+    return tmp, world
+
+
+def _judge(world: Path, *args: str) -> tuple[int, str, str]:
+    p = subprocess.run([PY, str(TOOL), str(world), *args], cwd=ROOT,
+                       capture_output=True, text=True)
+    return p.returncode, p.stdout, p.stderr
+
+
+def check_supersede_pairs_are_not_duplicates() -> list[str]:
+    """降级承接对（archived + 承接者）正文相似是**要求的**，CA201 不能报（评审 F9）。
+
+    承接条目按定义要接着旧条目写，两份正文天然高度相似。这条豁免以前不存在，
+    于是每一对正常的降级都会在 `--strict` 下把世界判红。
+    """
+    problems = []
+    tmp, world = _temp_world("canonlint-supersede-", {
+        "old-node": _card("old-node", "superseded_by: new-node\n", status="archived"),
+        "new-node": _card("new-node", "canon_refs:\n  - old-node\n"),
+    })
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"承接对把 traceback 写到了 stderr：\n{err}")
+        if "CA201" in out:
+            problems.append("降级承接对被判成疑似重复（CA201 应当豁免）：\n" + out)
+        # 对照组：没有承接关系的两份相同正文必须照报
+        tmp2, world2 = _temp_world("canonlint-dup-", {
+            "a-node": _card("a-node"), "b-node": _card("b-node")})
+        with tmp2:
+            code2, out2, err2 = _judge(world2)
+            if err2:
+                problems.append(f"对照组把 traceback 写到了 stderr：\n{err2}")
+            if "CA201" not in out2:
+                problems.append("没有承接关系的两份相同正文漏报了 CA201：\n" + out2)
+    return problems
+
+
+def check_dup_threshold_range_is_usage_error() -> list[str]:
+    """`--dup-threshold` 越界必须是用法错误（退出码 2），不能静默换行为（评审 F12）。
+
+    `--dup-threshold 2.5` 以前让 CA201 永不触发——一条规则被一个参数悄悄关掉，
+    而退出码仍是 0。
+    """
+    problems = []
+    tmp, world = _temp_world("canonlint-threshold-", {
+        "a-node": _card("a-node"), "b-node": _card("b-node")})
+    with tmp:
+        for bad in ("2.5", "0", "-1"):
+            code, out, err = _judge(world, "--dup-threshold", bad)
+            if code != 2:
+                problems.append(f"--dup-threshold {bad} 应返回 2（用法错误），实际 {code}")
+            if "dup-threshold" not in err:
+                problems.append(f"--dup-threshold {bad} 的 stderr 没说清问题：{err!r}")
+        for good in ("0.85", "1.0"):
+            code, out, err = _judge(world, "--dup-threshold", good)
+            if code != 0 or "CA201" not in out:
+                problems.append(f"--dup-threshold {good} 是合法值，应当正常判定"
+                                f"（rc={code}）：\n{out}")
+    return problems
+
+
+def check_impact_never_lists_the_subject() -> list[str]:
+    """`--impact x` 只列别的东西；落在环里时也不把自己列进下游（评审 F6）。"""
+    problems = []
+    dep = ("relations:\n  - type: depends_on\n    target: {other}\n"
+           "    kind: resource\n    critical: true\n")
+    tmp, ring = _temp_world("canonlint-impact-ring-", {
+        "x-node": _card("x-node", dep.format(other="y-node")),
+        "y-node": _card("y-node", dep.format(other="x-node")),
+    })
+    with tmp:
+        code, out, err = _judge(ring, "--impact", "x-node", "--json")
+        if err:
+            problems.append(f"--impact 把 traceback 写到了 stderr：\n{err}")
+        else:
+            for r in json.loads(out)["reports"]:
+                if r["subject"] in r["downstream"]:
+                    problems.append(f"主体 {r['subject']} 出现在自己的下游里：{r['downstream']}")
+        # 链上：x ← y ← z
+        tmp2, chain = _temp_world("canonlint-impact-chain-", {
+            "x-node": _card("x-node"),
+            "y-node": _card("y-node", dep.format(other="x-node")),
+            "z-node": _card("z-node", dep.format(other="y-node")),
+        })
+        with tmp2:
+            code, out, err = _judge(chain, "--impact", "x-node", "--json")
+            if err:
+                problems.append(f"--impact 链上把 traceback 写到了 stderr：\n{err}")
+            else:
+                got = json.loads(out)["reports"][0]["downstream"]
+                if sorted(got) != ["y-node", "z-node"]:
+                    problems.append(f"链上的下游闭包应为 ['y-node', 'z-node']，实际 {got}")
+    return problems
+
+
+def check_advisory_rules_do_not_gate_drafts() -> list[str]:
+    """draft 提到了承重墙关键词，在 `--strict` 下也必须能提交（评审 F8）。
+
+    CA301 是「请考虑声明」的提示；`--strict` 把 warning 当失败，于是以前任何写到
+    「政治/经济」的草稿都无法提交——审计器替作者做了决定（§5.3 明说不替）。定档
+    （trial/canon）之后同一句话必须照报。
+    """
+    problems = []
+    kw = "本条目涉及政治与经济结构。" + "正文" * 100
+    tmp, draft = _temp_world("canonlint-ca301-draft-", {
+        "a-node": _card("a-node", status="draft", body=kw)})
+    with tmp:
+        code, out, err = _judge(draft, "--strict")
+        if err:
+            problems.append(f"--strict 把 traceback 写到了 stderr：\n{err}")
+        if code != 0:
+            problems.append(f"draft 提到关键词时 --strict 应放行，实际退出码 {code}：\n{out}")
+        if "CA301" in out:
+            problems.append("CA301 不该对 draft 报（draft 还没到做决定的时候）：\n" + out)
+    tmp2, canon = _temp_world("canonlint-ca301-canon-", {
+        "a-node": _card("a-node", status="canon", body=kw)})
+    with tmp2:
+        code, out, err = _judge(canon, "--strict")
+        if "CA301" not in out:
+            problems.append("定档条目提到关键词却漏报了 CA301：\n" + out)
+        if code != 1:
+            problems.append(f"定档条目 + --strict 应返回 1，实际 {code}")
+    return problems
+
+
 def main() -> int:
     update = "--update" in sys.argv[1:]
     failures: list[str] = []
@@ -252,6 +401,10 @@ def main() -> int:
         ("CA504 影响报告是只读的（不改变退出码）", check_impact_is_advisory),
         ("--help 能看到 init/new/link", check_help_discoverable),
         ("缺 pyyaml 时干净退出（提示 + 退出码 2）", check_missing_dependency_is_clean),
+        ("降级承接对不算重复（CA201 豁免）", check_supersede_pairs_are_not_duplicates),
+        ("--dup-threshold 越界是用法错误（不退化成静默关规则）", check_dup_threshold_range_is_usage_error),
+        ("--impact 从不把主体列进自己的下游", check_impact_never_lists_the_subject),
+        ("提示性规则不阻断 draft（CA301 只对定档条目报）", check_advisory_rules_do_not_gate_drafts),
     ]
     for label, check in extras:
         problems = check()

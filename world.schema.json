@@ -35,16 +35,34 @@
     "canonical": "relations",
     "note": "一个关系 = 有向边（type, target）+ 若干可选注解。这是唯一规范形；下面所有具名字段都是兼容别名，读取时按本表规范化成 relations，写出时按 x-written-form 决定写哪一种。",
     "written-form": "旧字段（canon_refs/conflicts_with/depends_on + classlint 七种）保留为可写形式：它们是一位创作者每天手写的形状，没有理由为了统一而破坏它。规范形 relations 供工具与外来格式使用。",
+    "type-name-note": "每个关系族的规范名只有一个，列在 x-relation-vocabulary；本表的 type 必须逐字等于它。历史上这里曾把 canon_refs 写作 canon-ref、conflicts_with 写作 conflicts-with，而两个引擎按规范名精确匹配，于是契约自己定义的写法对判定完全隐形（canon_refs/conflicts_with 被当成未知关系名，整族 CA4xx 静默失效），同时 depends_on 恰好两边同拼法而正常体检——同一份契约三个族两种下场。这条注记记录该事故，防止再出现第二种拼法。",
     "aliases": {
-      "canon_refs": {"type": "canon-ref", "required": [], "attrs": [], "item": "id 字符串"},
-      "conflicts_with": {"type": "conflicts-with", "required": [], "attrs": ["stance"], "item": "id 字符串 或 {id, stance?}"},
-      "depends_on": {"type": "depends_on", "required": [], "attrs": ["kind", "critical", "note"], "item": "id 字符串 或 {id, kind?, critical?}"},
-      "owns": {"type": "owns", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}"},
-      "controls": {"type": "controls", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}"},
-      "extracts": {"type": "extracts", "required": [], "attrs": ["what", "note"], "item": "id 字符串 或 {id, what?, note?}"},
-      "coerces": {"type": "coerces", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}"},
-      "legitimizes": {"type": "legitimizes", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}"},
-      "owes": {"type": "owes", "required": [], "attrs": ["what", "note"], "item": "id 字符串 或 {id, what?, note?}"}
+      "canon_refs": {"type": "canon_refs", "required": [], "attrs": [], "item": "id 字符串", "canonical-item": "{type: canon_refs, target: <id>}"},
+      "conflicts_with": {"type": "conflicts_with", "required": [], "attrs": ["stance"], "item": "id 字符串 或 {id, stance?}", "canonical-item": "{type: conflicts_with, target: <id>, stance?}"},
+      "depends_on": {"type": "depends_on", "required": [], "attrs": ["kind", "critical", "note"], "item": "id 字符串 或 {id, kind?, critical?}", "canonical-item": "{type: depends_on, target: <id>, kind?, critical?, note?}"},
+      "owns": {"type": "owns", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}", "canonical-item": "{type: owns, target: <id>, note?}"},
+      "controls": {"type": "controls", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}", "canonical-item": "{type: controls, target: <id>, note?}"},
+      "extracts": {"type": "extracts", "required": [], "attrs": ["what", "note"], "item": "id 字符串 或 {id, what?, note?}", "canonical-item": "{type: extracts, target: <id>, what?, note?}"},
+      "coerces": {"type": "coerces", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}", "canonical-item": "{type: coerces, target: <id>, note?}"},
+      "legitimizes": {"type": "legitimizes", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}", "canonical-item": "{type: legitimizes, target: <id>, note?}"},
+      "owes": {"type": "owes", "required": [], "attrs": ["what", "note"], "item": "id 字符串 或 {id, what?, note?}", "canonical-item": "{type: owes, target: <id>, what?, note?}"}
+    }
+  },
+
+  "x-relation-vocabulary": {
+    "note": "关系名**唯一真值表**：keys = 具名字段与规范形 type 的规范名，value.accept = 工具必须一并认下的历史拼法（连字符/下划线变体）。两个引擎都读本表做归一化（canonlint 读的是存储层归一化后的统一视图；classlint 直接读本文件）。漏认一个变体的后果是整族规则静默失效，所以这里宁可宽；但接受 ≠ 输出：报错文案与 --json 一律用规范名。",
+    "canonical-form": "canon_refs",
+    "spelling-guard": "与任一规范名的编辑距离 ≤1 的 type 值记 warning（CA110），保留对真正新词的 fail-open——自由档允许用户自定义关系名，不许把未知名一律判错。",
+    "names": {
+      "canon_refs": {"accept": ["canon-ref", "canon_refs", "canon-refs", "canonrefs"], "attrs": []},
+      "conflicts_with": {"accept": ["conflicts-with", "conflicts_with", "conflictwith"], "attrs": ["stance"]},
+      "depends_on": {"accept": ["depends-on", "depends_on", "dependson"], "attrs": ["kind", "critical", "note"]},
+      "owns": {"accept": ["owns"], "attrs": ["note"]},
+      "controls": {"accept": ["controls"], "attrs": ["note"]},
+      "extracts": {"accept": ["extracts"], "attrs": ["what", "note"]},
+      "coerces": {"accept": ["coerces"], "attrs": ["note"]},
+      "legitimizes": {"accept": ["legitimizes"], "attrs": ["note"]},
+      "owes": {"accept": ["owes"], "attrs": ["what", "note"]}
     }
   },
 

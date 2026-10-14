@@ -99,10 +99,21 @@ SHAPE_CASES = (
     ("relations:\n  - type: depends_on\n", None, "relations[0] 缺字段 `target`"),
     ("relations:\n  - type: depends_on\n    target: b-node\n    kind: 3\n", None,
      "relations[0].kind 必须是字符串"),
-    ("relations:\n  - type: depends_on\n    target: BAD ID\n", None,
+    ("relations:\n  - type: depends_on\n    target: BAD ID\n    kind: production\n"
+     "    critical: true\n", None,
      "relations[0].target='BAD ID' 不符合 id 格式"),
+    # §5.4：depends_on 的 kind / critical 是必填的。这一条以前只对旧写法生效，
+    # 于是规范形省掉 kind 就能让 CA501 整条静默跳过（评审 F2）。
+    ("relations:\n  - type: depends_on\n    target: b-node\n    critical: true\n", None,
+     "relations[0] 是 depends_on 边，缺必填字段 `kind`"),
+    ("relations:\n  - type: depends_on\n    target: b-node\n    kind: production\n", None,
+     "relations[0] 是 depends_on 边，缺必填字段 `critical`"),
     ("relations:\n  - type: affects\n    target: b-node\n    nope: 1\n", None,
      "relations[0] 含未定义字段 `nope`"),
+    # 旧具名字段的形状错误必须**照样报 CA107**：变异实验里把 store/model.py 里
+    # 具名字段那三条的 CA107 改成 CA109，六套命令全绿——因为这里只覆盖了规范形那条路。
+    ("depends_on:\n  - just-a-string\n", None, "depends_on[0] 必须是对象"),
+    ("depends_on:\n  - kind: resource\n", None, "depends_on[0] 缺字段 `id`"),
 )
 
 
@@ -130,24 +141,35 @@ def check_unknown_relation_names_are_kept():
 
 
 def check_undeclared_annotations_are_visible():
+    """「缺注解」按关系族分：depends_on 的 kind/critical 是**必填**（§5.4，缺 = CA107），
+    其余族今天不要求注解——那种边「还没想好」是合法状态，能查得到、不算错误。
+    """
+    assert store.Relation("depends_on", "x", {}).undeclared == ("kind", "critical")
+    assert store.Relation("depends_on", "x",
+                          {"kind": "resource", "critical": True}).undeclared == ()
+    for fam in ("canon_refs", "conflicts_with", "owns", "controls"):
+        assert store.Relation(fam, "x", {}).undeclared == (), fam
+
     with tempfile.TemporaryDirectory() as td:
         root = make_world(Path(td), {
+            # 不带注解的边：canon_refs 由契约规定不带注解，所以这条是合法的
             "a-node": entry_text(
-                "a-node", "relations:\n  - type: depends_on\n    target: b-node\n"),
-            "b-node": entry_text("b-node"),  # 目标要真的在，才测得到「缺注解」这件事
+                "a-node", "relations:\n  - type: canon_refs\n    target: b-node\n"),
+            "b-node": entry_text("b-node"),
         })
         e = parsed(root, "a-node")
-        assert e.undeclared_annotations and e.undeclared_annotations[0].undeclared == (
-            "kind", "critical"), e.undeclared_annotations
         assert not e.relation_errors, e.relation_errors
+        assert [r.target for r in e.relations] == ["b-node"], e.relations
+        assert e.undeclared_annotations == []      # 这一族不要求注解
         rc, out, _ = run([root])
-        assert rc == 0 and "0 错误" in out, f"「还没想好」不是错误:\n{out}"
+        assert rc == 0 and "0 错误" in out, f"不带注解的 canon_refs 边不是错误:\n{out}"
 
 
 def check_mixed_forms_are_recorded():
     with tempfile.TemporaryDirectory() as td:
         root = make_world(Path(td), {"a-node": entry_text(
-            "a-node", LEGACY_ALL + "relations:\n  - type: depends_on\n    target: c-node\n")})
+            "a-node", LEGACY_ALL + "relations:\n  - type: depends_on\n    target: c-node\n"
+                                    "    kind: resource\n    critical: true\n")})
         e = parsed(root, "a-node")
         assert e.mixed_relation_forms, "两种写法混用必须被记录"
         assert [r.target for r in e.relations] == ["b-node", "b-node", "b-node", "c-node"], \
@@ -157,8 +179,10 @@ def check_mixed_forms_are_recorded():
 # ---- 6/7. 与判定侧的常量不许漂移 ------------------------------------------
 
 def check_field_table_matches_rules():
+    # 契约 x-relation-source.aliases 的九个具名字段全部接线（旧「六种待接线」漂移已关闭）
     assert set(store.FIELD_TABLE) == set(canonlint.REQUIRED_FIELDS) | {
-        "layer", "depends_on", "superseded_by", store.RELATIONS_FIELD}, \
+        "layer", "superseded_by", store.RELATIONS_FIELD} \
+        | set(store.LEGACY_RELATION_FIELDS), \
         "存储层的字段表与判定侧已知字段不一致——两张表必须同时改"
     assert canonlint.KNOWN_FIELDS == store.FIELD_TABLE, "CA106 的词表必须就是存储层的字段表"
 
@@ -169,21 +193,46 @@ def check_type_vocabulary_matches_layout():
         f"与存储布局 {sorted(store.TYPE_DIRS)} 不一致；要分开就先改这条测试")
 
 
-# ---- 8. 已知漂移：九个关系别名，今天只读三种 -------------------------------
+# ---- 8. 关系名真值表：契约与工具不许有两种拼法 -----------------------------
 
 def check_relation_alias_drift():
+    """契约的九个具名字段必须**全部**接线，而契约声明的每一种拼法都必须认。
+
+    这条测试的前身只钉「还有哪六个没接线」，于是漏掉了真正的缺陷：契约
+    `x-relation-source.aliases` 把 canon_refs 的 type 写作 `canon-ref`，而工具按规范名
+    精确匹配——契约自己声明的写法对判定完全隐形（整族 CA4xx 静默失效），depends_on
+    却因为两边恰好同拼法而正常体检。钉数量抓不到拼法漂移，所以这里逐条钉拼法与归属。
+    """
     schema = json.loads((ROOT / "world.schema.json").read_text(encoding="utf-8"))
-    aliases = set(schema["x-relation-source"]["aliases"])
-    canonical = schema["x-relation-source"]["canonical"]
+    src = schema["x-relation-source"]
+    aliases = src["aliases"]
+    canonical = src["canonical"]
     assert canonical == store.RELATIONS_FIELD, (
         f"契约的规范形叫 {canonical!r}，存储层叫 {store.RELATIONS_FIELD!r}")
-    missing = set(store.LEGACY_RELATION_FIELDS) - aliases
-    assert not missing, f"工具已经在读 {sorted(missing)}，契约却没把它们列为来源"
-    unconsumed = sorted(aliases - set(store.LEGACY_RELATION_FIELDS))
-    assert unconsumed == ["coerces", "controls", "extracts", "legitimizes", "owes", "owns"], (
-        f"未接线的关系别名变了：{unconsumed}；若你在收口漂移，请同时更新本测试")
-    leaked = sorted(a for a in unconsumed if a in store.FIELD_TABLE)
-    assert not leaked, f"{leaked} 已进字段表，但它们还没有判定器接上——收口时请一并处理"
+
+    # (1) 九个具名字段全部接线，一个不漏
+    unconsumed = sorted(set(aliases) - set(store.LEGACY_RELATION_FIELDS))
+    assert not unconsumed, (
+        f"契约列了但工具没接线的关系字段：{unconsumed}——"
+        f"未接线会让它们对判定隐形（CA106 未定义字段）")
+
+    # (2) 规范名真值表：契约的 type 与工具认的规范名逐字相同，且变体互通
+    names = schema["x-relation-vocabulary"]["names"]
+    for field, spec in aliases.items():
+        declared = spec["type"]
+        assert declared in names, (
+            f"契约字段 {field} 的 type={declared!r} 不在 x-relation-vocabulary.names 里")
+        assert store.canonical_relation_name(declared) == declared, (
+            f"契约字段 {field} 声明的 type={declared!r} 不是规范名"
+            f"（工具会归一成 {store.canonical_relation_name(declared)!r}）")
+        for variant in names[declared]["accept"]:
+            assert store.canonical_relation_name(variant) == declared, (
+                f"契约声明 {declared} 可以写作 {variant!r}，但工具归一成 "
+                f"{store.canonical_relation_name(variant)!r}——判定会静默漏掉这一族")
+
+    # (3) 存储层从契约读到的词表，就是契约里那张（修 bug 不许绕过契约另写一份）
+    assert set(store.RELATION_VOCABULARY) == set(names), (
+        "存储层的关系名词表与契约 x-relation-vocabulary 不是同一份")
 
 
 # ---- 9. 存储层不认识理论 ---------------------------------------------------
@@ -315,6 +364,7 @@ def check_canonical_edges_are_judged():
     """
     canonical = ("relations:\n"
                  "  - type: depends_on\n    target: missing-node\n"
+                 "    kind: resource\n    critical: true\n"
                  "  - type: canon_refs\n    target: also-missing\n"
                  "  - type: conflicts_with\n    target: third-missing\n")
     legacy = ("depends_on:\n  - id: missing-node\n    kind: resource\n    critical: true\n"
@@ -340,6 +390,206 @@ def check_canonical_edges_are_judged():
             + "\n旧写法：\n" + "\n".join(judged(out_old)))
 
 
+def check_load_bearing_declaration_forms_agree():
+    """CA302 判的是「有没有**声明**依赖」，不是「有没有边」——两种写法必须同判。
+
+    评审实测的旧行为：`depends_on: []`（旧写法，字段在）→ rc=0，而语义相同的
+    `relations: []`（规范形空表）→ CA302 error。契约 §5.3 明写「可为空列表，但字段
+    必须在」，所以规范形空表也是合格的声明；而「只写了别的边、对依赖什么都没说」
+    两种写法都必须报。这张表就是 §5.3 的可执行版本。
+    """
+    def card(extra: str) -> str:
+        return (f"---\nid: a-node\ntitle: a-node\ntype: location\nauthor: t\n"
+                f"date: 2026-01-01\nstatus: canon\nload_bearing: true\nlayer: geo\n"
+                f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+                f"---\n\n{BODY}\n")
+
+    only_other_canonical = "relations:\n  - type: conflicts_with\n    target: a-node\n"
+    cases = [
+        ("什么都没写", "", True),
+        ("旧写法 depends_on: []", "depends_on: []\n", False),
+        ("规范形 relations: []", "relations: []\n", False),
+        ("规范形只有 conflicts-with（对依赖没表态）", only_other_canonical, True),
+        ("旧写法只有 conflicts_with:（对依赖没表态）",
+         "conflicts_with:\n  - a-node\n", True),
+        ("混用：规范形放别的边 + depends_on: [] 显式声明空",
+         only_other_canonical + "depends_on: []\n", False),
+        ("规范形里真的有 depends_on 边",
+         "relations:\n  - type: depends_on\n    target: a-node\n"
+         "    kind: resource\n    critical: true\n", False),
+    ]
+    for label, extra, want_error in cases:
+        with tempfile.TemporaryDirectory() as td:
+            root = make_world(Path(td), {"a-node": card(extra)})
+            rc, out, err = run([root])
+            got_error = "CA302" in out
+            assert got_error == want_error, (
+                f"{label}：期望 CA302 {'报' if want_error else '不报'}，实际 rc={rc}\n{out}")
+            assert not err, f"{label} 把 traceback 写到了 stderr：{err!r}"
+
+
+def check_relation_forms_are_indistinguishable():
+    """同一句话写成规范形或旧写法，退出码与规则集合必须**逐条一致**。
+
+    这是 CONTRIBUTING §7 铁律 6（判定一致性）的可执行版本，也是评审 B1 的回归锁：
+    修复前 `relations:` 里的 canon-ref / conflicts-with 对判定层完全隐形（CA401/402/
+    403 静默失效），而 `depends_on` 恰好两边同拼法而正常体检——同一份契约三个族两种
+    下场。修复后每个族都必须给出**同一个**答案，拼法变体（连字符/下划线）也算同族。
+    """
+    def card(extra: str) -> str:
+        return (f"---\nid: a-node\ntitle: a-node\ntype: faction\nauthor: t\n"
+                f"date: 2026-01-01\nstatus: canon\nload_bearing: true\nlayer: political\n"
+                f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+                f"---\n\n{BODY}\n")
+
+    def target(extra: str = "") -> str:
+        return (f"---\nid: b-node\ntitle: b-node\ntype: faction\nauthor: t\n"
+                f"date: 2026-01-01\nstatus: canon\nload_bearing: false\nlayer: ideology\n"
+                f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+                f"---\n\n{BODY}\n")
+
+    def judge(left: str, right: str = ""):
+        with tempfile.TemporaryDirectory() as td:
+            root = make_world(Path(td), {"a-node": card(left), "b-node": target(right)})
+            rc, out, err = run([root])
+            assert not err, f"stderr：{err!r}"
+            rules = sorted(l.split("]")[0] + "]" for l in out.splitlines()
+                           if l.startswith("["))
+            return rc, rules
+
+    pairs = [
+        # 依赖边：三个必填字段齐全时两种写法同判（CA501 层级方向该报就报）
+        ("depends_on 齐全",
+         "relations:\n  - type: depends_on\n    target: b-node\n"
+         "    kind: production\n    critical: true\n",
+         "depends_on:\n  - id: b-node\n    kind: production\n    critical: true\n"),
+        # §5.4 的必填字段缺一个：两种写法都必须 CA107，而不是「规范形省了 kind
+        # 就整族跳过 CA501」——那正是评审 F2 的绕过口
+        ("depends_on 缺 kind（§5.4 必填）",
+         "relations:\n  - type: depends_on\n    target: b-node\n    critical: true\n",
+         "depends_on:\n  - id: b-node\n    critical: true\n"),
+        ("depends_on 缺 critical（§5.4 必填）",
+         "relations:\n  - type: depends_on\n    target: b-node\n    kind: production\n",
+         "depends_on:\n  - id: b-node\n    kind: production\n"),
+        # 引用边：悬空目标必须报 CA401
+        ("canon_refs 悬空",
+         "relations:\n  - type: canon_refs\n    target: ghost\n",
+         "canon_refs:\n  - ghost\n"),
+        ("conflicts_with 无回指",
+         "relations:\n  - type: conflicts_with\n    target: b-node\n",
+         "conflicts_with:\n  - b-node\n"),
+        # 拼法变体：连字符写法也是同一族，必须同判
+        ("contract 拼法变体 canon-ref",
+         "relations:\n  - type: canon-ref\n    target: ghost\n",
+         "relations:\n  - type: canon_refs\n    target: ghost\n"),
+        ("contract 拼法变体 conflicts-with",
+         "relations:\n  - type: conflicts-with\n    target: b-node\n",
+         "relations:\n  - type: conflicts_with\n    target: b-node\n"),
+        ("contract 拼法变体 depends-on",
+         "relations:\n  - type: depends-on\n    target: b-node\n"
+         "    kind: production\n    critical: true\n",
+         "relations:\n  - type: depends_on\n    target: b-node\n"
+         "    kind: production\n    critical: true\n"),
+    ]
+    for label, canonical, legacy in pairs:
+        rc_c, rules_c = judge(canonical)
+        rc_l, rules_l = judge(legacy)
+        assert (rc_c, rules_c) == (rc_l, rules_l), (
+            f"{label}：两种写法判定不同\n  规范形 rc={rc_c} {rules_c}\n"
+            f"  旧写法 rc={rc_l} {rules_l}")
+
+    # F17 的「双向出错」锁：连字符拼法既不许漏判，也不许**凭空造错**。
+    # 修复前 `depends-on` → 漏掉 CA501，同时冒出 CA302 + CA503（谎称作者没声明依赖），
+    # 而作者明明写了 kind: production / critical: true。
+    rc_typo, rules_typo = judge("relations:\n  - type: depends-on\n    target: b-node\n"
+                                "    kind: production\n    critical: true\n")
+    assert rc_typo == 1 and "[CA501]" in rules_typo, (
+        f"连字符拼法必须和 depends_on 同判（CA501 该报就报），实际 rc={rc_typo} {rules_typo}")
+    for fabricated in ("[CA302]", "[CA503]"):
+        assert fabricated not in rules_typo, (
+            f"连字符拼法凭空造出了 {fabricated}（作者声明是完整的），实际 {rules_typo}")
+    # 真正未知的关系名今天不下判语：不能因为不认识就报层级方向错
+    _, rules_junk = judge("relations:\n  - type: florb\n    target: b-node\n")
+    assert "[CA501]" not in rules_junk, (
+        f"未知关系名不得触发图规则（今天不下判语），实际 {rules_junk}")
+
+
+def check_superseded_by_null_is_not_a_successor():
+    """`superseded_by: null` = 「没有承接者」，不能拿它把 CA405 关掉（评审 F4）。
+
+    契约把 null 定义为「无承接者」的合法写法（CA101 文案），那正是降级处置不完整的
+    情形：CA402（报在引用方）与 CA405（报在目标方）必须把 null 与字段缺当成同一件事。
+    修复前填一个 null 就能让 CA405 消失，而 CA402 的文案还会把 Python 的 `None`
+    印进给作者看的报告里。
+    """
+    def archived(extra: str) -> str:
+        return (f"---\nid: b-node\ntitle: b-node\ntype: location\nauthor: t\n"
+                f"date: 2026-01-01\nstatus: archived\nload_bearing: false\n"
+                f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+                f"---\n\n{BODY}\n")
+
+    def referrer() -> str:
+        return entry_text("a-node", "canon_refs:\n  - b-node\n")
+
+    for label, extra, want in [
+        ("字段缺", "", "CA405"),
+        ("显式 null", "superseded_by: null\n", "CA405"),
+        ("真有承接者", "superseded_by: c-node\n", "CA402"),
+    ]:
+        with tempfile.TemporaryDirectory() as td:
+            root = make_world(Path(td), {"a-node": referrer(), "b-node": archived(extra)})
+            rc, out, err = run([root])
+            assert not err, f"{label} 把 traceback 写到了 stderr：{err!r}"
+            assert want in out, f"{label}：期望 {want}\n{out}"
+            assert "None" not in out, f"{label}：报告里印出了 Python 的 None\n{out}"
+            if want == "CA402":
+                assert "CA405" not in out, f"{label}：有承接者时不该报 CA405\n{out}"
+
+
+def check_write_path_refuses_to_clobber():
+    """写入路径的三条静默覆盖必须变成响亮的拒绝。
+
+    评审实测：`new` 撞同路径的他人文件会静默覆盖（rc=0 且打印「已建卡」）、
+    `init` 无条件吃掉既有 `.git/hooks/pre-commit`（无备份）、`link` 只按
+    `depends_on:` 具名字段去重（边写在规范形 `relations:` 里时会重复插入）。
+    三条都不是"判定"问题，是**数据丢失**问题，所以钉在存储层测试里。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        assert store.cmd_init(world, exe="canonlint") == 0
+
+        # (1) new 撞路：文件里的 id 与请求的 id 不同，索引查不到，但路已被占
+        squatted = world / "entries" / "locations" / "foo.md"
+        squatted.parent.mkdir(parents=True, exist_ok=True)
+        squatted.write_text("---\nid: bar\ntitle: 手写的\n---\n原内容\n", encoding="utf-8")
+        rc, out, err = run(["new", "location", "新建", "--id", "foo", "--root", str(world)])
+        assert rc == 1, f"撞路必须拒绝（rc=1），实际 rc={rc}\n{out}\n{err}"
+        assert "已存在" in err, err
+        assert "手写的" in squatted.read_text(encoding="utf-8"), "原有文件被吃掉了"
+
+        # (2) init 撞钩子：覆盖前必须留备份
+        world.joinpath(".git", "hooks").mkdir(parents=True, exist_ok=True)
+        hook = world / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\necho SENTINEL\n", encoding="utf-8")
+        assert store.cmd_init(world, exe="canonlint") == 0
+        backup = world / ".git" / "hooks" / "pre-commit.bak"
+        assert backup.exists() and "SENTINEL" in backup.read_text(encoding="utf-8"), \
+            "覆盖既有 pre-commit 钩子却没留备份"
+
+        # (3) link 按规范化后的边去重：边已经写在规范形 relations 里
+        for eid, extra in (("a-node", "relations:\n  - type: depends_on\n"
+                                       "    target: b-node\n    kind: fiscal\n"
+                                       "    critical: true\n"),
+                           ("b-node", "depends_on: []\n")):
+            (world / "entries" / "factions").mkdir(parents=True, exist_ok=True)
+            (world / "entries" / "factions" / f"{eid}.md").write_text(
+                entry_text(eid, extra, legacy_empty=False), encoding="utf-8")
+        rc, out, err = run(["link", "--kind", "fiscal", "--root", str(world), "a-node", "b-node"])
+        assert rc == 0 and "边已存在" in out, f"rc={rc} out={out!r} err={err!r}"
+        text = (world / "entries" / "factions" / "a-node.md").read_text(encoding="utf-8")
+        assert text.count("kind: fiscal") == 1, f"同一条边被插了两次：\n{text}"
+
+
 CHECKS = (
     ("规范形与旧写法等价（三种关系）", check_canonical_equals_legacy),
     ("规范形的形状错误会出现在报告里", check_shape_errors_reach_the_report),
@@ -349,11 +599,15 @@ CHECKS = (
     ("两种写法混用被记录（旧字段在前）", check_mixed_forms_are_recorded),
     ("字段表与判定侧常量一致", check_field_table_matches_rules),
     ("type 词表与存储布局一致", check_type_vocabulary_matches_layout),
-    ("关系别名漂移被钉住（六种待接线）", check_relation_alias_drift),
+    ("关系别名漂移被钉住（九个都接线 + 拼法与契约逐字一致）", check_relation_alias_drift),
     ("存储层不认识理论（不 import 判定侧）", check_store_keeps_theory_out),
     ("通过符号链接调用也能 import store", check_symlink_invocation),
     ("init 装的钩子指向 canonlint（不是 store）", check_init_hook_points_at_canonlint),
     ("写入路径往返：init→new→link→--strict", check_write_path_round_trip),
+    ("写入路径不静默覆盖（new 撞路 / init 钩子 / link 去重）", check_write_path_refuses_to_clobber),
+    ("承重墙义务：两种写法的「声明」同判", check_load_bearing_declaration_forms_agree),
+    ("关系写法不可区分（规范形/旧写法/拼法变体同判）", check_relation_forms_are_indistinguishable),
+    ("superseded_by: null 不是承接者（CA405 不能被关掉）", check_superseded_by_null_is_not_a_successor),
 )
 
 

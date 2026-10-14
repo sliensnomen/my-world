@@ -20,14 +20,18 @@
 """
 from .layout import ENTRY_DIRS, SKIP_DIRS, TYPE_DIRS, collect, iter_entry_paths
 from .model import (CANONICAL_RELATION_ITEMS, CORE_REQUIRED_FIELDS, FIELD_TABLE, ID_RE,
-                    LEGACY_RELATION_FIELDS, RELATIONS_FIELD, ConflictRef, Dep, Entry,
-                    Relation, SchemaError, ShapeIssue, parse_entry)
+                    LEGACY_RELATION_FIELDS, NAMED_RELATION_ATTRS, RELATIONS_FIELD,
+                    RELATION_TYPE_NAMES, RELATION_VOCABULARY, ConflictRef, Dep, Entry,
+                    Relation, SchemaError, ShapeIssue, canonical_relation_name,
+                    nearest_relation_name, parse_entry)
 from .write import CONSTITUTION_SKELETON, cmd_init, cmd_link, cmd_new, slugify
 
 __all__ = [
     "ENTRY_DIRS", "SKIP_DIRS", "TYPE_DIRS", "collect", "iter_entry_paths",
     "CANONICAL_RELATION_ITEMS", "CORE_REQUIRED_FIELDS", "FIELD_TABLE", "ID_RE",
-    "LEGACY_RELATION_FIELDS", "RELATIONS_FIELD", "ConflictRef", "Dep", "Entry",
-    "Relation", "SchemaError", "ShapeIssue", "parse_entry",
+    "LEGACY_RELATION_FIELDS", "NAMED_RELATION_ATTRS", "RELATIONS_FIELD",
+    "RELATION_TYPE_NAMES", "RELATION_VOCABULARY", "ConflictRef", "Dep", "Entry",
+    "Relation", "SchemaError", "ShapeIssue", "canonical_relation_name",
+    "nearest_relation_name", "parse_entry",
     "CONSTITUTION_SKELETON", "cmd_init", "cmd_link", "cmd_new", "slugify",
 ]

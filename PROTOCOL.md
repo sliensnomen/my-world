@@ -7,7 +7,7 @@
 >
 > 1. `world.schema.json` —— 条目格式的唯一契约；
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
-> 3. 本文档 —— 规则表（§6.3，**23 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
+> 3. 本文档 —— 规则表（§6.3，**24 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
 > 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.1"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
@@ -15,8 +15,16 @@
 
 **v1.1 修订记录（2026-10，进行中；编号见上文第 12 行）：**
 1. **`type` 允许 `x-` 实验类型**（§5.2 五值词表的泄压阀）：写成 `x-<命名空间>-<名称>` 即合法，能存、不判错，CA102 记 **info** 级并计入案例收集。词表本身不动——确定普适的类型进词表是收紧（§9.1），不能顺手做。放宽按 §9.1 升 minor。
-2. **规范形 `relations` 与旧具名字段判定等价**：审计器把两种写法归一化到同一张边表再判定（CA108 kind、CA401/CA402/CA403/CA404/CA405 引用与状态、CA501 层级方向、CA502 环、CA503 物质族 critical、CA504 影响闭包），**同一条边写在哪、报的都一样**；规范形不强制 `kind`，写了才受 CA108 约束。此前实现只读旧字段（`depends_on`/`conflicts_with`/`canon_refs`），写成 `relations:` 会静默不判——这是实现缺口补齐，规则语义没变，故不另计版本。
+2. **规范形 `relations` 与旧具名字段判定等价**：审计器把两种写法归一化到同一张边表再判定（CA108 kind、CA401/CA402/CA403/CA404/CA405 引用与状态、CA501 层级方向、CA502 环、CA503 物质族 critical、CA504 影响闭包），**同一条边写在哪、报的都一样**。此前实现只读旧字段（`depends_on`/`conflicts_with`/`canon_refs`），写成 `relations:` 会静默不判——这是实现缺口补齐。
+   这条等价承诺在第一版里有个反例：规范形曾经**不强制** `kind`，而 CA501/CA502/CA503 都以 `kind` 为门禁，于是「规范形省略 `kind`」= 合法地关掉整族承重链条判定。§5.4 说的是 `depends_on` 对象的 `kind`/`critical` 必填，与写法无关，所以现在**两种写法一致**：规范形的 `depends_on` 项缺 `kind` 或 `critical` 同样报 CA107，不再跳过。
 3. 契约侧字段面未变：`world.schema.json` 的 `x-contract-version` 保持 `0.2`。
+4. **关系名的唯一真值表进了契约**（`x-relation-vocabulary`）：契约声明的拼法、历史拼法与规范名归一化成同一族。此前契约把 `canon_refs` 写成 `canon-ref`、`conflicts_with` 写成 `conflicts-with`，而两个引擎按规范名精确匹配——**契约自己声明的写法对判定完全隐形**（整族 CA4xx 静默失效），`depends_on` 却因两边恰好同拼法而正常体检：同一份契约三个族两种下场。现在 `canon-ref`/`canon-refs`/`canon_refs` 与 `conflicts-with`/`depends-on` 等变体一律归一到规范名再判定。
+5. **CA110 拼写近失守卫**（warning，非致命）：规范形 `relations[].type` 与某个规范名编辑距离 ≤1 时提示疑似拼写错误，工具**仍按归一化后的规范名判定该边**；`x-` 前缀与真正的新关系名不报（自由档不变）。修复前 `depends-on` 一字符之差会**双向出错**：既漏判 CA501/CA401/CA504，又凭空造出 CA302/CA503（谎称作者没声明依赖）。
+6. **降级级联的 `null` 语义统一**：`superseded_by: null` 是 CA101 允许的「无承接者」写法，因此 CA405（目标侧）把「字段缺」与「显式 null」当成同一件事，CA402（引用方）对两者都不报——以前填一个 `null` 就能把 CA405 关掉，且 CA402 会把 Python 的 `None` 印进报告。
+7. **降级承接对豁免 CA201**：承接条目按定义要接着旧条目写，两份正文天然高度相似；`superseded_by` 声明的两方不再判疑似重复。
+8. **提示性规则不阻断草稿**：CA301（命中承重墙关键词但未声明）只对**已定档**（trial/canon）条目发出——§5.3 说「审计器不替作者做决定」，而 `--strict` 会把任何 warning 变成失败；draft 写到「政治/经济」不该无法提交。
+9. **`--impact` 从不把主体列进自己的下游**：`--impact x` 问的是「谁依赖 x」，环内闭包以前会把 x 自己带回列表（环由 CA502 单独报）。
+10. **参数越界是用法错误**：`--dup-threshold` 必须落在 `(0, 1]`，越界返回退出码 2；以前 `2.5` 会让 CA201 永不触发而退出码仍为 0——一条规则被一个参数悄悄关掉。
 
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
@@ -26,7 +34,7 @@
 **v1.0 封版记录（三个测试世界 dogfood 完成）：**
 1. **kind 初始集封版**：六值冻结（resource/production/economy/fiscal/manpower/legitimacy）。证据：魔戒、冰与火、沙丘三个差异极大的世界中，物质五值零例外；装不下的全部落在规范族（`x-will-binding`、`x-magic-logistics`、`x-faith-engineering` 各出现一次，证据不足以升格，留档观察）
 2. **`x-` 实验通道永久开放**：不作为过渡机制，作为协议的长期泄压阀（CA108 info 级收集）
-3. 一致性终审完成：规则表 23 条（CA100–CA109、CA201、CA301/302、CA401–CA405、CA501–CA505）与参考实现逐条互证；清除死代码（v0.4 的 CA503 旧阈值常量）
+3. 一致性终审完成：规则表 23 条（CA100–CA109、CA201、CA301/302、CA401–CA405、CA501–CA505）与参考实现逐条互证（v1.1 增列 CA110，见 §6.3 与 §9 修订记录）；清除死代码（v0.4 的 CA503 旧阈值常量）
 4. 自本版起，结构性变更走 major 版本（§9）
 
 **v0.5 修订记录（魔戒/冰火真实数据 dogfood 回流）：**
@@ -228,13 +236,30 @@ geo → resource → production → economy → fiscal → military → politica
 | 义务 | 缺失后果 |
 |---|---|
 | 填 `layer` | CA302 **error** |
-| 填 `depends_on`（可为空列表，但字段必须在） | CA302 **error** |
+| **声明**依赖（见下表） | CA302 **error** |
+
+CA302 判的是「有没有声明」，不是「有没有边」——所以下面这些写法**判定结果必须相同**。
+「对依赖什么都没说」与「声明了没有依赖」是两件事：
+
+| 写法 | 声明了吗 | CA302 |
+|---|---|---|
+| 什么都没写 | 否 | **error** |
+| `depends_on: []`（字段在） | 是（空） | — |
+| `relations: []`（规范形整表为空） | 是（空） | — |
+| `relations:` 里只有别的边（如一条 `conflicts-with`） | 否 | **error** |
+| 只写 `conflicts_with:`、没碰依赖 | 否 | **error** |
+| `relations:` 放别的边 + `depends_on: []`（混用） | 是（空） | — |
+| `relations:` 里有一条 `depends_on` 边 | 是 | — |
+
+规范形是一张混装的关系表，没有单独的「空 `depends_on`」条目，所以「空依赖 + 别的边」
+只有混用写法能表达：`relations:` 放别的边、`depends_on: []` 显式声明空。混用是**契约支持**
+的写法（`world.schema.json` 的 `x-relation-source.written-form`），不是将就。
 
 仅命中附录 A 关键词但未声明 `load_bearing` 的条目，CA301 发出 **warning**（提示作者考虑声明）。"必须"只落在显式声明上，审计器不替作者做决定。
 
 ### 5.4 `depends_on` 对象 schema（kind 已封版，v1.0）
 
-每个元素**必须**恰好包含以下三个必填字段，可以加 `x-` 扩展字段：
+每个元素**必须**恰好包含以下三个必填字段，可以加 `x-` 扩展字段。**这条对两种写法同样成立**：旧具名字段 `depends_on:` 的元素按 `id`/`kind`/`critical`，规范形 `relations:` 里的 `depends_on` 项按 `target`/`kind`/`critical`——缺一个就报 CA107，两条路径都不跳过，否则「规范形省掉 `kind`」就能合法地关掉 CA501/CA502/CA503（见 §9 v1.1 修订记录第 2 条）。
 
 | 字段 | 类型 | 约束 |
 |---|---|---|
@@ -308,21 +333,30 @@ geo → resource → production → economy → fiscal → military → politica
 | CA107 | error | `depends_on` 对象违反 §5.4 schema（缺字段/多非 x- 字段） |
 | CA108 | error/info | `depends_on[].kind` 在初始集外：无 `x-` 前缀 = error；有 `x-` 前缀 = info（案例收集） |
 | CA109 | error | 字段类型/格式非法：`canon_refs` 非列表或元素非字符串、`load_bearing`/`ai_assisted`/`critical` 非 bool、id 引用不符合 `^[a-z0-9-]+$` 格式（`world:id` 形式除外，归 CA401）等 |
-| CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6） |
-| CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明） |
+| CA110 | warning | 关系名拼写近失：规范形 `relations[].type` 与某个规范关系名的编辑距离 ≤1（如 `depends-onn`）。工具仍按**规范名**判定该边，本条只提示疑似拼写错误；真正的新关系名不报（自由档，见 §5.4） |
+| CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复 |
+| CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明）。**只对已定档条目（trial/canon）发出**：draft 还没到做决定的时候，而 `--strict` 会把 warning 当失败 |
 | CA302 | error | `load_bearing: true` 但缺 `layer` 或 `depends_on` |
 | CA401 | error | 引用（含 `superseded_by`）指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**） |
 | CA402 | error | `canon_refs` 目标状态为 `draft`/`trial`；或目标为 `archived` 且已填 `superseded_by`（提示迁移至承接条目）。目标为 `archived` 且未填 `superseded_by` 时**不报本条**，由 CA405 在 archived 条目侧单独报告，避免双报 |
 | CA403 | warning | `conflicts_with` 双方均简式且缺回指（对象式标注豁免，见 §4.2） |
 | CA404 | error | `canon` 条目的 `depends_on` 目标状态非 `canon`（链条依赖只能建立在已定档上） |
-| CA405 | error | `archived` 条目仍被 `canon_refs` 引用且 `superseded_by` 未填（降级处置不完整） |
+| CA405 | error | `archived` 条目仍被 `canon_refs` 引用，且 `superseded_by` **未填或为 `null`**（两者都表示「没有承接者」，见 v1.0.1 澄清）——降级处置不完整 |
 | CA501 | error | **物质族** `depends_on` 目标的链条序号 > 本条目的链条序号（规范族边豁免） |
 | CA502 | error | **物质族**依赖子图存在环 |
 | CA503 | warning | economy/fiscal/military/political 层承重墙条目无任何**物质族** `critical: true` 依赖（ideology 层豁免） |
 | CA505 | warning | 仓库级：存在 military/political 层承重墙条目，但全库没有任何 `layer: fiscal` 的条目（财政维度缺失提示；条目不须为承重墙） |
-| CA504 | report | 变更/降级影响报告：输出变更条目的下游传递闭包 |
+| CA504 | report | 变更/降级影响报告：输出变更条目的下游传递闭包（**不含主体自身**——`--impact x` 问的是「谁依赖 x」，环由 CA502 单独报） |
 
 **无传递违规原则：** CA402/CA404/CA405 只判**直接边**的违规。A 引用 B、B 违规并不使 A 连带违规；"连带影响"是 CA504 报告的职责，不是 error 的传染。
+
+**三张依赖图（同一份 frontmatter，三条规则读的子图各不相同，必须分别记）：**
+
+- **CA501 / CA503**（承重链条规则）：只读该条目**自身**的 `depends_on` 边。CA501 按 `kind` 区分「物质族 / 规范族」判层级方向；CA503 数**物质族**里 `critical: true` 的有几条。两者都以 `load_bearing: true` 为门禁。
+- **CA502**（物质族成环）：读全库 `depends_on` 边的**物质族子图**（目标条目必须存在）。只看 `kind` 是否落在物质族；不看 `load_bearing`，也不看层。
+- **CA504**（影响闭包）：读全库 `depends_on` 边的**全图**并做传递闭包。都不看：任何 `depends_on` 边都算下游，连 `kind` 缺失的也算。
+
+所以"环"（CA502）与"影响闭包"（CA504）在**同一份数据上可以给出不同的下游集合**，这不是 bug 而是分工：CA502 只关心物质生产能否自我循环，CA504 关心改名/降级会波及谁。承重墙声明（`load_bearing: true`）是 CA501/CA503 的门禁，对 CA502/CA504 不产生影响。**这三张图是契约的一部分**，兼容实现必须按同一张表建图，否则一致性要求（上一段）无法满足。
 
 **判定一致性要求：** 同一仓库快照、同一规则集版本，任何兼容实现的确定性规则判定**必须**逐条一致。判定出现分歧 = 某实现有 bug 或协议有歧义，两者都必须修。
 

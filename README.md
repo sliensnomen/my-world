@@ -10,7 +10,7 @@
 | | 负责 | 现在有什么 |
 |---|---|---|
 | **存** | 条目格式、id、目录布局、关系、写入命令 | `store/` · `world.schema.json`（格式契约） |
-| **判** | 结构规则 + 政治经济学规则 | 23 条 CA 规则（`canonlint.py`）· 6 条 CL + 5 条 PE 规则（`classlint/`） |
+| **判** | 结构规则 + 政治经济学规则 | 24 条 CA 规则（`canonlint.py`）· 6 条 CL + 5 条 PE 规则（`classlint/`） |
 
 **两者之间有一条线**：`store/` 里不许出现政治经济学词汇。改存储的人不该被迫先学会八层链和 PE003——
 政治经济学只住在规则、`classlint/` 和文档里。这条线由 `tests/test_store.py` 用 AST 检查守着（越线即红）。
@@ -60,7 +60,7 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 1. **`world.schema.json`** —— 条目格式的唯一契约。自定义与外来字段一律住 `x-` 前缀（例 `x-st-entry`）；
    不许另开 `extensions` 键——它不在字段表里，会被 CA106 当成未定义字段。
 2. **代码 + 测试** —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；测试绿就是真相。
-3. **`PROTOCOL.md`** —— 2026-09 冻结时写下的规范散文：规则表（§6.3，23 条）与代码逐条互证，
+3. **`PROTOCOL.md`** —— 2026-09 冻结时写下的规范散文：规则表（§6.3，24 条）与代码逐条互证，
    其余叙述是当时的意图。与代码不一致时**以代码为准**。
 4. **`项目文书.md` / `classlint/项目文书.md`** —— 定位与路线图，属于「想法」，不是契约。
 
@@ -70,14 +70,16 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 ## 现状（不吹）
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
-- ✅ **能判**：23 条 CA 规则（结构 / 引用 / 承重链条 / 重复 / 影响报告）+ CL1xx + PE001–PE005
-- ✅ **有回归网**：`tests/` 五套（17 + 10 + 13 + 16 + 13 项检查）+ `classlint/tests/` 一套（15 个夹具世界），
+- ✅ **能判**：24 条 CA 规则（结构 / 引用 / 承重链条 / 重复 / 影响报告）+ CL1xx + PE001–PE005
+- ✅ **有回归网**：`tests/` 五套（22 + 10 + 17 + 16 + 13 项检查）+ `classlint/tests/` 一套（15 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ⬜ **没有界面** —— 前端最后做：没有判定，就没有值得渲染的东西；渲染器是别人能写的东西
 - ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）
-- ⬜ **classlint 还没按「存 / 判」拆** —— 它仍是 canonlint 的整份拷贝（`ENTRY_ROOT = "codex"`）
-- ⚠️ 三个真实世界（魔戒 / 冰火 / 沙丘）是**演示**不是证据：它们的 warning 大多是真实世界的真实问题，
-  不是工具 bug；拿它们当「全绿基准」是误会（唯一的全绿基准是 `tests/world-clean`）
+- ⬜ **classlint 还没按「存 / 判」拆** —— 它仍是 `canonlint` 的一份**改动副本**（`ENTRY_ROOT = "codex"`，约三成非空行与 `canonlint.py` + `store/` 逐字相同）。字段表与关系名已改为从 `world.schema.json` 读同一张真值表，但两边的解析器本体还没合并
+- ⚠️ 三个真实世界（魔戒 / 冰火 / 沙丘）是**演示**不是证据：它们的 warning 几乎全是 CA104（正文不到
+  200 字）这类篇幅噪声，不是工具 bug，也不是世界观有毛病；拿它们当「全绿基准」是误会
+- ✅ **唯一的全绿基准是 `tests/world-clean`**：默认与 `--strict` 两种模式下都是 `0 错误 | 0 警告`、
+  `exit 0`，两条退出码都钉在 `tests/snapshots/` 里（`world-clean` 与 `world-clean+strict`）
 
 ## 下一步（方向已定，未实现）
 
