@@ -71,11 +71,11 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
 - ✅ **能判**：25 条 CA 规则（结构 / 引用 / 承重链条 / 重复 / 影响报告）+ CL1xx + PE001–PE005 + PE009
-- ✅ **有回归网**：`tests/` 五套（29 + 12 + 18 + 17 + 13 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
+- ✅ **有回归网**：`tests/` 五套（29 + 12 + 19 + 17 + 13 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ⬜ **没有界面** —— 前端最后做：没有判定，就没有值得渲染的东西；渲染器是别人能写的东西
 - ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）
-- ⬜ **classlint 还没按「存 / 判」拆** —— 它仍是 `canonlint` 的一份**改动副本**（`ENTRY_ROOT = "codex"`，约三成非空行与 `canonlint.py` + `store/` 逐字相同）。字段表与关系名已改为从 `world.schema.json` 读同一张真值表，但两边的解析器本体还没合并
+- ⬜ **classlint 还没按「存 / 判」拆** —— 读卡那一半**已经合并**：id 语法、frontmatter 切分、契约词表与关系名归一化只剩 `store/parse.py` 一份，`classlint` 只转发（`tests/test_store.py` 的结构锁 + 行为锁守着，抄回去就红）。剩下没动的是**判定**那一半：classlint 仍是一个独立可执行文件，不是可插拔的规则包；且它自己的字段政策与 canonlint 有一处真实分歧（`depends_on` 收裸字符串，canonlint 要求 `{id, kind, critical}`）
 - ⚠️ 三个真实世界（魔戒 / 冰火 / 沙丘）是**演示**不是证据：它们的 warning 几乎全是 CA104（正文不到
   200 字）这类篇幅噪声，不是工具 bug，也不是世界观有毛病；拿它们当「全绿基准」是误会
 - ✅ **唯一的全绿基准是 `tests/world-clean`**：默认与 `--strict` 两种模式下都是 `0 错误 | 0 警告`、

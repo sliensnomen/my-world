@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 import tempfile
@@ -25,12 +24,22 @@ from pathlib import Path
 
 import yaml
 
+# 读卡代码（id 语法、frontmatter 切分、关系名词表与归一化、一条边）在 store/parse.py，
+# 与 canonlint **共用同一份**。本引擎是判定层，存储/解析层是它的上游——所以 classlint
+# 必须与仓库一起使用（单独拷走这一个文件不再支持）。
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from store import parse as shared  # noqa: E402
+
 VERSION = "0.1"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 
-# 实体 ID 规范：小写字母/数字/连字符，全库唯一，一旦发布永不更改、永不复用
-ID_RE = re.compile(r"^[a-z0-9-]+$")
+# 实体 ID 规范：小写字母/数字/连字符，全库唯一，一旦发布永不更改、永不复用。
+# 实现在 store/parse.py（与 canonlint 共用一份）。
+ID_RE = shared.ID_RE
 
 # 七种生产关系（协议 §2，固定语法）：relation → 允许的 optional 属性键。
 # 这是本引擎**必须懂**的结构性子集，用来建图跑 PE 规则；它不是关系名的真值表。
@@ -46,26 +55,12 @@ RELATION_ATTRS: dict[str, set[str]] = {
 ATTR_TYPES = {"what": str, "note": str, "kind": str, "critical": bool}
 
 # ---- 关系名词表：唯一真值在契约 world.schema.json ------------------------------
-# 契约 `x-relation-vocabulary` 是唯一真值。本引擎不自己维护第二份表：下面读它、
-# 归一化“同一关系的所有历史拼法”（canon-ref / canon_refs …），并**照单收下具名字段**，
-# 不再对契约列过的关系名报 CL103。读不到契约时退化为机械变换（连字符↔下划线），
-# 仍然让三族关系互通。
-SCHEMA_NAME = "world.schema.json"
-SCHEMA_PATH = Path(__file__).resolve().parent.parent / SCHEMA_NAME
-
-# `relations:` 规范形（契约 x-relation-source.canonical）允许的项键
-CANONICAL_RELATION_ITEMS = {"type", "target", "kind", "critical", "stance", "note", "what"}
-
-
-def _load_relation_vocabulary() -> dict[str, tuple[str, ...]]:
-    """从契约读关系名词表：{规范名: (可接受的拼法…)}。契约缺席时不静默。"""
-    try:
-        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-        names = schema["x-relation-vocabulary"]["names"]
-        return {k: tuple(v["accept"]) for k, v in names.items()}
-    except (OSError, ValueError, KeyError, TypeError):
-        # 契约不在树里（单独拷走 classlint.py）时退化：只做连字符/下划线互换。
-        return {}
+# 契约 `x-relation-vocabulary` 是唯一真值。读取与归一化（「同一关系的所有历史拼法」
+# canon-ref / canon_refs … → 一个规范名）的实现在 store/parse.py，**与 canonlint 共用
+# 同一份**：两个引擎把同一条边认成两个名字，就没有「同一份数据同一份判定」可言。
+# 契约列过的关系名一律照单收下（不再报 CL103）；契约读不到时退化为机械变换
+# （连字符↔下划线），仍然让各族关系互通。
+CANONICAL_RELATION_ITEMS = shared.CANONICAL_RELATION_ITEMS
 
 
 def _load_material_kinds() -> frozenset[str]:
@@ -75,37 +70,17 @@ def _load_material_kinds() -> frozenset[str]:
     读不到时退化为这份内置表——PE005 收紧消音条件必须依赖它，宁可退化也不静默放过。
     """
     fallback = {"resource", "production", "economy", "fiscal", "manpower"}
-    try:
-        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-        kinds = schema["x-strict-vocabulary"]["depends_on.kind"]
-        return frozenset(kinds) or frozenset(fallback)
-    except (OSError, ValueError, KeyError, TypeError):
-        return frozenset(fallback)
+    return frozenset(shared.contract_strict_vocabulary("depends_on.kind")) or frozenset(fallback)
 
 
-def _shape_variants(word: str) -> set[str]:
-    """同一关系名的历史拼法：原样、连字符、下划线、去掉分隔符。"""
-    return {word, word.replace("-", "_"), word.replace("_", "-"),
-            word.replace("-", "").replace("_", "")}
-
-
-RELATION_VOCABULARY: dict[str, tuple[str, ...]] = _load_relation_vocabulary()
-ALL_RELATION_NAMES: tuple[str, ...] = tuple(RELATION_VOCABULARY) or tuple(RELATION_ATTRS)
-CONTRACT_ATTESTED: frozenset[str] = frozenset(
-    v for accepts in RELATION_VOCABULARY.values() for v in accepts)
-
-# 关系名 → 规范名（含 _shape_variants 的机械化兜底，契约缺位时也能互通）
-RELATION_CANONICAL: dict[str, str] = {}
-for _name in ALL_RELATION_NAMES:
-    for _variant in (RELATION_VOCABULARY.get(_name) or ()) or _shape_variants(_name):
-        RELATION_CANONICAL[_variant] = _name
-    for _variant in _shape_variants(_name):
-        RELATION_CANONICAL.setdefault(_variant, _name)
+RELATION_VOCABULARY: dict[str, tuple[str, ...]] = shared.RELATION_VOCABULARY
+ALL_RELATION_NAMES: tuple[str, ...] = shared.ALL_RELATION_NAMES
+CONTRACT_ATTESTED: frozenset[str] = shared.CONTRACT_ATTESTED
 
 
 def canonical_rel(name: str) -> str:
     """把任意历史拼法的关系名归一到规范名；未知名原样返回（自由档保留自定义关系）。"""
-    return RELATION_CANONICAL.get(name, name)
+    return shared.canonical_relation_name(name)
 
 
 # F14 修复：契约列过的九种关系及其历史拼法不再报 CL103；契约之外的关系名仍然报。
@@ -151,17 +126,11 @@ WORLD_DIRS = [
     "records",
 ]
 
-# ---- 数据模型与解析（解析器自 canonlint 抽取）---------------------------------
+# ---- 数据模型与解析（读卡代码与 canonlint 共用 store/parse.py）----------------
 
-FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
-
-
-@dataclass
-class Edge:
-    """一条关系边：src 条目 —rel→ target。`rel` **一律是契约规范名**（见 RELATION_CANONICAL）。"""
-    rel: str
-    target: str
-    attrs: dict
+# 一条边：src 条目 —rel→ target。`rel` **一律是契约规范名**（见 canonical_rel）。
+# 类型本身在 store/parse.py（`Relation`，带 `.rel` 别名），两个引擎建的是同一种边。
+Edge = shared.Relation
 
 
 @dataclass
@@ -176,18 +145,12 @@ class Finding:
 
 
 @dataclass
-class Entry:
-    """一个条目 = 一个带 YAML frontmatter 的 Markdown 文件。"""
-    path: Path
-    rel: str
-    meta: dict
-    body: str
-    parse_error: str | None = None
+class Entry(shared.RawEntry):
+    """一个条目 = 一个带 YAML frontmatter 的 Markdown 文件。
 
-    @property
-    def id(self) -> str | None:
-        v = self.meta.get("id")
-        return v if isinstance(v, str) else None
+    文件层字段（path/rel/meta/body/parse_error/id）继承自 `shared.RawEntry`——两个引擎的
+    条目对象从同一个文件层结果长出来，本类只挂政治经济学判定需要的关系视图。
+    """
 
     @cached_property
     def edges(self) -> tuple[list[Edge], list[Finding]]:
@@ -293,24 +256,8 @@ class Entry:
 
 
 def parse_entry(path: Path, root: Path) -> Entry:
-    rel = str(path.relative_to(root))
-    try:
-        # utf-8-sig：容忍 BOM，避免把带 BOM 的文件误判为「缺少 frontmatter」
-        text = path.read_text(encoding="utf-8-sig")
-    except (UnicodeDecodeError, OSError) as e:
-        # 无法读取也是「文件无法解析」，按 CL100 报，而不是让 traceback 逃逸
-        return Entry(path, rel, {}, "", parse_error=f"文件无法读取: {e}")
-    m = FRONTMATTER_RE.match(text)
-    if not m:
-        return Entry(path, rel, {}, text,
-                     parse_error="缺少 frontmatter（文件须以 --- 包裹的 YAML 头开始）")
-    try:
-        meta = yaml.safe_load(m.group(1))
-    except yaml.YAMLError as e:
-        return Entry(path, rel, {}, "", parse_error=f"frontmatter YAML 解析失败: {e}")
-    if not isinstance(meta, dict):
-        return Entry(path, rel, {}, "", parse_error="frontmatter 必须是键值映射")
-    return Entry(path, rel, meta, text[m.end():])
+    # 读文件这一步在 store/parse.py（与 canonlint 共用一份）；这里只装进本引擎的 Entry。
+    return shared.read_frontmatter(path, root).as_entry(Entry)
 
 
 def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:

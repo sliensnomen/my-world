@@ -30,7 +30,7 @@
 
 | 层 | 代码在哪 | 改它需要懂什么 | 谁守着它 |
 |---|---|---|---|
-| **存储** | `store/`（model / layout / write） | 只要懂文件格式 | `tests/test_store.py`（AST 检查，越线即红） |
+| **存储** | `store/`（parse / model / layout / write） | 只要懂文件格式 | `tests/test_store.py`（AST 检查，越线即红） |
 | **格式契约** | `world.schema.json` | 只要懂 JSON Schema | `tests/test_schema.py` |
 | **结构判定** | `canonlint.py` 的 `check_*` 与规则常量 | 要懂规则语义（`PROTOCOL.md` §6.3） | `tests/run_tests.py`（快照）+ `tests/test_docs.py` |
 | **政治经济学判定** | `classlint/classlint.py`（CL1xx + PE001–PE005 + PE009） | 要读 `classlint/PROTOCOL.md` | `classlint/tests/run_tests.py`（18 个夹具） |
@@ -90,6 +90,8 @@ python3 classlint/tests/run_tests.py
 4. 解析层遇到坏输入抛异常（而不是报 CA100/CL100）→ `tests/run_tests.py` 红（stderr 非空即失败）；
 5. 文档里的数字（规则条数 / 层数 / 测试世界数量 / PE 编号）与代码不符 → `tests/test_docs.py` 红；
 6. classlint 的期望值三元组变化 → `classlint/tests/run_tests.py` 红。
+7. 谁（`canonlint.py` 或 `classlint/classlint.py`）自己 `compile` 正则、自己切 frontmatter、或自己抄一份契约词表 → `tests/test_store.py` 红。
+   读卡代码只能有一份：`store/parse.py`。两个引擎各自**转发**，行为锁保证同一段字节读出来一模一样。
 
 ---
 
@@ -101,7 +103,7 @@ python3 tests/test_schema.py          # 契约 ↔ 代码常量
 python3 tests/test_store.py           # 存储层边界与写入路径
 python3 tests/test_serve.py           # 接口（serve.py）与解析器（wgp-client.js）
 python3 tests/test_docs.py            # 文档里的数字 ↔ 代码
-python3 classlint/tests/run_tests.py  # 17 个 classlint 夹具
+python3 classlint/tests/run_tests.py  # 18 个 classlint 夹具
 ```
 
 两个 Python 版本都要过（CI 跑 3.12 与 3.14；本机可用

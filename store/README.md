@@ -4,9 +4,16 @@
 
 | 文件 | 管什么 |
 |---|---|
-| `store/model.py` | 条目模型、frontmatter 解析、字段表、id 语法、边的形状（`Relation`） |
+| `store/parse.py` | **读卡代码的唯一一份**：id 语法、frontmatter 切分、契约词表、关系名归一化、`Relation`/`RawEntry` |
+| `store/model.py` | 条目模型（`Entry`）、字段表、从 `RawEntry` 长成 `Entry`（挂上 `edges` 视图） |
 | `store/layout.py` | 目录布局（`ENTRY_DIRS`/`SKIP_DIRS`/`TYPE_DIRS`）、扫描与 id 索引 |
 | `store/write.py` | 写入命令：`init` / `new` / `link`（文本级插入，diff 小到能评审） |
+
+**读卡代码只有一份**（`store/parse.py`）。`canonlint.py` 与 `classlint/classlint.py` 都只
+转发，谁都不许自己 `compile` 正则、自己切 frontmatter、或自己抄一份契约词表——
+`tests/test_store.py` 里那条「两个引擎共用同一份读卡代码」用结构锁（AST 查抄写）
+加行为锁（同一段字节喂给两个引擎，读出来必须一模一样）钉着它。
+新增关系别名、改 id 语法、改 frontmatter 规则，都只改这一个文件。
 
 规则不在这里。层级方向、承重墙、盲区、合法性闭环、关系讲不讲得通——那些在
 `canonlint.py`（未来拆到 `rules/`）。**存储层不认识理论**：它不知道 `fiscal` 与
@@ -19,7 +26,7 @@
 ### 改完必须跑的命令
 
 ```sh
-python3 tests/run_tests.py        # 九个世界夹具 + 17 项检查，输出与快照逐字节比对
+python3 tests/run_tests.py        # 10 个世界夹具 + 29 项检查，输出与快照逐字节比对
 python3 tests/test_schema.py      # 契约与代码常量不漂移
 python3 tests/test_store.py       # 存储层边界（包括本文件的规矩）
 ```

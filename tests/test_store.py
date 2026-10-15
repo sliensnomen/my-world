@@ -641,6 +641,85 @@ def check_write_path_refuses_to_clobber():
         assert text.count("kind: fiscal") == 1, f"同一条边被插了两次：\n{text}"
 
 
+def check_both_engines_share_one_parser():
+    """两个引擎的读卡代码**只有一份**：`store/parse.py`。
+
+    这条锁防的是「再抄一份」。报告里修过的那类缺陷就长在这个缝里：读契约词表的逻辑
+    原先在 store 与 classlint 各有一份实现，拼法归一化只要有一份漏了，同一条边在两个
+    引擎里就成了两个名字。所以结构、行为两头都锁：
+
+      * 结构：classlint 不再自己定义 id 语法 / frontmatter 切分 / 词表归一化；
+      * 行为：同一段字节喂给两个引擎的 parse_entry，读出来必须一模一样。
+    """
+    import importlib.util  # noqa: PLC0415
+
+    spec = importlib.util.spec_from_file_location(
+        "classlint_engine_for_merge_check", ROOT / "classlint" / "classlint.py")
+    engine = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = engine  # dataclass 需要能在 sys.modules 里找到自己
+    spec.loader.exec_module(engine)
+
+    tree = ast.parse((ROOT / "classlint" / "classlint.py").read_text(encoding="utf-8"))
+
+    def from_shared(node) -> bool:
+        return (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id == "shared")
+
+    offenders: list[str] = [f"{n.func.value.id}.compile(...)"
+                            for n in ast.walk(tree)
+                            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                            and n.func.attr == "compile"
+                            and isinstance(n.func.value, ast.Name)]
+    # 这些名字只许从 shared 转发，不许在 classlint 里现做一份
+    shared_names = {"ID_RE", "FRONTMATTER_RE", "SCHEMA_PATH", "SCHEMA_NAME",
+                    "RELATION_VOCABULARY", "ALL_RELATION_NAMES", "CONTRACT_ATTESTED",
+                    "RELATION_CANONICAL", "CANONICAL_RELATION_ITEMS"}
+    for node in ast.walk(tree):
+        # 带注解的赋值（`X: T = ...`）是 AnnAssign，不是 Assign —— 少认一种就等于放行一种
+        if isinstance(node, ast.Assign) and not from_shared(node.value):
+            offenders += [t.id for t in node.targets
+                          if isinstance(t, ast.Name) and t.id in shared_names]
+        elif (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+              and node.target.id in shared_names and not from_shared(node.value)):
+            offenders.append(node.target.id)
+        if isinstance(node, ast.FunctionDef) and node.name in {"_shape_variants",
+                                                              "_load_relation_vocabulary"}:
+            offenders.append(f"def {node.name}")
+    assert not offenders, (
+        "classlint 又抄了一份读卡实现（应改成从 store/parse.py 转发）：" + "、".join(sorted(set(offenders))))
+
+    # 两边拿到的是同一个模块对象，不是「长得一样的两个」
+    assert engine.shared is store.parse, "classlint 用的不是 store/parse.py"
+    assert engine.ID_RE is store.ID_RE, "两边的 id 语法不是同一个"
+
+    # 行为锁：同一段字节，两个引擎读出来必须一模一样
+    samples = {
+        "正常.md": "---\nid: a\nx: 1\n---\n正文\n",
+        "带BOM.md": "\ufeff---\nid: b\n---\n正文\n",
+        "没头.md": "只有正文\n",
+        "坏YAML.md": "---\nid: [没闭合\n---\n正文\n",
+        "不是映射.md": "---\n- 1\n- 2\n---\n正文\n",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        for name, text in samples.items():
+            path = tmp / name
+            path.write_text(text, encoding="utf-8")
+            theirs = store.parse_entry(path, tmp)
+            ours = engine.parse_entry(path, tmp)
+            pair = ((theirs.rel, theirs.meta, theirs.body, theirs.parse_error),
+                    (ours.rel, ours.meta, ours.body, ours.parse_error))
+            assert pair[0] == pair[1], f"{name}：两个引擎读出不同的条目\n  store={pair[0]}\n  classlint={pair[1]}"
+
+    # 行为锁：每一种拼法在两边归一成同一个规范名
+    variants = {v for accepts in store.RELATION_VOCABULARY.values() for v in accepts}
+    variants |= {"canon-ref", "canonrefs", "Owes", "depends-on", "deriveslegitimacyfrom"}
+    for v in sorted(variants):
+        assert engine.canonical_rel(v) == store.canonical_relation_name(v), (
+            f"拼法 {v!r} 在两个引擎里归一成了不同的名字："
+            f"{engine.canonical_rel(v)!r} vs {store.canonical_relation_name(v)!r}")
+
+
 CHECKS = (
     ("规范形与旧写法等价（三种关系）", check_canonical_equals_legacy),
     ("规范形的形状错误会出现在报告里", check_shape_errors_reach_the_report),
@@ -660,6 +739,7 @@ CHECKS = (
     ("承重墙义务：两种写法的「声明」同判", check_load_bearing_declaration_forms_agree),
     ("关系写法不可区分（规范形/旧写法/拼法变体同判）", check_relation_forms_are_indistinguishable),
     ("superseded_by: null 不是承接者（CA405 不能被关掉）", check_superseded_by_null_is_not_a_successor),
+    ("两个引擎共用同一份读卡代码（store/parse.py）", check_both_engines_share_one_parser),
 )
 
 

@@ -4,7 +4,11 @@
 作者写文本，工具建模型，模型展示结构，审计报出作者看不见的矛盾。
 
 [项目文书](项目文书.md)（定位与三层架构） · [开发计划](开发计划.md) · [ROADMAP](ROADMAP.md)
-姊妹项目：[canonlint](../README.md)（本工具的条目格式与 lint 架构来源；canonlint 自己的解析器现在在 [`store/`](../store/README.md)）
+姊妹项目：[canonlint](../README.md)（本工具的条目格式与 lint 架构来源）。**读卡代码两个引擎共用一份**：
+id 语法、frontmatter 切分、契约词表、关系名归一化都在 [`store/parse.py`](../store/parse.py)，
+`classlint.py` 只转发（`tests/test_store.py` 的结构锁 + 行为锁守着）。classlint 自己保留的
+只有**判定**侧的东西：规则与它自己的字段政策（`depends_on` 这里收裸字符串，canonlint 要求
+`{id, kind, critical}` 对象——这是两边协议的真实分歧，改任一边都要同时改两处文档）。
 
 **状态：生产关系层已完成（PE001–PE005 + PE009 + `graph` + `--impact`）。** 流量层（四种线、守恒律、PE004/PE005 的定量回填）
 与 PE006–PE008 未开始——排期见 [ROADMAP.md](ROADMAP.md)。

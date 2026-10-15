@@ -15,6 +15,10 @@
   2. **id 语法**（`ID_RE`）；
   3. **一条边长什么样**（`Dep` / `ConflictRef` / `Relation`）。
 
+其中 id 语法、一条边、frontmatter 切分与关系名词表这几件「两个引擎都要做、做法必须一样」的
+事，实现只在 `store/parse.py` 一份（本模块转发出来）；本模块负责的是**存储层自己的字段视图**：
+哪些字段算必填、多少个具名字段、怎么归一到 `Entry.relations`。
+
 判定（什么组合算错）在 canonlint.py 的规则里。本模块只按**格式**报形状不合规，并且把
 规则编号（CA100/CA105/CA107/CA109）当作格式规则来报——那些编号描述的是「文件写得对不对」，
 不是「道理讲不讲得通」。
@@ -22,131 +26,49 @@
 规范形与兼容别名
 ----------------
 契约（`world.schema.json` 的 `x-relation-source`）规定的规范形是
-`relations: [{type, target, …}]`。旧文件里的具名字段 `depends_on` / `conflicts_with` /
-`canon_refs` 仍然可读，读取时归一化到同一组内部对象上（`Entry.relations`）。
+`relations: [{type, target, …}]`。旧文件里的具名字段（`LEGACY_RELATION_FIELDS` 十一个）仍然
+可读，读取时归一化到同一组内部对象上（`Entry.relations`）。
 两者同时出现时**旧字段在前、`relations` 在后**，顺序确定，不依赖字典遍历顺序。
-
-已知漂移（PR#3 收口）
---------------------
-契约的 `x-relation-source.aliases` 列了九个别名，本层目前能读三种
-（`LEGACY_RELATION_FIELDS`）。其余六种（`owns` / `controls` / `extracts` / `coerces` /
-`legitimizes` / `owes`）**尚未**进入本工具的字段表，所以今天的 canonlint 会把它们报成
-CA106「未定义字段」。这不是疏忽，而是刻意留着的收口点：见
-`tests/test_store.py::check_relation_alias_drift`。
 """
 from __future__ import annotations
 
-import json
-import re
 import unicodedata
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 
-import yaml
+# ---- 共享解析核心 ----------------------------------------------------------
+# 读卡这一步（id 语法、frontmatter 切分、关系名词表、规范名归一化、一条边长什么样）
+# 只有一份实现，在 store/parse.py：classlint 用的是同一份。本模块把它接进来再导出，
+# 于是 `store.ID_RE` / `store.Relation` 这些既有名字都不变。
+from .parse import (  # noqa: E402  (import 位置：与下面的常量定义同属于模块头)
+    ALL_RELATION_NAMES,
+    CANONICAL_RELATION_ITEMS,
+    CODE_FENCE_RE,
+    CONTRACT_ATTESTED,
+    FRONTMATTER_RE,
+    HTML_COMMENT_RE,
+    ID_RE,
+    RELATION_TYPE_NAMES,
+    RELATION_VOCABULARY,
+    SCHEMA_NAME,
+    SCHEMA_PATH,
+    RawEntry,
+    Relation,
+    canonical_relation_name,
+    contract_deprecations,
+    contract_relation_names,
+    nearest_relation_name,
+    read_frontmatter,
+    shape_variants,
+)
 
-# ---- id 语法 --------------------------------------------------------------
+# ---- 搬家表（契约 `x-relation-vocabulary.deprecations`）---------------------
 
-ID_RE = re.compile(r"^[a-z0-9-]+$")
-
-# ---- 关系名归一化（契约是唯一真值）------------------------------------------
-# 本层不认识任何关系名的**含义**；它只负责「同一个关系的所有历史拼法 → 一个规范名」。
-# 真值表在契约 world.schema.json 的 x-relation-vocabulary；本模块读它，不自己再写一份。
-
-SCHEMA_NAME = "world.schema.json"
-SCHEMA_PATH = Path(__file__).resolve().parent.parent / SCHEMA_NAME
-
-
-def _contract_relation_names() -> dict[str, tuple[str, ...]]:
-    """读契约的关系名词表：{规范名: (契约声明的全部可接受拼法…)}。"""
-    try:
-        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-        return {name: tuple(spec["accept"])
-                for name, spec in schema["x-relation-vocabulary"]["names"].items()}
-    except (OSError, ValueError, KeyError, TypeError):
-        # 契约不在树里（单独拷走 store/）时不静默：退化到只认既有三个字段名，
-        # 下面 _shape_variants 仍保证连字符/下划线互通。
-        return {}
-
-
-def _shape_variants(word: str) -> set[str]:
-    """一个关系名的历史形状：原样、连字符、下划线、去掉分隔符。"""
-    return {word, word.replace("-", "_"), word.replace("_", "-"),
-            word.replace("-", "").replace("_", "")}
-
-
-def _contract_deprecations() -> tuple[tuple[str, str, str], ...]:
-    """读契约的「旧写法 → 新关系名」搬家表：((旧关系名, 旧注解值, 新关系名), …)。
-
-    「`depends_on` + 某个 `kind` 值其实已经是一个独立关系名」这类历史写法由契约声明，
-    本层只执行搬运：存储层不认识理论词（tests/test_store.py 的「存储层不认识理论」
-    守着这条），也不替判定器决定该怎么判——两个引擎看到同一条边就够了。
-    """
-    try:
-        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-        items = schema["x-relation-vocabulary"]["deprecations"]
-        return tuple((str(i["relation"]), str(i["kind"]), str(i["becomes"])) for i in items)
-    except (OSError, ValueError, KeyError, TypeError):
-        return ()
-
-
-DEPRECATED_KIND_MIGRATIONS = _contract_deprecations()
+DEPRECATED_KIND_MIGRATIONS = contract_deprecations()
 _MIGRATED_RELATIONS: tuple[str, ...] = tuple(b for _, _, b in DEPRECATED_KIND_MIGRATIONS)
 # 「作者就依赖说过话」判据里算数的关系名：物质承重，以及从它搬出去的那些名字
 _DEPENDENCY_DECLARING_RELATIONS: tuple[str, ...] = ("depends_on",) + _MIGRATED_RELATIONS
-
-
-RELATION_VOCABULARY: dict[str, tuple[str, ...]] = _contract_relation_names()
-_ALL_RELATION_NAMES: tuple[str, ...] = tuple(RELATION_VOCABULARY) or (
-    "canon_refs", "conflicts_with", "depends_on")
-
-# 任意拼法 → 规范名。契约变体优先，机械变体兜底。
-RELATION_TYPE_NAMES: dict[str, str] = {}
-for _name in _ALL_RELATION_NAMES:
-    for _variant in (RELATION_VOCABULARY.get(_name) or ()) or _shape_variants(_name):
-        RELATION_TYPE_NAMES[_variant] = _name
-    for _variant in _shape_variants(_name):
-        RELATION_TYPE_NAMES.setdefault(_variant, _name)
-
-
-def canonical_relation_name(name: str) -> str:
-    """把任意历史拼法归一到规范名；未知名原样返回（自由档允许自定义关系名）。
-
-    契约 x-relation-vocabulary.spelling-guard 规定：与已知名编辑距离 ≤1 的 type 值
-    由判定层记 warning（CA110），不是在这里报错——存储层只归一化，不下判语。
-    """
-    return RELATION_TYPE_NAMES.get(name, name)
-
-
-def _edit_distance(a: str, b: str) -> int:
-    """Levenshtein 距离（两行滚动）。只用于拼写近失守卫，作用域小、无依赖。"""
-    if a == b:
-        return 0
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
-        prev = cur
-    return prev[-1]
-
-
-def nearest_relation_name(name: str) -> str | None:
-    """`name` 不是已知拼法、但与某个规范名只差一个字符时返回那个规范名，否则 None。
-
-    这是**标记**不是**拒绝**：契约 world.schema.json:16-17 的自由档允许用户自定义关系名，
-    所以真正的新词必须继续 fail-open；只有「看着像打错」的名字才提示。
-    """
-    if not isinstance(name, str) or not name or name.startswith("x-"):
-        return None
-    if name in _ALL_RELATION_NAMES:
-        return None  # 本身就是规范名
-    if RELATION_TYPE_NAMES.get(name) is not None:
-        return None  # 是已知历史拼法，已经归一化，不必提示
-    for canonical in _ALL_RELATION_NAMES:
-        if _edit_distance(name, canonical) <= 1:
-            return canonical
-    return None
 
 
 def _type_hint(want: str) -> str:
@@ -243,38 +165,7 @@ class ShapeIssue:
     message: str
 
 
-@dataclass
-class Relation:
-    """一条边：关系名 + 目标 + 注解。
-
-    规范形只要求 `type` 与 `target`；注解（`kind`/`critical`/`stance`/`note`/`what`）
-    可以缺席——**「还没想好」是合法状态，不是错误**。判定器按「缺数据不报错」处理（PR#3）。
-    """
-    type: str
-    target: str
-    attrs: dict
-
-    @property
-    def kind(self) -> str | None:
-        v = self.attrs.get("kind")
-        return v if isinstance(v, str) else None
-
-    @property
-    def critical(self) -> bool | None:
-        v = self.attrs.get("critical")
-        return v if isinstance(v, bool) else None
-
-    @property
-    def stance(self) -> str | None:
-        v = self.attrs.get("stance")
-        return v if isinstance(v, str) else None
-
-    @property
-    def undeclared(self) -> tuple[str, ...]:
-        """本边缺哪些注解。`depends_on` 关心 `kind`/`critical`；其余关系今天不要求注解。"""
-        if self.type != "depends_on":
-            return ()
-        return tuple(k for k in ("kind", "critical") if k not in self.attrs)
+# `Relation`（一条边）在 store/parse.py，已随共享核心一起导入——classlint 用的是同一个类。
 
 
 def _parse_named_relation(raw, field: str, name: str,
@@ -353,17 +244,9 @@ def _migration_message(where: str, old_rel: str, old_kind: str, becomes: str,
 
 
 @dataclass
-class Entry:
-    path: Path
-    rel: str
-    meta: dict
-    body: str
-    parse_error: str | None = None
-
-    @property
-    def id(self) -> str | None:
-        v = self.meta.get("id")
-        return v if isinstance(v, str) else None
+class Entry(RawEntry):
+    """条目 + 存储层的字段视图。文件层字段（path/rel/meta/body/parse_error/id）继承自
+    `RawEntry`——两个引擎的条目对象从同一个文件层结果长出来。"""
 
     @property
     def status(self) -> str | None:
@@ -681,28 +564,9 @@ class Entry:
 
 
 # ---- 解析 ----------------------------------------------------------------
-
-FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
-CODE_FENCE_RE = re.compile(r"```.*?```", re.S)
-HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+# 读文件这一步在 store/parse.py（`read_frontmatter`）——classlint 用的是同一份。
+# 这里只把结果装进本引擎的 `Entry`。
 
 
 def parse_entry(path: Path, root: Path) -> Entry:
-    rel = str(path.relative_to(root))
-    try:
-        # utf-8-sig：容忍 BOM，避免把带 BOM 的文件误判为「缺少 frontmatter」
-        text = path.read_text(encoding="utf-8-sig")
-    except (UnicodeDecodeError, OSError) as e:
-        # 无法读取也是「文件无法解析」，按 §6.3 CA100 报，而不是让 traceback 逃逸
-        return Entry(path, rel, {}, "", parse_error=f"文件无法读取: {e}")
-    m = FRONTMATTER_RE.match(text)
-    if not m:
-        return Entry(path, rel, {}, text,
-                     parse_error="缺少 frontmatter（文件须以 --- 包裹的 YAML 头开始）")
-    try:
-        meta = yaml.safe_load(m.group(1))
-    except yaml.YAMLError as e:
-        return Entry(path, rel, {}, "", parse_error=f"frontmatter YAML 解析失败: {e}")
-    if not isinstance(meta, dict):
-        return Entry(path, rel, {}, "", parse_error="frontmatter 必须是键值映射")
-    return Entry(path, rel, meta, text[m.end():])
+    return read_frontmatter(path, root).as_entry(Entry)
