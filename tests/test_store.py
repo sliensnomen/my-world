@@ -234,6 +234,38 @@ def check_relation_alias_drift():
     assert set(store.RELATION_VOCABULARY) == set(names), (
         "存储层的关系名词表与契约 x-relation-vocabulary 不是同一份")
 
+    # (4) 每个关系名都必须有定义（means），且具名字段与词表一一对应。
+    #     词表一度只有拼法没有定义：工具按名字建图、作者按直觉选词，双方对「这条边
+    #     算不算承重」没有共识——depends_on 一个词同时装了「我靠它活着」与「我在说法
+    #     上以它为依据」两种意思。加名字而不写定义，就是让下一个作者继续猜。
+    for name, spec in names.items():
+        assert str(spec.get("means") or "").strip(), (
+            f"契约的关系名 {name} 没有 means（定义）——加名字必须同时说清它是什么意思")
+    assert set(aliases) == set(names), (
+        f"具名字段与关系名不是一一对应：字段多出 {sorted(set(aliases) - set(names))}，"
+        f"词表多出 {sorted(set(names) - set(aliases))}")
+
+
+def check_material_kinds_have_one_truth():
+    """「物质依赖」的类别表只能有一份：契约 material-kinds ↔ CA501/502/503 用的常量。
+
+    物质依赖是本次评审里被反复问到的一句话（「物质依赖到底是什么」）。它在代码里
+    表现为 CA501/502/503 的门禁常量 MATERIAL_KINDS，在契约里表现为 material-kinds——
+    两份不一致就会一边判一边不判，而且没人会发现。
+    """
+    schema = json.loads((ROOT / "world.schema.json").read_text(encoding="utf-8"))
+    kinds = schema["x-relation-vocabulary"]["material-kinds"]
+    declared = set(kinds["kinds"])
+    assert declared == set(canonlint.MATERIAL_KINDS), (
+        f"契约说物质依赖是 {sorted(declared)}，CA501/502/503 用的却是 "
+        f"{sorted(canonlint.MATERIAL_KINDS)}")
+    assert not (declared & set(kinds["normative"])), "规范依赖的类别不能同时算物质依赖"
+    # 物质族 + 规范族恰好补全 depends_on.kind 词表（一个类别不许两族都不在）
+    vocab = set(schema["x-strict-vocabulary"]["depends_on.kind"])
+    assert vocab == declared | set(kinds["normative"]), (
+        f"depends_on.kind 词表 {sorted(vocab)} 不等于物质族 + 规范族 "
+        f"{sorted(declared | set(kinds['normative']))}")
+
 
 # ---- 9. 存储层不认识理论 ---------------------------------------------------
 
@@ -599,7 +631,8 @@ CHECKS = (
     ("两种写法混用被记录（旧字段在前）", check_mixed_forms_are_recorded),
     ("字段表与判定侧常量一致", check_field_table_matches_rules),
     ("type 词表与存储布局一致", check_type_vocabulary_matches_layout),
-    ("关系别名漂移被钉住（九个都接线 + 拼法与契约逐字一致）", check_relation_alias_drift),
+    ("关系别名漂移被钉住（十个都接线 + 拼法/定义与契约逐字一致）", check_relation_alias_drift),
+    ("物质依赖的类别表只有一份真值（契约 ↔ CA501/502/503）", check_material_kinds_have_one_truth),
     ("存储层不认识理论（不 import 判定侧）", check_store_keeps_theory_out),
     ("通过符号链接调用也能 import store", check_symlink_invocation),
     ("init 装的钩子指向 canonlint（不是 store）", check_init_hook_points_at_canonlint),

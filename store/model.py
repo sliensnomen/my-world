@@ -141,12 +141,12 @@ ANNOTATION_FIELDS = ("layer", "depends_on", "superseded_by")
 RELATIONS_FIELD = "relations"
 
 # 能读的旧具名字段（`Entry.relations` 把它们归一化到同一视图）。
-# 契约 x-relation-source.aliases 列了九个，这里读全九个——收口完成（旧「已知漂移」关闭）。
-LEGACY_RELATION_FIELDS = ("depends_on", "conflicts_with", "canon_refs",
+# 契约 x-relation-source.aliases 列了十个，这里读全十个——收口完成（旧「已知漂移」关闭）。
+LEGACY_RELATION_FIELDS = ("depends_on", "conflicts_with", "canon_refs", "exchanges_with",
                           "owns", "controls", "extracts", "coerces", "legitimizes", "owes")
 
 # 三个「自古就有」的具名字段有各自的解析器与错误文案，判定侧也按各自的规则报；
-# 其余六个是本次接线补上的，形状错误统一走 `Entry.named_relation_errors`。
+# 其余七个是接线补上的，形状错误统一走 `Entry.named_relation_errors`。
 CLASSIC_RELATION_FIELDS = ("canon_refs", "conflicts_with", "depends_on")
 
 FIELD_TABLE = (frozenset(CORE_REQUIRED_FIELDS) | frozenset(ANNOTATION_FIELDS)
@@ -160,6 +160,7 @@ NAMED_RELATION_ATTRS: dict[str, tuple[str, ...]] = {
     "canon_refs": (),
     "conflicts_with": ("stance",),
     "depends_on": ("kind", "critical", "note"),
+    "exchanges_with": ("what", "note"),
     "owns": ("note",),
     "controls": ("note",),
     "extracts": ("what", "note"),

@@ -4,6 +4,7 @@ title: 君临
 type: location
 depends_on:
   - id: roseroad-grain
+    kind: resource
     critical: true
 ---
 人口约五十万。粮食全靠输入：玫瑰大道陆路加海运，无战略存粮——

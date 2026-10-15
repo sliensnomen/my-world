@@ -356,6 +356,55 @@ def check_advisory_rules_do_not_gate_drafts() -> list[str]:
     return problems
 
 
+def check_mutual_exchange_is_not_a_perpetual_motion() -> list[str]:
+    """「互相交换」和「互相供养」必须能分开写：交换不报 CA502，供养照报。
+
+    CA502 的判词是「物质族成环 = 永动机」：a 靠 b、b 靠 a 的物质供给，这个环里没有
+    外部底座。但两个真实条目互相交换（分工、互市、贸易）是**常见的真实结构**，以前
+    没有任何合法写法——写成两条 depends_on 就被判永动机，于是要么改模型要么关规则
+    （评审里用户的原话：「物质依赖是什么」）。新增 exchanges_with 之后：交换是流通
+    关系，不进 CA502 的子图；真的要表达「谁断了谁都塌」仍然写 depends_on，照报。
+    """
+    problems = []
+    # 对照组：互相供养（两条 depends_on）——环里没有外部底座，CA502 必须报
+    mutual = {
+        "a-node": _card("a-node", "layer: economy\ndepends_on:\n  - {id: b-node, kind: production, critical: true}\n"),
+        "b-node": _card("b-node", "layer: economy\ndepends_on:\n  - {id: a-node, kind: production, critical: true}\n"),
+    }
+    tmp, world = _temp_world("canonlint-mutual-dep-", mutual)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"互相供能把 traceback 写到了 stderr：\n{err}")
+        if "CA502" not in out:
+            problems.append("互相供养（两条 depends_on）漏报了 CA502：\n" + out)
+    # 实验组：互相交换（exchanges_with）+ 各自有外部底座——不报 CA502，整份通过
+    exchange = {
+        "base-node": _card("base-node", "layer: resource\n"),
+        "a-node": _card("a-node", "layer: economy\nexchanges_with:\n  - {id: b-node, what: 粮食}\ndepends_on:\n  - {id: base-node, kind: resource, critical: true}\n"),
+        "b-node": _card("b-node", "layer: economy\nexchanges_with:\n  - {id: a-node, what: 布匹}\ndepends_on:\n  - {id: base-node, kind: resource, critical: true}\n"),
+    }
+    tmp2, world2 = _temp_world("canonlint-mutual-exchange-", exchange)
+    with tmp2:
+        code2, out2, err2 = _judge(world2)
+        if err2:
+            problems.append(f"互相交换把 traceback 写到了 stderr：\n{err2}")
+        if "CA502" in out2:
+            problems.append("互相交换被判成永动机（交换是流通关系，不是承重）：\n" + out2)
+        if code2 != 0:
+            problems.append(f"互相交换 + 各自有底座应通过，实际退出码 {code2}：\n{out2}")
+    # 悬空的交换对象要报（新接线的关系名不能对引用检查隐形）
+    dangling = {"a-node": _card("a-node", "exchanges_with:\n  - ghost-node\n")}
+    tmp3, world3 = _temp_world("canonlint-exchange-dangling-", dangling)
+    with tmp3:
+        code3, out3, err3 = _judge(world3)
+        if err3:
+            problems.append(f"悬空 exchanges_with 把 traceback 写到了 stderr：\n{err3}")
+        if "CA401" not in out3:
+            problems.append("exchanges_with 指向不存在的 id 却没报 CA401：\n" + out3)
+    return problems
+
+
 def main() -> int:
     update = "--update" in sys.argv[1:]
     failures: list[str] = []
@@ -405,6 +454,7 @@ def main() -> int:
         ("--dup-threshold 越界是用法错误（不退化成静默关规则）", check_dup_threshold_range_is_usage_error),
         ("--impact 从不把主体列进自己的下游", check_impact_never_lists_the_subject),
         ("提示性规则不阻断 draft（CA301 只对定档条目报）", check_advisory_rules_do_not_gate_drafts),
+        ("互相交换不是永动机（exchanges_with 不进 CA502，互相供养照报）", check_mutual_exchange_is_not_a_perpetual_motion),
     ]
     for label, check in extras:
         problems = check()

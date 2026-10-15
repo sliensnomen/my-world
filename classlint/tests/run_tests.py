@@ -4,6 +4,8 @@
 用法: python3 tests/run_tests.py   （在 classlint/ 目录内或任意位置均可）
 退出码: 0=全部符合期望 1=有偏差
 """
+import contextlib
+import io
 import sys
 import tempfile
 from pathlib import Path
@@ -82,6 +84,87 @@ def check_cl100_intent() -> int:
     return failures
 
 
+def _probe_world(td: str, tenant_extra: str, rules: str = "") -> Path:
+    world = Path(td)
+    (world / "codex").mkdir(parents=True, exist_ok=True)
+    (world / "classlint.yaml").write_text(
+        "name: probe\nclasslint: \"0.1\"\n" + rules, encoding="utf-8")
+    (world / "codex" / "lord.md").write_text(
+        "---\nid: lord\ntitle: 地主\ntype: faction\ncontrols: [tenant]\nextracts:\n"
+        "  - id: tenant\n    what: 地租\n---\n抽取地租。\n", encoding="utf-8")
+    (world / "codex" / "tenant.md").write_text(
+        f"---\nid: tenant\ntitle: 佃农\ntype: faction\n{tenant_extra}---\n佃农。\n",
+        encoding="utf-8")
+    (world / "codex" / "weather.md").write_text(
+        "---\nid: weather\ntitle: 天气\ntype: location\n---\n天气。\n", encoding="utf-8")
+    return world
+
+
+def check_pe005_requires_material_source() -> int:
+    """PE005 的消音必须是一次**物质关系**的声明，不能靠一条任意出边（评审 ③-b）。
+
+    以前 `depends_on: [weather]` 一行就能让「被抽取者的再生产不可见」消失——自然条件
+    既不是生产关系也不承担再生产，消音门槛低到等于没有门槛。这里的形态就是那条边界：
+    裸 depends_on 不消音，带物质 kind 的 depends_on 消音，exchanges_with 消音。
+    """
+    failures = 0
+    cases = [
+        ("裸 depends_on（无 kind）", "depends_on:\n  - weather\n", True),
+        ("带物质 kind 的 depends_on", "depends_on:\n  - id: weather\n    kind: resource\n", False),
+        ("exchanges_with（交换=别人也在给我）", "exchanges_with:\n  - weather\n", False),
+        ("规范形 relations + 物质 kind",
+         "relations:\n  - {type: depends_on, target: weather, kind: resource, critical: true}\n", False),
+        ("规范形 relations（裸 depends_on，无 kind）",
+         "relations:\n  - {type: depends_on, target: weather}\n", True),
+    ]
+    for label, extra, should_report in cases:
+        with tempfile.TemporaryDirectory() as td:
+            world = _probe_world(td, extra)
+            _, _, findings, _ = classlint.run_checks(world)
+            got = any(f.rule == "PE005" and f.entry == "codex/tenant.md" for f in findings)
+            if got != should_report:
+                want = "应当报" if should_report else "不应当报"
+                print(f"FAIL PE005 消音条件（{label}）：{want} PE005，实际 "
+                      f"{sorted(f.rule for f in findings)}")
+                failures += 1
+    if not failures:
+        print("PASS PE005 消音必须是一次物质关系声明（裸 depends_on 不再算数）")
+    return failures
+
+
+def check_disabled_rules_change_exit_code() -> int:
+    """关掉规则必须体现在退出码上（评审 ③-a）。
+
+    `rules: {PE005: off}` 以前只在摘要行附注一句，退出码与全规则通过一样是 0——CI 与
+    pre-commit 无法区分「这台机器判过了」与「这台机器少了几条规则」。现在默认返回 3，
+    显式 `--accept-disabled-rules` 才回到 0。
+    """
+    failures = 0
+    off = "rules:\n  PE005: off\n"
+    with tempfile.TemporaryDirectory() as td:
+        world = _probe_world(td, "depends_on:\n  - weather\n", off)
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = classlint.cmd_check(world, True, [], False)
+        if code != 3:
+            print(f"FAIL 关掉规则时退出码应为 3（判定不完整），实际 {code}")
+            failures += 1
+        with contextlib.redirect_stdout(io.StringIO()):
+            code_accept = classlint.cmd_check(world, True, [], True)
+        if code_accept != 0:
+            print(f"FAIL --accept-disabled-rules 应回到 0，实际 {code_accept}")
+            failures += 1
+    with tempfile.TemporaryDirectory() as td:
+        world = _probe_world(td, "depends_on:\n  - weather\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code_open = classlint.cmd_check(world, True, [], False)
+        if code_open != 0:
+            print(f"FAIL 没有关规则时（只有 warning）应为 0，实际 {code_open}")
+            failures += 1
+    if not failures:
+        print("PASS 关掉规则的判定不完整必须可见（退出码 3，可显式接受）")
+    return failures
+
+
 def main() -> int:
     failures = 0
     worlds = sorted(p.name for p in TESTS.iterdir()
@@ -106,6 +189,8 @@ def main() -> int:
                 if item not in got:
                     print(f"  漏报: {item}")
     failures += check_cl100_intent()
+    failures += check_pe005_requires_material_source()
+    failures += check_disabled_rules_change_exit_code()
     extra = set(EXPECTED) - set(worlds)
     for name in sorted(extra):
         print(f"FAIL {name}: EXPECTED 登记了期望但夹具目录不存在")

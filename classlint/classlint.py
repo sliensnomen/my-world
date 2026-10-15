@@ -68,6 +68,21 @@ def _load_relation_vocabulary() -> dict[str, tuple[str, ...]]:
         return {}
 
 
+def _load_material_kinds() -> frozenset[str]:
+    """从契约读「物质依赖」的类别表（x-relation-vocabulary.material-kinds）。
+
+    契约是唯一真值（tests/test_store.py 钉着它与 canonlint.MATERIAL_KINDS 相等）。
+    读不到时退化为这份内置表——PE005 收紧消音条件必须依赖它，宁可退化也不静默放过。
+    """
+    fallback = {"resource", "production", "economy", "fiscal", "manpower"}
+    try:
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        kinds = schema["x-relation-vocabulary"]["material-kinds"]["kinds"]
+        return frozenset(kinds) or frozenset(fallback)
+    except (OSError, ValueError, KeyError, TypeError):
+        return frozenset(fallback)
+
+
 def _shape_variants(word: str) -> set[str]:
     """同一关系名的历史拼法：原样、连字符、下划线、去掉分隔符。"""
     return {word, word.replace("-", "_"), word.replace("_", "-"),
@@ -98,6 +113,9 @@ def canonical_rel(name: str) -> str:
 KNOWN_FIELDS = ({"id", "title", "type", "relations"}
                 | set(ALL_RELATION_NAMES) | set(CONTRACT_ATTESTED))
 REQUIRED_FIELDS = ["id", "title", "type"]
+
+# 物质依赖的类别表（契约 material-kinds）。PE005 用它判断「来源侧边算不算数」。
+MATERIAL_KINDS: frozenset[str] = _load_material_kinds()
 
 # 兼容旧名（本文件与测试夹具用过 RELATIONS）——同一对象，避免悄悄分叉
 RELATIONS = RELATION_ATTRS
@@ -480,18 +498,35 @@ def pe004(world: World, emit) -> None:
 
 @rule("PE005", "warning", "劳动者必须被覆盖：被抽取者的再生产必须可见（定性版）")
 def pe005(world: World, emit) -> None:
-    """定性版：若 A —extracts→ B 且 B 无任何来源侧出边（不抽取谁、也不靠谁养），
-    则 B 的剩余/再生产在模型里不可见（隐形剥削嫌疑）。报在 B 侧——修法是标注 B 的
-    depends_on/extracts，或确认 B 为终端生产者。定量判定待流量层回填。"""
-    has_source_edge = {src for src, e in world.edges
-                       if e.rel in ("extracts", "depends_on")}
+    """定性版：若 A —extracts→ B 且 B 没有**物质关系**的来源侧边，则 B 的剩余/再生产
+    在模型里不可见（隐形剥削嫌疑）。报在 B 侧——修法是标注 B 的来源侧边，或确认 B 为
+    终端生产者。定量判定待流量层回填。
+
+    **什么算「来源侧边」**（本次收紧）：`extracts`（我在抽取别人）、`exchanges_with`
+    （我在交换，即别人也在给我）、或带**物质类别** kind 的 `depends_on`（resource/
+    production/economy/fiscal/manpower）。以前只要有一条任意出边就算数，于是
+    `depends_on: [weather]` 一行就能消音——一条自然条件既不是生产关系也不承担再生产，
+    消音的门槛低到等于没有门槛（评审：PE005 与终端生产者语义无关）。收紧之后，消音
+    必须是一次**物质关系的声明**：作者得说清 B 靠的是什么类别的东西活着。
+    """
+    def has_material_source(src: str) -> bool:
+        for owner, e in world.edges:
+            if owner != src:
+                continue
+            if e.rel in ("extracts", "exchanges_with"):
+                return True
+            if e.rel == "depends_on" and e.attrs.get("kind") in MATERIAL_KINDS:
+                return True
+        return False
+
     for src, e in world.edges_of("extracts"):
         if e.target not in world.index:
             continue  # CL105 已报
-        if e.target not in has_source_edge:
+        if not has_material_source(e.target):
             emit(None, world.index[e.target].rel,
-                 f"被 `{src}` 抽取，但本条目没有任何来源侧边——剩余从哪来不可见"
-                 f"（请标注本条的 depends_on/extracts，或确认为终端生产者）")
+                 f"被 `{src}` 抽取，但本条目没有任何**物质**来源侧边（不抽取谁、不交换、"
+                 f"也不靠带类别的物质依赖活着）——剩余从哪来不可见（请标注本条的 "
+                 f"extracts/exchanges_with/带 kind 的 depends_on，或确认为终端生产者）")
 
 
 class ConfigError(Exception):
@@ -640,8 +675,16 @@ def cmd_init(root: Path) -> int:
     return 0
 
 
-def cmd_check(root: Path, as_json: bool, impact_ids: list[str]) -> int:
-    """审计：输出全部发现（--impact 报告不参与退出码）。"""
+def cmd_check(root: Path, as_json: bool, impact_ids: list[str],
+              accept_disabled_rules: bool = False) -> int:
+    """审计：输出全部发现（--impact 报告不参与退出码）。
+
+    关掉规则（`classlint.yaml` 的 `rules: {PE00x: off}`）会让「通过」这句话变弱：世界
+    通过了，但通过的是一台少了几条规则的机器。以前这只看摘要行里的一句附注，退出码
+    与全规则通过完全相同——于是自动化（CI、pre-commit）无法区分二者，一条规则被关掉
+    就永久静默。现在返回 **3**（通过，但有规则被关闭），只有显式 `--accept-disabled-rules`
+    才回到 0。约定与 canonlint 的「跳过必须显式授权」一致（tests/test_serve.py）。
+    """
     if not (root / "classlint.yaml").is_file():
         print(f"error: {root} 不是 classlint 世界仓库（缺 classlint.yaml）",
               file=sys.stderr)
@@ -669,6 +712,7 @@ def cmd_check(root: Path, as_json: bool, impact_ids: list[str]) -> int:
                           "message": f.message} for f in findings],
             "reports": reports,
             "rules_disabled": sorted(disabled),
+            "judgement_complete": not disabled,
         }, ensure_ascii=False, indent=2, default=str))
     else:
         for f in findings:
@@ -678,7 +722,14 @@ def cmd_check(root: Path, as_json: bool, impact_ids: list[str]) -> int:
         print(f"\n{len(entries)} 个条目 | {len(index)} 个有效 id | "
               f"{len(errors)} 错误 | {len(findings) - len(errors)} 警告"
               + (f" | 已关闭规则: {sorted(disabled)}" if disabled else ""))
-    return 1 if errors else 0
+        if disabled and not accept_disabled_rules:
+            print(f"判定不完整：{sorted(disabled)} 被 rules: off 关闭，本次「通过」只覆盖"
+                  f"仍开着的规则。确认这是有意的，请加 --accept-disabled-rules")
+    if errors:
+        return 1
+    if disabled and not accept_disabled_rules:
+        return 3
+    return 0
 
 
 def main() -> int:
@@ -692,6 +743,8 @@ def main() -> int:
     p_check.add_argument("--json", action="store_true", help="机器可读输出")
     p_check.add_argument("--impact", nargs="*", default=[], metavar="ID",
                          help="影响报告：指定条目的 depends_on 下游闭包（不进退出码）")
+    p_check.add_argument("--accept-disabled-rules", action="store_true",
+                         help="接受 rules: off 关掉的规则：关着规则也返回 0（默认返回 3）")
     p_graph = sp.add_parser("graph", help="关系图生成（DOT 或 JSON）")
     p_graph.add_argument("root", type=Path, nargs="?", default=Path("."))
     p_graph.add_argument("--format", choices=["dot", "json"], default="dot")
@@ -705,7 +758,7 @@ def main() -> int:
         return 2
     if args.cmd == "graph":
         return cmd_graph(root, args.format)
-    return cmd_check(root, args.json, args.impact)
+    return cmd_check(root, args.json, args.impact, args.accept_disabled_rules)
 
 
 if __name__ == "__main__":

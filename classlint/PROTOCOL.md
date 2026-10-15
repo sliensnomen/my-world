@@ -44,7 +44,13 @@ depends_on:
 
 ## 2. 生产关系层：七种关系
 
-**固定关系，实体开放。** 关系是语法，必须固定为本节七种；实体是词汇，用户随便定义。
+**固定关系，实体开放。** 关系是语法，必须固定为本节的具名关系；实体是词汇，用户随便定义。
+
+本条列的是**本层要判的七种生产关系**（`own`/`controls`/`extracts`/`coerces`/`legitimizes`/
+`owes`/`depends_on`）。契约 `world.schema.json` 的 `x-relation-vocabulary` 是关系名的唯一
+真值表（含每条的 `means` 定义与可接受的拼法变体）；本层照单收下契约列过的关系名，其中
+`canon_refs`/`conflicts_with`/`exchanges_with` 属于治理与流通，本层不判——但它们进图，
+`graph` 与解析都会认。
 
 七种关系全部是**有向边**，写在关系施加方的 frontmatter 里。`A 的 frontmatter 含 <relation>: [{id: B}]` 意为 `A —relation→ B`：
 
@@ -106,11 +112,11 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；clas
 | PE002 | error/warning | **不能镇压自己的供养者**：存在 `A —coerces→ B` 且 `A —depends_on→ B`。`critical: true` = error，否则 warning |
 | PE003 | error | **合法性不得无锚闭环**：`legitimizes` 图的强连通分量（含自环）若没有任何来自分量外的 `legitimizes` 输入，报警。有外部锚点的互锁合法（依据：WGP v0.5 魔戒 dogfood，规范性互锁是常态） |
 | PE004 | error | **剩余必须收敛（定性版）**：`extracts` 子图存在环（含自环）——剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。定量判定（抽取量 vs 剩余量）待流量层数据就位后回填 |
-| PE005 | warning | **劳动者必须被覆盖（定性版）**：存在 `A —extracts→ B` 且 B 无任何 `extracts` / `depends_on` 出边——被抽取者的剩余/再生产在模型里不可见（隐形剥削嫌疑）。报在 B 侧：修法是标注 B 的来源侧边，或确认 B 为终端生产者。定量判定待流量层回填 |
+| PE005 | warning | **劳动者必须被覆盖（定性版）**：存在 `A —extracts→ B` 且 B 没有任何**物质**来源侧边——被抽取者的剩余/再生产在模型里不可见（隐形剥削嫌疑）。「物质来源侧边」= `extracts`、`exchanges_with`、或带物质类别 `kind`（`resource`/`production`/`economy`/`fiscal`/`manpower`，见 `world.schema.json` 的 `material-kinds`）的 `depends_on`。一条裸 `depends_on`（无 kind，如 `depends_on: [weather]`）**不**消音：自然条件既不是生产关系也不承担再生产，消音必须是一次物质关系的声明。报在 B 侧：修法是补上带 kind 的物质来源，或确认 B 为终端生产者。定量判定待流量层回填 |
 
 ### 3.4 报告级输出（永不进退出码）
 
-- **关系图**：`classlint graph <仓库> [--format dot|json]`——节点 = 条目，边 = 七种关系；DOT 可直接喂 Graphviz，JSON 供任意前端消费。
+- **关系图**：`classlint graph <仓库> [--format dot|json]`——节点 = 条目，边 = 契约列过的全部关系（本层判的七种 + `canon_refs`/`conflicts_with`/`exchanges_with`）；DOT 可直接喂 Graphviz，JSON 供任意前端消费。
 - **影响报告**：`classlint check <仓库> --impact ID...`——指定条目的 `depends_on` 反向传递闭包（"改 A 炸 B"的待复核队列），参考 WGP 的 CA504。
 
 **无传递违规原则：** 只判直接边。A 抽取 B、B 的供养断裂并不使 A 连带违规；间接影响是将来影响报告（Sprint 3）的职责。
@@ -128,11 +134,18 @@ rules:
 
 未知规则编号 = 配置错误（退出码 2）。规则包扩展（`rules/` 目录的 YAML 声明式规则）留待后续版本。
 
+关掉规则会让「通过」这句话变弱：通过的是一台少了几条规则的机器。因此 `check` 在有关闭
+规则时返回 `3`（见 §4），并在摘要行与 `--json` 的 `rules_disabled` / `judgement_complete`
+里如实标出——关规则可以，但要留下痕迹。
+
 ## 4. 退出码
 
-- `0`：无 error（warning 不影响）；
+- `0`：无 error（warning 不影响），且**没有规则被关闭**；
 - `1`：存在 error；
-- `2`：用法/环境/配置错误。
+- `2`：用法/环境/配置错误；
+- `3`：判定通过，但有 PE 规则被 `rules: off` 关闭——「通过」只覆盖仍开着的规则，
+  自动化无法据此断言全面通过。确认关闭是有意的，加 `--accept-disabled-rules` 回到 0
+  （约定与 canonlint 侧「跳过必须显式授权」一致）。
 
 ## 5. 边界声明
 

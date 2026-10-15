@@ -262,6 +262,10 @@ def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
                                         f"canon 条目的 depends_on 目标 `{dep.target}` 状态为 {target.status}，须为 canon"))
         for ref in e.edges_of("conflicts_with"):
             check_target(ref.target, "conflicts_with")
+        # 交换只是流通关系，目标存在性要查（悬空引用是坏的），但**不**查状态：
+        # 交换对象降级不必处置，交换本身也不构成承重（见契约 material-kinds）。
+        for ref in e.edges_of("exchanges_with"):
+            check_target(ref.target, "exchanges_with")
 
         # superseded_by 的目标存在性（CA401）
         sb = e.meta.get("superseded_by")
