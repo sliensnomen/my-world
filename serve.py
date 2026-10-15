@@ -144,6 +144,14 @@ class Handler(BaseHTTPRequestHandler):
         target = (self.server.wgp_root / rel.lstrip("/")).resolve()
         if not _inside(target, self.server.wgp_root) or not target.is_file():
             return self._json(404, {"error": f"世界目录里没有这个文件: {rel}"})
+        # 隐藏文件与目录（.git 及其配置、钩子、索引）是工具的东西，不是世界的内容：
+        # `canonlint init` 就会在世界目录里建 .git。它们照旧躺在「世界目录内」，
+        # 所以只查目录穿越挡不住——这里再挡一次「路径里有没有 . 开头的段」。
+        parts = target.relative_to(self.server.wgp_root).parts
+        if any(part.startswith(".") for part in parts):
+            return self._json(404, {
+                "error": f"{rel} 是隐藏文件/目录，不属于世界内容",
+                "hint": "只有世界自己的文件（条目、yaml、资产）能从这里取", })
         ctype = _CTYPES.get(target.suffix.lower(), "text/plain; charset=utf-8")
         return self._send(200, target.read_bytes(), ctype,
                           {"X-WGP-Path": str(target.relative_to(self.server.wgp_root))})

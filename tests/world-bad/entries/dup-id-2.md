@@ -6,7 +6,7 @@ author: tester
 date: 2026-09-23
 status: draft
 load_bearing: false
-canon_refs: []
+canon_refs: [ghost-nowhere]
 conflicts_with: []
 superseded_by: null
 ai_assisted: false

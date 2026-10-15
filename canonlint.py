@@ -21,7 +21,7 @@ import shutil
 import sys
 from collections import deque
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 try:
@@ -93,6 +93,23 @@ class Finding:
 
 # ---- 规则 ----------------------------------------------------------------
 
+def is_valid_date(value) -> bool:
+    """`date` 字段的两种合法形态：YAML 原生日期对象，或契约要求的 ISO 字符串。
+
+    契约把 `date` 写成字符串（`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`），而 YAML 会把没加引号的
+    `date: 2026-10-15` 直接解成 `datetime.date`。两种都是作者会合理写出来的东西，规则
+    就该两种都收下；JSON 入口来的（没有日期类型）必然是字符串。
+    """
+    if isinstance(value, (date, datetime)):  # YAML 原生日期/时间对象
+        return True
+    if isinstance(value, str):
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            return False
+        return True
+    return False
+
 
 def _has_successor(e: Entry) -> bool:
     """archived 条目是否真有承接者。
@@ -135,7 +152,7 @@ def check_structure(e: Entry, findings: list[Finding],
                               or e.meta["layer"] not in LAYER_INDEX):
         findings.append(Finding("CA102", "error", rel,
                                 f"layer={e.meta['layer']!r} 非法，须为 {LAYERS}"))
-    if "date" in e.meta and not isinstance(e.meta["date"], date):
+    if "date" in e.meta and not is_valid_date(e.meta["date"]):
         findings.append(Finding("CA103", "error", rel,
                                 f"date={e.meta['date']!r} 不是合法日期（须为 YYYY-MM-DD）"))
     if "id" in e.meta:
@@ -229,9 +246,16 @@ def check_content(e: Entry, findings: list[Finding]) -> None:
                                     f"命中承重墙关键词 {hits}，但未声明 load_bearing——请考虑声明"))
 
 
-def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
-    """CA4xx 引用与状态机。无传递违规原则：只判直接边。"""
-    for e in index.values():
+def check_refs(entries: list[Entry], index: dict[str, Entry],
+               findings: list[Finding]) -> None:
+    """CA4xx 引用与状态机。无传递违规原则：只判直接边。
+
+    逐条检查的是**全部**条目，不只是进了索引的那些：id 重复时被遮蔽的那一份
+    过去完全不查引用（CA105 的文案还把这当成既定事实写出来了），于是「世界上
+    摆着一条指向不存在条目的边」可以一直没人报——它只是没进索引，不是没写错。
+    索引只用来查目标是否存在，被遮蔽的条目自己的出边一样要判。
+    """
+    for e in entries:
         if e.parse_error:
             continue
         rel = e.rel
@@ -622,7 +646,7 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
     for e in all_entries:
         check_structure(e, findings, known)
         check_content(e, findings)
-    check_refs(index, findings)
+    check_refs(all_entries, index, findings)
     check_chain(index, findings)
     check_duplicates(index, dup_threshold, findings)
 
@@ -733,6 +757,10 @@ def main() -> int:
     root = args.root.resolve()
     if not root.is_dir():
         print(f"error: {root} 不是目录", file=sys.stderr)
+        return 2
+    if not store.looks_like_world(root):
+        print(f"error: {root} 不像一个世界仓库：没有 entries/，目录里也没有一篇"
+              "带 frontmatter 的条目卡（指错目录了？）", file=sys.stderr)
         return 2
 
     all_entries, index, findings, reports = run(root, args.dup_threshold, args.impact,

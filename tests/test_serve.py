@@ -111,10 +111,14 @@ def check_坏文件的世界不崩() -> None:
 
 def check_悬空边照原样报出来() -> None:
     d = world_json(BAD)
-    assert d["counts"]["dangling"] == len(d["dangling"]) == 2, \
+    assert d["counts"]["dangling"] == len(d["dangling"]) == 3, \
         f"悬空边数={d['counts']['dangling']}/{len(d['dangling'])}"
     reasons = sorted(x["reason"] for x in d["dangling"])
-    assert reasons == ["missing-id", "world-ref"], f"原因不对：{reasons}"
+    assert reasons == ["missing-id", "missing-id", "world-ref"], f"原因不对：{reasons}"
+    # 其中一条来自被重复 id 遮蔽的条目：遮蔽改变的是「引用的目标指向谁」，
+    # 不改变「这条引用本身写坏了」，所以它照样要出现在导出里。
+    assert any(x["target"] == "ghost-nowhere" for x in d["dangling"]), \
+        "被遮蔽条目里的悬空引用没被导出"
     targets = {x["target"] for x in d["dangling"]}
     assert any(t.startswith("otherworld:") for t in targets), "世界外引用没被认出来"
     edges = {(r["source"], r["type"], r["target"]) for r in d["relations"]}
@@ -135,6 +139,33 @@ def check_不能穿越目录() -> None:
                 "/api/raw/../canonlint.py"):
         status, _, _ = get(server_for(WORLD) + bad)
         assert status == 404, f"{bad} 应该 404，实际 {status}"
+
+
+def check_隐藏文件取不到() -> None:
+    """世界目录里藏着工具自己的东西（`canonlint init` 会建 .git 与钩子）。
+
+    它们在里面，所以「不许穿越出去」那条挡不住；这里要求按隐藏段挡掉——
+    把 .git/config 端出去等于把工具的元数据当世界观内容发。
+    """
+    root = WORLD
+    hidden = root / ".git"
+    hidden.mkdir(exist_ok=True)
+    (hidden / "config").write_text("[core]\n\trepositoryformatversion = 0\n",
+                                   encoding="utf-8")
+    try:
+        for bad in ("/api/raw/.git/config", "/api/raw/.git/", "/api/raw/./.git/config",
+                    "/api/raw/.env"):
+            status, body, _ = get(server_for(WORLD) + bad)
+            assert status == 404, f"{bad} 应该 404，实际 {status}"
+        body = get(server_for(WORLD) + "/api/raw/.git/config")[1]
+        assert b"repositoryformatversion" not in body, ".git/config 的内容被端出去了"
+    finally:
+        # 夹具世界是仓库里的目录，不能留下这次测试的痕迹
+        (hidden / "config").unlink(missing_ok=True)
+        hidden.rmdir()
+    # 正常文件照旧能取
+    status, _, _ = get(server_for(WORLD) + "/api/raw/entries/arrakis.md")
+    assert status == 200, f"正常条目反而取不到了：{status}"
 
 
 def check_只读() -> None:
@@ -337,6 +368,7 @@ CHECKS = [
     ("悬空边照原样报出来（不隐藏）", check_悬空边照原样报出来),
     ("原始文件只读接口", check_原始文件接口),
     ("不能穿越出世界目录", check_不能穿越目录),
+    ("隐藏文件（.git 等）取不到", check_隐藏文件取不到),
     ("只读：写方法一律 405", check_只读),
     ("响应头（CORS / 不缓存 / JSON）", check_响应头),
     ("首页说明页与 /api/health", check_首页与存活),

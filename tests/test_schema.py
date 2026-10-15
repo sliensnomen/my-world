@@ -123,6 +123,117 @@ def with_pack(pack_name: str):
 
 
 # ---- 各项检查 -------------------------------------------------------------
+# ---- 契约里「比基础契约更严」的那一层（x-strict-*）----------------------------
+
+def strict_problems(meta: dict) -> list[str]:
+    """执行 `x-strict-required` 与 `x-strict-vocabulary`。
+
+    这两段说的是「审计级实现该要求什么」：前者列严格档必填字段，后者列四个词表
+    各允许什么值（`type` / `status` / `layer` / `depends_on.kind`）。它们以前只是
+    契约里的声明，靠 tests/test_store.py 与 tests/test_schema.py 逐条比对代码常量
+    来间接保证——契约自己说的话没人执行，和注释没有区别。这里按它们真判一次。
+
+    豁免按契约写明的泄压阀来：`type` 与 `depends_on.kind` 的 `x-` 实验值合法
+    （CA102 / CA108 记 info），`layer` 没有实验档。
+    """
+    problems: list[str] = []
+    for key in SCHEMA["x-strict-required"]:
+        if key not in meta:
+            problems.append(f"$.{key}: 严格档必填字段缺失（x-strict-required）")
+    sv = SCHEMA["x-strict-vocabulary"]
+    for field, values, x_ok in (("type", sv["type"], True),
+                                ("status", sv["status"], False),
+                                ("layer", sv["layer"], False)):
+        val = meta.get(field)
+        if val is None:
+            continue
+        if x_ok and isinstance(val, str) and val.startswith("x-"):
+            continue
+        if val not in values:
+            problems.append(f"$.{field}: {val!r} 不在契约词表 {values}"
+                            f"（x-strict-vocabulary.{field}）")
+    kinds = sv["depends_on.kind"]
+    for where, kind in _declared_kinds(meta):
+        if isinstance(kind, str) and kind.startswith("x-"):
+            continue
+        if kind not in kinds:
+            problems.append(f"$.{where}: kind={kind!r} 不在契约词表 {kinds}"
+                            "（x-strict-vocabulary.depends_on.kind）")
+    return problems
+
+
+def _declared_kinds(meta: dict):
+    """两条写法（具名 depends_on 与规范形 relations）里声明过的 kind，带位置标签。"""
+    out = []
+    raw = meta.get("depends_on")
+    if isinstance(raw, list):
+        for i, item in enumerate(raw):
+            if isinstance(item, dict) and "kind" in item:
+                out.append((f"depends_on[{i}].kind", item["kind"]))
+    rels = meta.get("relations")
+    if isinstance(rels, list):
+        for i, item in enumerate(rels):
+            if not isinstance(item, dict) or "kind" not in item:
+                continue
+            name = str(item.get("type") or "").replace("-", "_")
+            if name in ("depends_on", "dependson"):
+                out.append((f"relations[{i}].kind", item["kind"]))
+    return out
+
+
+def check_tool_output_conforms_without_normalizing(problems):
+    """工具自己产出的卡必须**原样**满足契约（不许靠 normalize 弥合）。
+
+    `date` 曾经是三处口径不一：契约要求 ISO 字符串、CA103 要求日期对象、
+    `cmd_new` 写出来的东西 YAML 解析后又变成第三种。测试里的 normalize() 把
+    这条缝盖住了，于是「工具违反自己的契约」谁都没发现。现在 `cmd_new` 写带
+    引号的字符串，这里直接拿校验器（不归一化）验一张新卡。
+    """
+    import calendar
+    import tempfile
+    sys.path.insert(0, str(ROOT))
+    import store
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        if store.cmd_init(world, exe="canonlint") != 0:
+            problems.append("cmd_init 失败，这条检查没法跑")
+            return
+        if store.cmd_new(world, "location", "契约检查", "probe-entry",
+                         "tester", False, None,
+                         layer_choices=canonlint.LAYERS) != 0:
+            problems.append("cmd_new 失败，这条检查没法跑")
+            return
+        card = world / "entries" / "locations" / "probe-entry.md"
+        meta = read_frontmatter(card)
+        if meta is None:
+            problems.append("cmd_new 写的卡读不出 frontmatter")
+            return
+        for msg in js.validate(meta, SCHEMA):
+            problems.append(f"cmd_new 产出的卡原样就违反契约：{msg}")
+        for msg in strict_problems(meta):
+            problems.append(f"cmd_new 产出的卡没过严格层：{msg}")
+
+
+def check_strict_layer_is_executed(problems):
+    """严格层必须真的会拒人——否则「契约说了」等于「没人管」。"""
+    good = normalize(read_frontmatter(ROOT / "tests/world-clean/entries/grain-belt.md"))
+    if strict_problems(good):
+        problems.append(f"好语料被严格层冤枉：{strict_problems(good)}")
+    missing = {k: v for k, v in good.items() if k != "author"}
+    if not any("严格档必填" in m for m in strict_problems(missing)):
+        problems.append("x-strict-required 列的字段被删掉后严格层没报错——它没在执行")
+    bad_enum = dict(good, status="published")
+    if not any("x-strict-vocabulary.status" in m for m in strict_problems(bad_enum)):
+        problems.append("不在词表里的 status 没有被严格层拦下——它没在执行")
+    for kind in ("nonsense", "legitimacy"):
+        bad_kind = dict(good, depends_on=[{"id": "gh-fleet", "kind": kind}])
+        if not any("depends_on.kind" in m for m in strict_problems(bad_kind)):
+            problems.append(f"kind={kind} 没有被严格层拦下（拆分后 legitimacy 不再是 kind 值）")
+    x_kind = dict(good, depends_on=[{"id": "gh-fleet", "kind": "x-magic-logistics"}])
+    if strict_problems(x_kind):
+        problems.append(f"x- 实验 kind 是契约允许的泄压阀，严格层不该拦：{strict_problems(x_kind)}")
+
+
 
 def check_validator_understands_schema(problems):
     try:
@@ -195,8 +306,14 @@ def check_good_corpus_conforms(problems, verbose):
                 problems.append(f"{rel}: 读不出 frontmatter（它被当成好语料）")
                 continue
             total += 1
-            for msg in js.validate(normalize(meta), SCHEMA):
+            normalized = normalize(meta)
+            for msg in js.validate(normalized, SCHEMA):
                 problems.append(f"{rel}: {msg}")
+            # 严格层只对 canonlint 世界生效：classlint 夹具只要求 id/title/type
+            # （契约的 `required`），这正是契约把两档分开写的原因。
+            if rel_dir.startswith("tests/"):
+                for msg in strict_problems(normalized):
+                    problems.append(f"{rel}: {msg}")
             if verbose:
                 print(f"  ok  {rel}")
     if total != EXPECTED_GOOD_ENTRIES:
@@ -323,6 +440,10 @@ def main() -> int:
         ("校验器 fail-loud（拼错的关键字会报错）", check_validator_is_fail_loud),
         ("契约词表与代码常量逐字一致", check_vocabulary_matches_code),
         ("关系别名与 classlint 的七种关系一致", check_relation_aliases_match_classlint),
+        ("契约的严格层（x-strict-required / x-strict-vocabulary）真的在执行",
+         check_strict_layer_is_executed),
+        ("cmd_new 产出的卡原样满足契约（不靠 normalize 弥合）",
+         check_tool_output_conforms_without_normalizing),
         ("好语料全部合规", lambda p: check_good_corpus_conforms(p, verbose)),
         ("坏样本全部判红且指出字段", check_bad_samples_are_rejected),
         ("扩展包的缝（econ 的 figures）", check_econ_pack_seam),

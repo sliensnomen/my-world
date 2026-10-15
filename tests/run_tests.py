@@ -241,6 +241,59 @@ def _judge(world: Path, *args: str) -> tuple[int, str, str]:
     return p.returncode, p.stdout, p.stderr
 
 
+def check_non_world_directory_is_a_usage_error() -> list[str]:
+    """指错目录要直说「这不是世界」，而不是把每篇文档都当坏条目（评审：752 条假错误）。"""
+    problems = []
+    tmp = tempfile.TemporaryDirectory(prefix="canonlint-notworld-")
+    with tmp:
+        root = Path(tmp.name)
+        (root / "docs").mkdir()
+        (root / "docs" / "说明.md").write_text("# 说明\n\n没有 frontmatter。\n",
+                                                encoding="utf-8")
+        (root / "README.md").write_text("# 这是仓库说明\n", encoding="utf-8")
+        code, out, err = _judge(root)
+        if code != 2:
+            problems.append(f"不是世界的目录应当给用法错误（exit 2），实际 exit {code}")
+        if "CA1" in out:
+            problems.append("它还是把文档当条目审了（应当直接说指错目录）")
+        if "不像一个世界" not in err:
+            problems.append(f"stderr 没说清为什么（实际：{err.strip()!r}）")
+    # 反面：根目录里真有一篇条目卡的扁平世界照旧能审
+    tmp2, flat = _temp_world("canonlint-flat-", {"solo": _card("solo")})
+    with tmp2:
+        code, out, _ = _judge(flat)
+        if code != 0:
+            problems.append(f"扁平世界（根目录直接放条目）反而被拒了：exit {code}")
+    return problems
+
+
+def check_shadowed_entries_still_get_their_refs_checked() -> list[str]:
+    """id 重复时，被遮蔽的那一份自己的引用也要检查（它只是没进索引，不是没写错）。
+
+    以前只查索引里的条目，于是「世界上摆着一条指向不存在条目的边」可以一直没人报；
+    CA105 的文案甚至把这当成既定事实写出来了（「其引用不被检查」）。这里钉住：
+    遮蔽者会被 CA105 报出来，被遮蔽者那条悬空引用照样报 CA401。
+    """
+    problems = []
+    tmp, world = _temp_world("canonlint-shadow-", {
+        "first": _card("dup-id"),
+        "second": _card("dup-id", "canon_refs:\n  - ghost-nowhere\n"),
+    })
+    with tmp:
+        code, out, err = _judge(world)
+        if code != 1:
+            problems.append(f"重复 id + 悬空引用应当报错（exit 1），实际 exit {code}")
+        rules = sorted({line.split("]")[0][1:] for line in out.splitlines()
+                        if line.startswith("[CA")})
+        if "CA105" not in rules:
+            problems.append(f"重复 id 没报 CA105（实际报出 {rules}）")
+        if "CA401" not in rules:
+            problems.append(f"被遮蔽条目里的悬空引用没报 CA401（实际报出 {rules}）")
+        if "ghost-nowhere" not in out:
+            problems.append("报告里没点名那条悬空引用指向谁")
+    return problems
+
+
 def check_supersede_pairs_are_not_duplicates() -> list[str]:
     """降级承接对（archived + 承接者）正文相似是**要求的**，CA201 不能报（评审 F9）。
 
@@ -588,6 +641,8 @@ def main() -> int:
         ("--help 能看到 init/new/link", check_help_discoverable),
         ("缺 pyyaml 时干净退出（提示 + 退出码 2）", check_missing_dependency_is_clean),
         ("降级承接对不算重复（CA201 豁免）", check_supersede_pairs_are_not_duplicates),
+    ("被遮蔽条目的引用照样检查", check_shadowed_entries_still_get_their_refs_checked),
+    ("指错目录给用法错误，而不是硬审", check_non_world_directory_is_a_usage_error),
         ("--dup-threshold 越界是用法错误（不退化成静默关规则）", check_dup_threshold_range_is_usage_error),
         ("--impact 从不把主体列进自己的下游", check_impact_never_lists_the_subject),
         ("提示性规则不阻断 draft（CA301 只对定档条目报）", check_advisory_rules_do_not_gate_drafts),

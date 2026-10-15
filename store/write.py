@@ -156,7 +156,10 @@ def cmd_new(root: Path, type_: str | None, title: str | None,
     meta_lines = [
         "---", f"id: {entry_id}", f"title: {title}", f"type: {type_}",
         f"author: {author}",
-        f"date: {date.today().isoformat()}", "status: draft",
+        # 加引号：契约把 date 写成 ISO 字符串，而 YAML 会把没引号的日期解成
+        # datetime.date——工具自己产出的卡不该违反自己的契约（CA103 两种都收，
+        # 见 canonlint.is_valid_date）。
+        f'date: "{date.today().isoformat()}"', "status: draft",
         f"load_bearing: {'true' if load_bearing else 'false'}",
     ]
     if load_bearing:
