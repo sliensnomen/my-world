@@ -79,7 +79,7 @@
       "coerces": {"accept": ["coerces"], "attrs": ["note"], "means": "强制：本条用暴力或胁迫使目标就范。与 controls 的分界是手段（强制 vs 权威），不是方向。PE001 把「控制/强制/占有」都算作基础。"},
       "legitimizes": {"accept": ["legitimizes"], "attrs": ["note"], "means": "正当化：本条为目标的存续或行为提供正当性说法（意识形态关系）。PE003 用它找自我正当化的闭环——闭环要能接通一个外部锚点才算有依据。"},
       "derives_legitimacy_from": {"accept": ["derives-legitimacy-from", "derives_legitimacy_from", "deriveslegitimacyfrom", "legitimacy"], "attrs": ["critical", "note"], "means": "名分依据：本条目的正当性以目标为依据（「我的名分来自它」）。它不是生存依赖——名分断了不等于这条塌了，所以不进 CA501/CA502/CA503 的承重判定，也不进 CA504 的影响闭包；工具只查目标是否存在（CA401）。它与 legitimizes 是同一断言的两个方向：A derives_legitimacy_from B 就是 B legitimizes A。历史写法是在 depends_on 里写 kind: legitimacy（已废弃，工具会照本条判定并发 CA111 提示迁移）。"},
-      "owes": {"accept": ["owes"], "attrs": ["what", "note"], "means": "欠负：本条对目标负有债务性义务。what 说明欠的是什么（税、息、贡）。它有语法有规则位，但本版 PE 规则还没用它下判语——这是已知的缺口，不是它没有意义。"}
+      "owes": {"accept": ["owes"], "attrs": ["what", "note"], "means": "欠负：本条对目标负有债务性义务。what 说明欠的是什么（税、息、贡）。它必须收得回来：判定层要求模型里存在收账通道（债主对债务人 controls/coerces/extracts/legitimizes，或债务人 depends_on 债主），否则报 PE009 warning——债务不等于供养，owes 与 depends_on 是两条要分别写出来的边。"}
     }
   },
 

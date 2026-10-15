@@ -56,7 +56,7 @@ depends_on:
 与 `B legitimizes A` 同义（方向相反）。本层把前者翻译成后者再判定，所以 PE003 的闭环、
 外部锚点、报在哪一侧与旧写法逐条一致（`classlint/tests/legit-canonical-*` 与
 `check_legitimacy_forms_are_indistinguishable` 守着这条）。它**不**进 PE001/PE004/PE005 的
-抽取与供给图：名分不是生产关系。
+抽取与供给图：名分不是生产关系。（PE009 是例外方向：`legitimizes` 正是收账通道之一，债主能撤回正当性就收得回债。）
 
 七种关系全部是**有向边**，写在关系施加方的 frontmatter 里。`A 的 frontmatter 含 <relation>: [{id: B}]` 意为 `A —relation→ B`：
 
@@ -98,7 +98,7 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；clas
 | 段 | 类别 |
 |---|---|
 | CL1xx | 结构（解析/frontmatter/schema/引用存在性） |
-| PE0xx | 政治经济学规则（规划八条：本版已实现 PE001–PE005，PE006–PE008 属流量层，待数据模型就位） |
+| PE0xx | 政治经济学规则（规划八条：本版已实现 PE001–PE005 与 PE009；PE006–PE008 属流量层，待数据模型就位——债务那条是生产关系层的新增，占下一个空号，不改已规划的编号） |
 
 ### 3.2 结构规则（确定性）
 
@@ -120,6 +120,7 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；clas
 | PE003 | error | **合法性不得无锚闭环**：`legitimizes` 图的强连通分量（含自环）若没有任何来自分量外的 `legitimizes` 输入，报警。有外部锚点的互锁合法（依据：WGP v0.5 魔戒 dogfood，规范性互锁是常态）。**`derives_legitimacy_from` 写的那条也在这张图里**（翻译成反向的 `legitimizes`，判定与旧写法逐条相同）——名分是关系名，不再是 `depends_on` 的 `kind` 值 |
 | PE004 | error | **剩余必须收敛（定性版）**：`extracts` 子图存在环（含自环）——剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。定量判定（抽取量 vs 剩余量）待流量层数据就位后回填 |
 | PE005 | warning | **劳动者必须被覆盖（定性版）**：存在 `A —extracts→ B` 且 B 没有任何**物质**来源侧边——被抽取者的剩余/再生产在模型里不可见（隐形剥削嫌疑）。「物质来源侧边」= `extracts`、`exchanges_with`、或带物质类别 `kind`（`resource`/`production`/`economy`/`fiscal`/`manpower`，见 `world.schema.json` 的 `x-strict-vocabulary.depends_on.kind`）的 `depends_on`。一条裸 `depends_on`（无 kind，如 `depends_on: [weather]`）**不**消音：自然条件既不是生产关系也不承担再生产，消音必须是一次物质关系的声明。报在 B 侧：修法是补上带 kind 的物质来源，或确认 B 为终端生产者。定量判定待流量层回填 |
+| PE009 | warning | **债务必须收得回来**：存在 `A —owes→ B` 而模型里没有任何收账通道。通道有两条：**债主对债务人的支配**（`B —controls/coerces/extracts/legitimizes→ A` 任一条——能指挥、能强制、能抽取偿付、能撤回正当性），或**债务人依赖债主**（`A —depends_on→ B`——断供即崩，续借的开关在债主手里）。两条都没有 = 这笔债在模型里无法兑现，只是一句记账。报在 A 侧。注意 `owes` 与 `depends_on` 是两条不同的边（债务不等于供养），所以这里**不**因为写了 `owes` 就假定欠债方依赖债主——依赖得另外写出来 |
 
 ### 3.4 报告级输出（永不进退出码）
 

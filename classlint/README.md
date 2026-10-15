@@ -6,7 +6,7 @@
 [项目文书](项目文书.md)（定位与三层架构） · [开发计划](开发计划.md) · [ROADMAP](ROADMAP.md)
 姊妹项目：[canonlint](../README.md)（本工具的条目格式与 lint 架构来源；canonlint 自己的解析器现在在 [`store/`](../store/README.md)）
 
-**状态：生产关系层已完成（PE001–PE005 + `graph` + `--impact`）。** 流量层（四种线、守恒律、PE004/PE005 的定量回填）
+**状态：生产关系层已完成（PE001–PE005 + PE009 + `graph` + `--impact`）。** 流量层（四种线、守恒律、PE004/PE005 的定量回填）
 与 PE006–PE008 未开始——排期见 [ROADMAP.md](ROADMAP.md)。
 
 ## 用法
@@ -26,13 +26,13 @@ python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（
 ## 审计规则（协议 v0.1，见 [PROTOCOL.md](PROTOCOL.md)）
 
 - **CL1xx 结构规则**（不可关）：解析失败、缺必填字段、id 非法/重复、未定义字段、关系 schema 违规、关系目标不存在。
-- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）；**PE004** 剩余必须收敛（extracts 子图无环，定性版）；**PE005** 劳动者必须被覆盖（被抽取者须有来源侧边，定性版 warning）。
+- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）；**PE004** 剩余必须收敛（extracts 子图无环，定性版）；**PE005** 劳动者必须被覆盖（被抽取者须有来源侧边，定性版 warning）；**PE009** 债务必须收得回来（`owes` 要有收账通道：债主能支配/强制/抽取/撤回正当性，或债务人依赖债主，warning）。
 
 PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以关，不能改定义。
 
 报告级输出（永不进退出码）：`classlint graph <仓库> [--format dot|json]` 关系图；`classlint check <仓库> --impact ID...` 下游影响报告。
 
-测试：`python3 tests/run_tests.py`（17 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
+测试：`python3 tests/run_tests.py`（18 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
 
 ## 世界仓库结构
 

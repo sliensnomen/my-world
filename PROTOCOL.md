@@ -33,6 +33,8 @@
 
 16. **每一种关系的悬空引用都报 CA401**（§6.3）：`own`/`control`/`extract`/`coerce`/`legitimize`/`owes` 六种字段的语义虽归 classlint 那一层，但从前 canonlint 一条都不查——`owns: [幽灵]` 在本层完全隐形，只有跑 classlint 才有 CL105。规则归属不改变「引用指向不存在的 id 是结构问题」，现在本层对契约列过的每一种关系都查存在性（照旧**不**给生产关系附加状态语义：依据草稿、交换对象降级都不构成违规）。`tests/run_tests.py` 钉住五种关系 × 两种写法都要报、目标存在时不报。
 
+17. **`owes` 有了判语：债务必须收得回来**（classlint PE009，见 `classlint/PROTOCOL.md` §3.3）：存在 `A —owes→ B` 时，模型里必须有收账通道——债主对债务人的支配（`controls`/`coerces`/`extracts`/`legitimizes` 任一条），或债务人依赖债主（`depends_on`）。两条都没有就报 warning：那样的 `owes` 只是一句记账，模型里没有能兑现它的结构。此前 `owes` 有词表、有形状、有定义，却没有一条规则用它——契约自己写着「本版 PE 规则还没用它下判语」，这是已知缺口。编号取 **PE009** 而不是 PE006：`classlint` 规划里的 PE006–PE008 属流量层（剩余量/人口/交叉），编号即协议，不占用已规划的空位。
+
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
 - §6.5 JSON schema 的 `entry` 字段允许伪值 `"(仓库级)"`，用于 CA505 等仓库级 finding

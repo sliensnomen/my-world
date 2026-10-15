@@ -49,6 +49,9 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
     "pe005-bad": [
         ("PE005", "warning", "codex/tenant-farmers.md"),  # 佃农再生产不可见，报在被抽取者侧
     ],
+    "pe009-bad": [
+        ("PE009", "warning", "codex/debtor.md"),  # 债收不回来：债主没有任何收账通道
+    ],
     # 三个经典结构：正确的参考结构应当全绿
     "feudal-rent": [],
     "merchant-capital": [],
@@ -134,6 +137,56 @@ def check_pe005_requires_material_source() -> int:
                 failures += 1
     if not failures:
         print("PASS PE005 消音必须是一次物质关系声明（裸 depends_on 不再算数）")
+    return failures
+
+
+def check_pe006_requires_a_collection_channel() -> int:
+    """PE009：记一笔债，就要说清它凭什么收得回来。
+
+    两种通道都算数——债主对债务人的支配（controls/coerces/extracts/legitimizes），
+    或债务人依赖债主（depends_on，断供即崩）。都没有才是问题：那样的 owes 只是一句
+    记账，模型里没有任何能兑现它的结构。这里钉住每条通道各自都能消音，以及一个都
+    没有时必须报。
+    """
+    failures = 0
+
+    def probe(debtor_extra: str, creditor_extra: str = "") -> bool:
+        with tempfile.TemporaryDirectory() as td:
+            world = Path(td)
+            (world / "codex").mkdir()
+            (world / "classlint.yaml").write_text("name: p\nclasslint: \"0.1\"\n",
+                                                 encoding="utf-8")
+            (world / "codex" / "debtor.md").write_text(
+                "---\nid: debtor\ntitle: 债务人\ntype: faction\n"
+                f"owes:\n  - id: creditor\n    what: 借款\n{debtor_extra}---\n正文。\n",
+                encoding="utf-8")
+            (world / "codex" / "creditor.md").write_text(
+                "---\nid: creditor\ntitle: 债主\ntype: institution\n"
+                f"{creditor_extra}---\n正文。\n", encoding="utf-8")
+            _, _, findings, _ = classlint.run_checks(world)
+            return any(f.rule == "PE009" and f.entry == "codex/debtor.md"
+                       for f in findings)
+
+    cases = [
+        ("没有任何通道", "", "", True),
+        ("债主 controls 债务人", "", "controls: [debtor]\n", False),
+        ("债主 coerces 债务人", "", "coerces: [debtor]\n", False),
+        ("债主 extracts 债务人（欠租/利息）", "", "extracts:\n  - id: debtor\n    what: 利息\n", False),
+        ("债主 legitimizes 债务人", "", "legitimizes: [debtor]\n", False),
+        ("债务人 depends_on 债主（断供即崩）",
+         "depends_on:\n  - id: creditor\n    critical: true\n", "", False),
+        ("债务人非 critical 依赖债主",
+         "depends_on:\n  - id: creditor\n", "", False),
+    ]
+    for label, d_extra, c_extra, should_report in cases:
+        got = probe(d_extra, c_extra)
+        if got != should_report:
+            want = "应当报" if should_report else "不应当报"
+            print(f"FAIL PE009 收账通道（{label}）：{want} PE009，实际"
+                  f"{'报了' if got else '没报'}")
+            failures += 1
+    if not failures:
+        print("PASS 债务必须收得回来（四条支配通道 + 债务人依赖，各自都能消音）")
     return failures
 
 
@@ -270,6 +323,7 @@ def main() -> int:
                     print(f"  漏报: {item}")
     failures += check_cl100_intent()
     failures += check_pe005_requires_material_source()
+    failures += check_pe006_requires_a_collection_channel()
     failures += check_disabled_rules_change_exit_code()
     failures += check_legitimacy_forms_are_indistinguishable()
     extra = set(EXPECTED) - set(worlds)

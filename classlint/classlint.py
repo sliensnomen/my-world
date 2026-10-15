@@ -3,7 +3,7 @@
 
 用马克思主义政治经济学的规则，审计一个虚构世界的结构。
 Git + Markdown 是唯一事实来源：条目 = codex/ 下一个带 YAML frontmatter 的 Markdown 文件。
-规则编号即协议：本文件实现 PROTOCOL.md 全部规则（CL1xx 结构 + PE001–PE003）。
+规则编号即协议：本文件实现 PROTOCOL.md 全部规则（CL1xx 结构 + PE001–PE005 + PE009）。
 
 用法:
   classlint.py init [目录]        初始化世界仓库（目录结构 + classlint.yaml + git）
@@ -539,6 +539,37 @@ def pe005(world: World, emit) -> None:
 
 class ConfigError(Exception):
     pass
+@rule("PE009", "warning", "债务必须收得回来：债权关系要有能兑现它的结构")
+def pe006(world: World, emit) -> None:
+    """A —owes→ B（A 欠 B）时，模型里必须至少有一条**收得回来**的通道：
+
+    - B 对 A 有 `controls` / `coerces` / `extracts` / `legitimizes` 任一条：债主能指挥、
+      能强制、能从债务人身上抽取偿付，或能撤回给债务人的正当性；
+    - 或 A 对 B 有 `depends_on`：债务人靠债主活着（断供即崩），债主捏着续借的开关。
+
+    都没有 = 这笔债在模型里无法兑现，只是一句记账。债务不是「写一个 owes 就成立」的
+    关系：它要能收回来，收回来的途径必须写在模型里。反面提醒：`owes` 与 `depends_on`
+    是两条不同的边（债务不等于供养），所以这里**不会**因为写了 owes 就假定欠债方依赖
+    债主——依赖得另外写出来。
+
+    报在债务人侧（欠债的那张卡）。
+    """
+    for src, e in world.edges_of("owes"):
+        if e.target not in world.index:  # 悬空目标已由 CL105 报告
+            continue
+        claim = world.find_edge(e.target, {"controls", "coerces", "extracts",
+                                           "legitimizes"}, src)
+        if claim is not None:
+            continue
+        if world.find_edge(src, {"depends_on"}, e.target) is not None:
+            continue
+        emit(None, world.index[src].rel,
+             f"欠 `{e.target}` 债务，但看不到任何收得回来的途径：`{e.target}` 不指挥、不强制、"
+             f"不抽取、也不为这条提供正当性，这条自己也不依赖 `{e.target}`"
+             "——债权关系要有能兑现它的结构，否则只是记账")
+
+
+
 
 
 def load_config(root: Path) -> dict:

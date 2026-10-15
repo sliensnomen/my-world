@@ -33,7 +33,7 @@
 | **存储** | `store/`（model / layout / write） | 只要懂文件格式 | `tests/test_store.py`（AST 检查，越线即红） |
 | **格式契约** | `world.schema.json` | 只要懂 JSON Schema | `tests/test_schema.py` |
 | **结构判定** | `canonlint.py` 的 `check_*` 与规则常量 | 要懂规则语义（`PROTOCOL.md` §6.3） | `tests/run_tests.py`（快照）+ `tests/test_docs.py` |
-| **政治经济学判定** | `classlint/classlint.py`（CL1xx + PE001–PE005） | 要读 `classlint/PROTOCOL.md` | `classlint/tests/run_tests.py`（17 个夹具） |
+| **政治经济学判定** | `classlint/classlint.py`（CL1xx + PE001–PE005 + PE009） | 要读 `classlint/PROTOCOL.md` | `classlint/tests/run_tests.py`（18 个夹具） |
 | **回归网** | `tests/`、`classlint/tests/` | —— | CI（四个检查） |
 | **文档** | `README.md`、`CONTRIBUTING.md`、`PROTOCOL.md`、`docs/` | —— | `tests/test_docs.py`（数字必须与代码一致） |
 

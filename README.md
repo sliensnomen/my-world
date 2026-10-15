@@ -10,7 +10,7 @@
 | | 负责 | 现在有什么 |
 |---|---|---|
 | **存** | 条目格式、id、目录布局、关系、写入命令 | `store/` · `world.schema.json`（格式契约） |
-| **判** | 结构规则 + 政治经济学规则 | 25 条 CA 规则（`canonlint.py`）· 6 条 CL + 5 条 PE 规则（`classlint/`） |
+| **判** | 结构规则 + 政治经济学规则 | 25 条 CA 规则（`canonlint.py`）· 6 条 CL + 6 条 PE 规则（`classlint/`：PE001–PE005 与 PE009） |
 
 **两者之间有一条线**：`store/` 里不许出现政治经济学词汇。改存储的人不该被迫先学会八层链和 PE003——
 政治经济学只住在规则、`classlint/` 和文档里。这条线由 `tests/test_store.py` 用 AST 检查守着（越线即红）。
@@ -34,7 +34,7 @@ python3 canonlint.py ~/worlds/grey-harbor --pack econ        # 启用 econ 扩�
 
 # ── 政治经济学层：classlint（条目住 codex/，目前是另一个仓库根）
 python3 classlint/classlint.py init ~/worlds/grey-harbor-econ
-python3 classlint/classlint.py check ~/worlds/grey-harbor-econ      # CL1xx + PE001–PE005
+python3 classlint/classlint.py check ~/worlds/grey-harbor-econ      # CL1xx + PE001–PE005 + PE009
 python3 classlint/classlint.py check ~/worlds/grey-harbor-econ --json
 python3 classlint/classlint.py check ~/worlds/grey-harbor-econ --impact some-id   # 只读
 python3 classlint/classlint.py graph ~/worlds/grey-harbor-econ --format dot       # 只读
@@ -70,8 +70,8 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 ## 现状（不吹）
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
-- ✅ **能判**：25 条 CA 规则（结构 / 引用 / 承重链条 / 重复 / 影响报告）+ CL1xx + PE001–PE005
-- ✅ **有回归网**：`tests/` 五套（29 + 12 + 18 + 17 + 13 项检查）+ `classlint/tests/` 一套（17 个夹具世界），
+- ✅ **能判**：25 条 CA 规则（结构 / 引用 / 承重链条 / 重复 / 影响报告）+ CL1xx + PE001–PE005 + PE009
+- ✅ **有回归网**：`tests/` 五套（29 + 12 + 18 + 17 + 13 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ⬜ **没有界面** —— 前端最后做：没有判定，就没有值得渲染的东西；渲染器是别人能写的东西
 - ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）
