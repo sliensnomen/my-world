@@ -71,7 +71,7 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
 - ✅ **能判**：25 条 CA 规则（结构 / 引用 / 承重链条 / 重复 / 影响报告）+ CL1xx + PE001–PE005
-- ✅ **有回归网**：`tests/` 五套（28 + 12 + 18 + 17 + 13 项检查）+ `classlint/tests/` 一套（17 个夹具世界），
+- ✅ **有回归网**：`tests/` 五套（29 + 12 + 18 + 17 + 13 项检查）+ `classlint/tests/` 一套（17 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ⬜ **没有界面** —— 前端最后做：没有判定，就没有值得渲染的东西；渲染器是别人能写的东西
 - ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）

@@ -131,8 +131,13 @@ def check_shape_errors_reach_the_report():
 
 def check_unknown_relation_names_are_kept():
     with tempfile.TemporaryDirectory() as td:
-        root = make_world(Path(td), {"a-node": entry_text(
-            "a-node", "relations:\n  - type: legitimizes\n    target: b-node\n")})
+        root = make_world(Path(td), {
+            "a-node": entry_text(
+                "a-node", "relations:\n  - type: legitimizes\n    target: b-node\n"),
+            # 目标必须真实存在：生产关系（owns/controls/... 六个）的**悬空引用**从
+            # v1.1 起会报 CA401——判定层看不见写坏的引用正是这次要修的毛病一类。
+            "b-node": entry_text("b-node"),
+        })
         e = parsed(root, "a-node")
         assert not e.relation_errors, e.relation_errors
         assert [r.type for r in e.relations] == ["legitimizes"], e.relations

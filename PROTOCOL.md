@@ -31,6 +31,8 @@
 14. **PE005 的消音必须是一次物质关系声明**（classlint §3.2）：来源侧边只认 `extracts`、`exchanges_with`、或带物质类别 `kind` 的 `depends_on`。以前一条任意出边即消音，`depends_on: [weather]` 一行就能让「被抽取者的再生产不可见」消失——自然条件不是生产关系，也不承担再生产，消音门槛低到等于没有门槛。相关夹具已补上 `kind`。
 15. **拆开 `depends_on`：名分依据成为独立关系名 `derives_legitimacy_from`**（§4.4/§4.5）。一个关系名曾经装两种意思——「我靠它活着」与「我的说法以它为依据」——而 CA501/CA502/CA503 的门禁恰好是 `kind`：于是副标签决定了「算不算承重」，`legitimacy` 还和物资挤在同一张类别表里，漏填或拼错 `kind` 就能合法关掉整族判定；反过来 `kind` 也不再是纯粹的类别标签。现在门禁看**关系名**，`kind` 只回答「靠哪一类物资」。旧写法 `depends_on` + `kind: legitimacy` 继续接受：存储层按契约 `deprecations` 归一成新关系名（判定与迁移后逐条相同），另记一条 CA111 warning 提示改写。`tests/test_store.py` 钉住「每个关系名必须有 `means`」与「`kind` 词表只有一份真值」，`classlint/tests/` 钉住两种写法同判。
 
+16. **每一种关系的悬空引用都报 CA401**（§6.3）：`own`/`control`/`extract`/`coerce`/`legitimize`/`owes` 六种字段的语义虽归 classlint 那一层，但从前 canonlint 一条都不查——`owns: [幽灵]` 在本层完全隐形，只有跑 classlint 才有 CL105。规则归属不改变「引用指向不存在的 id 是结构问题」，现在本层对契约列过的每一种关系都查存在性（照旧**不**给生产关系附加状态语义：依据草稿、交换对象降级都不构成违规）。`tests/run_tests.py` 钉住五种关系 × 两种写法都要报、目标存在时不报。
+
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
 - §6.5 JSON schema 的 `entry` 字段允许伪值 `"(仓库级)"`，用于 CA505 等仓库级 finding
@@ -398,7 +400,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 | CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复 |
 | CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明）。**只对已定档条目（trial/canon）发出**：draft 还没到做决定的时候，而 `--strict` 会把 warning 当失败 |
 | CA302 | error | `load_bearing: true` 但缺 `layer` 或 `depends_on` |
-| CA401 | error | 引用（含 `superseded_by`）指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**） |
+| CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它 |
 | CA402 | error | `canon_refs` 目标状态为 `draft`/`trial`；或目标为 `archived` 且已填 `superseded_by`（提示迁移至承接条目）。目标为 `archived` 且未填 `superseded_by` 时**不报本条**，由 CA405 在 archived 条目侧单独报告，避免双报 |
 | CA403 | warning | `conflicts_with` 双方均简式且缺回指（对象式标注豁免，见 §4.2） |
 | CA404 | error | `canon` 条目的 `depends_on` 目标状态非 `canon`（链条依赖只能建立在已定档上） |

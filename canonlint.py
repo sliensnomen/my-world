@@ -246,6 +246,17 @@ def check_content(e: Entry, findings: list[Finding]) -> None:
                                     f"命中承重墙关键词 {hits}，但未声明 load_bearing——请考虑声明"))
 
 
+# 已经有专属引用检查的关系（各自带状态语义：canon_refs 的 CA402/CA405、depends_on 的
+# CA404 等）。剩下的关系没有专属规则，但**目标存在性**是结构问题，不属于哪一层的理论：
+# 从前这六种字段一条都不查，于是 `owns: [幽灵]` 在 canonlint 里完全隐形。
+# 只取**规范名**：`RELATION_TYPE_NAMES` 的键包含每一种可接受拼法，按它遍历会把同一条
+# 边按 canon-ref / canon-refs / canonrefs 报三遍。
+_RELATIONS_NEEDING_PLAIN_EXISTENCE_CHECK = tuple(
+    name for name in sorted(store.RELATION_VOCABULARY)
+    if name not in ("canon_refs", "conflicts_with", "depends_on",
+                    "exchanges_with", "derives_legitimacy_from"))
+
+
 def check_refs(entries: list[Entry], index: dict[str, Entry],
                findings: list[Finding]) -> None:
     """CA4xx 引用与状态机。无传递违规原则：只判直接边。
@@ -299,6 +310,12 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
         # 「名分断了」与「物资断了」不是一回事（CA402/CA404 都针对生存依赖）。
         for ref in e.edges_of("derives_legitimacy_from"):
             check_target(ref.target, "derives_legitimacy_from")
+
+        # 其余关系（owns / controls / extracts / coerces / legitimizes / owes）：语义住在
+        # classlint 那一层，但「引用指向不存在的 id」是结构问题，不该因为规则归属而看不见。
+        for name in _RELATIONS_NEEDING_PLAIN_EXISTENCE_CHECK:
+            for ref in e.edges_of(name):
+                check_target(ref.target, name)
 
         # superseded_by 的目标存在性（CA401）
         sb = e.meta.get("superseded_by")

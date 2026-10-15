@@ -241,6 +241,35 @@ def _judge(world: Path, *args: str) -> tuple[int, str, str]:
     return p.returncode, p.stdout, p.stderr
 
 
+def check_every_relation_reference_is_checked() -> list[str]:
+    """契约列过的每一种关系，悬空引用都要报 CA401——不管语义归哪一层管。
+
+    生产关系（owns / controls / extracts / coerces / legitimizes / owes）的规则住在
+    classlint，但「引用指向不存在的 id」是结构问题：从前这六种字段一条都不查，
+    于是 `owns: [幽灵]` 在 canonlint 里完全隐形（只在 classlint 那边有 CL105）。
+    """
+    problems = []
+    families = ["owns", "controls", "extracts", "coerces", "legitimizes"]
+    for fam in families:
+        for style, extra in (("具名字段", f"{fam}:\n  - ghost-x\n"),
+                             ("规范形", f"relations:\n  - type: {fam}\n    target: ghost-x\n")):
+            tmp, world = _temp_world("canonlint-relref-", {"a-node": _card("a-node", extra)})
+            with tmp:
+                code, out, _ = _judge(world)
+                if f"[CA401]" not in out or "ghost-x" not in out:
+                    problems.append(f"{fam}（{style}）的悬空引用没报 CA401：{out.strip()!r}")
+    # 反面：目标存在时不许报（别把「有这条边」本身当成错）
+    tmp, world = _temp_world("canonlint-relref-ok-", {
+        "a-node": _card("a-node", "owns:\n  - b-node\n"),
+        "b-node": _card("b-node"),
+    })
+    with tmp:
+        code, out, _ = _judge(world)
+        if "CA401" in out:
+            problems.append(f"目标存在时不该报 CA401：{out.strip()!r}")
+    return problems
+
+
 def check_non_world_directory_is_a_usage_error() -> list[str]:
     """指错目录要直说「这不是世界」，而不是把每篇文档都当坏条目（评审：752 条假错误）。"""
     problems = []
@@ -643,6 +672,7 @@ def main() -> int:
         ("降级承接对不算重复（CA201 豁免）", check_supersede_pairs_are_not_duplicates),
     ("被遮蔽条目的引用照样检查", check_shadowed_entries_still_get_their_refs_checked),
     ("指错目录给用法错误，而不是硬审", check_non_world_directory_is_a_usage_error),
+    ("每一种关系的悬空引用都报 CA401", check_every_relation_reference_is_checked),
         ("--dup-threshold 越界是用法错误（不退化成静默关规则）", check_dup_threshold_range_is_usage_error),
         ("--impact 从不把主体列进自己的下游", check_impact_never_lists_the_subject),
         ("提示性规则不阻断 draft（CA301 只对定档条目报）", check_advisory_rules_do_not_gate_drafts),

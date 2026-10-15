@@ -96,7 +96,7 @@ python3 classlint/tests/run_tests.py
 ## 4. 验证命令（改完必须跑）
 
 ```bash
-python3 tests/run_tests.py            # 10 个世界夹具 + 28 项检查，逐字节比对快照
+python3 tests/run_tests.py            # 10 个世界夹具 + 29 项检查，逐字节比对快照
 python3 tests/test_schema.py          # 契约 ↔ 代码常量
 python3 tests/test_store.py           # 存储层边界与写入路径
 python3 tests/test_serve.py           # 接口（serve.py）与解析器（wgp-client.js）
