@@ -13,8 +13,8 @@ depends_on:
   - id: fremen
     kind: manpower
     critical: true
+derives_legitimacy_from:
   - id: missionaria-protectiva
-    kind: legitimacy
     critical: true
 superseded_by: null
 ai_assisted: false

@@ -75,6 +75,27 @@ def _shape_variants(word: str) -> set[str]:
             word.replace("-", "").replace("_", "")}
 
 
+def _contract_deprecations() -> tuple[tuple[str, str, str], ...]:
+    """读契约的「旧写法 → 新关系名」搬家表：((旧关系名, 旧注解值, 新关系名), …)。
+
+    「`depends_on` + 某个 `kind` 值其实已经是一个独立关系名」这类历史写法由契约声明，
+    本层只执行搬运：存储层不认识理论词（tests/test_store.py 的「存储层不认识理论」
+    守着这条），也不替判定器决定该怎么判——两个引擎看到同一条边就够了。
+    """
+    try:
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        items = schema["x-relation-vocabulary"]["deprecations"]
+        return tuple((str(i["relation"]), str(i["kind"]), str(i["becomes"])) for i in items)
+    except (OSError, ValueError, KeyError, TypeError):
+        return ()
+
+
+DEPRECATED_KIND_MIGRATIONS = _contract_deprecations()
+_MIGRATED_RELATIONS: tuple[str, ...] = tuple(b for _, _, b in DEPRECATED_KIND_MIGRATIONS)
+# 「作者就依赖说过话」判据里算数的关系名：物质承重，以及从它搬出去的那些名字
+_DEPENDENCY_DECLARING_RELATIONS: tuple[str, ...] = ("depends_on",) + _MIGRATED_RELATIONS
+
+
 RELATION_VOCABULARY: dict[str, tuple[str, ...]] = _contract_relation_names()
 _ALL_RELATION_NAMES: tuple[str, ...] = tuple(RELATION_VOCABULARY) or (
     "canon_refs", "conflicts_with", "depends_on")
@@ -141,9 +162,10 @@ ANNOTATION_FIELDS = ("layer", "depends_on", "superseded_by")
 RELATIONS_FIELD = "relations"
 
 # 能读的旧具名字段（`Entry.relations` 把它们归一化到同一视图）。
-# 契约 x-relation-source.aliases 列了十个，这里读全十个——收口完成（旧「已知漂移」关闭）。
+# 契约 x-relation-source.aliases 列了十一个，这里读全十一个——收口完成（旧「已知漂移」关闭）。
 LEGACY_RELATION_FIELDS = ("depends_on", "conflicts_with", "canon_refs", "exchanges_with",
-                          "owns", "controls", "extracts", "coerces", "legitimizes", "owes")
+                          "owns", "controls", "extracts", "coerces", "legitimizes",
+                          "derives_legitimacy_from", "owes")
 
 # 三个「自古就有」的具名字段有各自的解析器与错误文案，判定侧也按各自的规则报；
 # 其余七个是接线补上的，形状错误统一走 `Entry.named_relation_errors`。
@@ -166,6 +188,7 @@ NAMED_RELATION_ATTRS: dict[str, tuple[str, ...]] = {
     "extracts": ("what", "note"),
     "coerces": ("note",),
     "legitimizes": ("note",),
+    "derives_legitimacy_from": ("critical", "note"),
     "owes": ("what", "note"),
 }
 
@@ -302,6 +325,31 @@ def _parse_named_relation(raw, field: str, name: str,
         attrs = {k: v for k, v in item.items() if k != "id"}
         edges.append(Relation(name, item["id"], attrs))
     return edges, errs
+
+
+# 拆分前的旧写法（清单在契约 `x-relation-vocabulary.deprecations`）：某个关系的某个注解值，
+# 后来成了一个独立的关系名。迁移做在**存储层**，所以两个引擎看到的是同一条边
+# （CONTRIBUTING §7：同一份数据必须得到同一份判定）。
+
+
+def migrate_legacy_kind(name: str, attrs: dict) -> tuple[str, dict]:
+    """按契约的搬家表把「旧关系 + 旧注解值」换成新的关系名。
+
+    这是纯粹的名字搬家：边的两端、其余注解（`critical`/`note`）与判定结果都不变，
+    只是「算不算承重」不再由那个注解值决定。没有可搬运的内容就原样返回。
+    """
+    for old_rel, old_kind, becomes in DEPRECATED_KIND_MIGRATIONS:
+        if name == old_rel and attrs.get("kind") == old_kind:
+            return becomes, {k: v for k, v in attrs.items() if k != "kind"}
+    return name, attrs
+
+
+def _migration_message(where: str, old_rel: str, old_kind: str, becomes: str,
+                       target: str, *, kind_style: bool) -> str:
+    fix = (f"请改写为 {becomes}: [`{target}`]" if kind_style
+           else f"请把 type 改写为 {becomes}")
+    return (f"{where} 用的是拆分前的写法（{old_rel} + kind={old_kind}）："
+            f"「{becomes}」现在是关系名，本条已按它判定。{fix}")
 
 
 @dataclass
@@ -464,6 +512,8 @@ class Entry:
                     continue
             attrs = {k: v for k, v in item.items() if k not in ("type", "target")}
             # 归一化关系名：契约自己声明的每一种拼法都必须与具名字段等价
+            # 再搬一次家：`kind: legitimacy` 是拆分前的写法（见 migrate_legacy_kind）
+            canonical_type, attrs = migrate_legacy_kind(canonical_type, attrs)
             out.append(Relation(canonical_type, item["target"], attrs))
         return out, errs
 
@@ -477,8 +527,9 @@ class Entry:
         """
         out: list[Relation] = []
         for dep in self.deps[0]:
-            out.append(Relation("depends_on", dep.id,
-                                {"kind": dep.kind, "critical": dep.critical}))
+            name, attrs = migrate_legacy_kind(
+                "depends_on", {"kind": dep.kind, "critical": dep.critical})
+            out.append(Relation(name, dep.id, attrs))
         for ref in self.conflicts[0]:
             attrs = {} if ref.stance is None else {"stance": ref.stance}
             out.append(Relation("conflicts_with", ref.id, attrs))
@@ -499,6 +550,43 @@ class Entry:
     def named_relation_errors(self) -> list[SchemaError]:
         """六个新接线具名字段的形状问题（三个老字段的问题仍在各自访问器里）。"""
         return self.named_relations[1]
+
+    @cached_property
+    def relation_migrations(self) -> list[SchemaError]:
+        """旧写法的搬家记录（CA111，只提示、不改结论）。
+
+        判定已经按契约 `deprecations` 里声明的新关系名走（存储层归一），这里只是让作者
+        在输出里看见「这种写法以后别用了，该改成什么」——废弃如果完全静默，就等于留了
+        一条只有工具知道的新关系名。
+        """
+        out: list[SchemaError] = []
+        relations_raw = self.meta.get(RELATIONS_FIELD)
+        for old_rel, old_kind, becomes in DEPRECATED_KIND_MIGRATIONS:
+            raw = self.meta.get(old_rel)
+            if isinstance(raw, list):
+                for i, item in enumerate(raw):
+                    if (isinstance(item, dict) and item.get("kind") == old_kind
+                            and isinstance(item.get("id"), str)):
+                        out.append(SchemaError("CA111", _migration_message(
+                            f"{old_rel}[{i}]", old_rel, old_kind, becomes,
+                            item["id"], kind_style=True)))
+            if not isinstance(relations_raw, list):
+                continue
+            for i, item in enumerate(relations_raw):
+                if not isinstance(item, dict) or not isinstance(item.get("target"), str):
+                    continue
+                raw_type = str(item.get("type") or "")
+                if (item.get("kind") == old_kind
+                        and canonical_relation_name(raw_type) == old_rel):
+                    out.append(SchemaError("CA111", _migration_message(
+                        f"relations[{i}]", old_rel, old_kind, becomes,
+                        item["target"], kind_style=True)))
+                elif raw_type == old_kind:
+                    # 把注解的值当成了关系名——归一化会把它接到新关系上，顺手提示一句。
+                    out.append(SchemaError("CA111", _migration_message(
+                        f"relations[{i}]", old_rel, old_kind, becomes,
+                        item["target"], kind_style=False)))
+        return out
 
     @cached_property
     def relations(self) -> list[Relation]:
@@ -524,10 +612,17 @@ class Entry:
           写错」**算**声明（`relations:` 里有这一项就够）：那种错由 CA107 罚，不该再叠一条
           CA302，否则同一句话两种写法的输出条数就不一样了。
 
+        「名分依据」也算一种关于依赖的声明：它以前就写在 `depends_on` 里（`kind: legitimacy`），
+        拆成关系名之后若不算，迁移过的条目会凭空多一条 CA302——而 CA503「承重墙须有物质
+        来源」的义务仍由那条规则自己承担，不需要 CA302 代劳。
+
         「空依赖 + 别的边」用混用写法表达（`relations:` 放别的边、`depends_on: []` 显式声明空），
         混用是契约支持的写法，见 `mixed_relation_forms`。
         """
         if "depends_on" in self.meta:
+            return True
+        if any(isinstance(k, str) and canonical_relation_name(k) in _MIGRATED_RELATIONS
+               for k in self.meta):
             return True
         raw = self.meta.get(RELATIONS_FIELD)
         if not isinstance(raw, list):
@@ -535,7 +630,8 @@ class Entry:
         if not raw:
             return True
         return any(isinstance(i, dict)
-                   and canonical_relation_name(str(i.get("type") or "")) == "depends_on"
+                   and canonical_relation_name(str(i.get("type") or "")) in
+                   _DEPENDENCY_DECLARING_RELATIONS
                    for i in raw)
 
     @property

@@ -33,7 +33,7 @@ depends_on:
 | `id` | **必须** | string | 全库唯一；`^[a-z0-9-]+$`；一旦发布永不更改、永不复用 |
 | `title` | **必须** | string | 显示名 |
 | `type` | **必须** | string | `^[a-z0-9-]+$`。**实体开放**：词汇用户自定义，初始建议集 `character` / `location` / `faction` / `item` / `event` / `resource` / `institution` |
-| 七种关系字段 | 可选 | 列表 | 见 §2 |
+| 关系字段（契约列过的全部具名字段） | 可选 | 列表 | 见 §2 |
 | `x-*` | 可选 | 任意 | 扩展字段必须带 `x-` 前缀，审计器放行 |
 
 除上表与 `x-` 前缀字段外，任何字段**必须**被审计器拒绝（CL103）。
@@ -52,6 +52,12 @@ depends_on:
 `canon_refs`/`conflicts_with`/`exchanges_with` 属于治理与流通，本层不判——但它们进图，
 `graph` 与解析都会认。
 
+**名分依据有两条写法，进的是同一张 `legitimizes` 图**（v1.1）：`A derives_legitimacy_from B`
+与 `B legitimizes A` 同义（方向相反）。本层把前者翻译成后者再判定，所以 PE003 的闭环、
+外部锚点、报在哪一侧与旧写法逐条一致（`classlint/tests/legit-canonical-*` 与
+`check_legitimacy_forms_are_indistinguishable` 守着这条）。它**不**进 PE001/PE004/PE005 的
+抽取与供给图：名分不是生产关系。
+
 七种关系全部是**有向边**，写在关系施加方的 frontmatter 里。`A 的 frontmatter 含 <relation>: [{id: B}]` 意为 `A —relation→ B`：
 
 | 关系 | 含义 | 方向读法 | 可选属性 |
@@ -62,7 +68,8 @@ depends_on:
 | `coerces` | 暴力 | A 对 B 施加暴力/镇压 | `note` |
 | `legitimizes` | 合法化 | A 给 B 合法性 | `note` |
 | `owes` | 债务 | A 欠 B | `what`（债务内容）、`note` |
-| `depends_on` | 供养 | A 靠 B 养（断供即崩的程度用 critical 标） | `critical`（bool）、`kind`（string，自由词汇）、`note` |
+| `depends_on` | 供养 | A 靠 B 养（断供即崩的程度用 critical 标）；`kind` 只说**哪一类物资** | `critical`（bool）、`kind`（string，物资五类或 `x-` 实验值）、`note` |
+| `derives_legitimacy_from` | 名分依据 | A 的说法以 B 为依据（与 `B legitimizes A` 同义，方向相反） | `critical`（bool）、`note` |
 
 ### 2.1 元素形式
 
@@ -110,13 +117,13 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；clas
 |---|---|---|
 | PE001 | error | **抽取必须有基础**：存在 `A —extracts→ B` 但 A 对 B 没有任何 `controls` / `coerces` / `owns` 边 |
 | PE002 | error/warning | **不能镇压自己的供养者**：存在 `A —coerces→ B` 且 `A —depends_on→ B`。`critical: true` = error，否则 warning |
-| PE003 | error | **合法性不得无锚闭环**：`legitimizes` 图的强连通分量（含自环）若没有任何来自分量外的 `legitimizes` 输入，报警。有外部锚点的互锁合法（依据：WGP v0.5 魔戒 dogfood，规范性互锁是常态） |
+| PE003 | error | **合法性不得无锚闭环**：`legitimizes` 图的强连通分量（含自环）若没有任何来自分量外的 `legitimizes` 输入，报警。有外部锚点的互锁合法（依据：WGP v0.5 魔戒 dogfood，规范性互锁是常态）。**`derives_legitimacy_from` 写的那条也在这张图里**（翻译成反向的 `legitimizes`，判定与旧写法逐条相同）——名分是关系名，不再是 `depends_on` 的 `kind` 值 |
 | PE004 | error | **剩余必须收敛（定性版）**：`extracts` 子图存在环（含自环）——剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。定量判定（抽取量 vs 剩余量）待流量层数据就位后回填 |
-| PE005 | warning | **劳动者必须被覆盖（定性版）**：存在 `A —extracts→ B` 且 B 没有任何**物质**来源侧边——被抽取者的剩余/再生产在模型里不可见（隐形剥削嫌疑）。「物质来源侧边」= `extracts`、`exchanges_with`、或带物质类别 `kind`（`resource`/`production`/`economy`/`fiscal`/`manpower`，见 `world.schema.json` 的 `material-kinds`）的 `depends_on`。一条裸 `depends_on`（无 kind，如 `depends_on: [weather]`）**不**消音：自然条件既不是生产关系也不承担再生产，消音必须是一次物质关系的声明。报在 B 侧：修法是补上带 kind 的物质来源，或确认 B 为终端生产者。定量判定待流量层回填 |
+| PE005 | warning | **劳动者必须被覆盖（定性版）**：存在 `A —extracts→ B` 且 B 没有任何**物质**来源侧边——被抽取者的剩余/再生产在模型里不可见（隐形剥削嫌疑）。「物质来源侧边」= `extracts`、`exchanges_with`、或带物质类别 `kind`（`resource`/`production`/`economy`/`fiscal`/`manpower`，见 `world.schema.json` 的 `x-strict-vocabulary.depends_on.kind`）的 `depends_on`。一条裸 `depends_on`（无 kind，如 `depends_on: [weather]`）**不**消音：自然条件既不是生产关系也不承担再生产，消音必须是一次物质关系的声明。报在 B 侧：修法是补上带 kind 的物质来源，或确认 B 为终端生产者。定量判定待流量层回填 |
 
 ### 3.4 报告级输出（永不进退出码）
 
-- **关系图**：`classlint graph <仓库> [--format dot|json]`——节点 = 条目，边 = 契约列过的全部关系（本层判的七种 + `canon_refs`/`conflicts_with`/`exchanges_with`）；DOT 可直接喂 Graphviz，JSON 供任意前端消费。
+- **关系图**：`classlint graph <仓库> [--format dot|json]`——节点 = 条目，边 = 契约列过的全部关系（本层判的七种 + `canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`）；DOT 可直接喂 Graphviz，JSON 供任意前端消费。
 - **影响报告**：`classlint check <仓库> --impact ID...`——指定条目的 `depends_on` 反向传递闭包（"改 A 炸 B"的待复核队列），参考 WGP 的 CA504。
 
 **无传递违规原则：** 只判直接边。A 抽取 B、B 的供养断裂并不使 A 连带违规；间接影响是将来影响报告（Sprint 3）的职责。

@@ -33,7 +33,7 @@
 | **存储** | `store/`（model / layout / write） | 只要懂文件格式 | `tests/test_store.py`（AST 检查，越线即红） |
 | **格式契约** | `world.schema.json` | 只要懂 JSON Schema | `tests/test_schema.py` |
 | **结构判定** | `canonlint.py` 的 `check_*` 与规则常量 | 要懂规则语义（`PROTOCOL.md` §6.3） | `tests/run_tests.py`（快照）+ `tests/test_docs.py` |
-| **政治经济学判定** | `classlint/classlint.py`（CL1xx + PE001–PE005） | 要读 `classlint/PROTOCOL.md` | `classlint/tests/run_tests.py`（15 个夹具） |
+| **政治经济学判定** | `classlint/classlint.py`（CL1xx + PE001–PE005） | 要读 `classlint/PROTOCOL.md` | `classlint/tests/run_tests.py`（17 个夹具） |
 | **回归网** | `tests/`、`classlint/tests/` | —— | CI（四个检查） |
 | **文档** | `README.md`、`CONTRIBUTING.md`、`PROTOCOL.md`、`docs/` | —— | `tests/test_docs.py`（数字必须与代码一致） |
 
@@ -73,7 +73,7 @@ python3 classlint/tests/run_tests.py
 
 1. `canonlint.py` 的 `check_structure` / `check_content` / `check_refs` / `check_chain` / `check_duplicates`
    里改判定；
-2. **同步 `PROTOCOL.md` §6.3 的规则表**（那是 24 条规则的清单，`tests/test_docs.py` 要求两边条数与编号一致）；
+2. **同步 `PROTOCOL.md` §6.3 的规则表**（那是 25 条规则的清单，`tests/test_docs.py` 要求两边条数与编号一致）；
 3. **加一个夹具**：在 `tests/world-*` 里造出会/不会触发它的条目，跑 `python3 tests/run_tests.py --update`
    更新快照，然后 **`git diff tests/snapshots/` 逐行看**——快照的 diff 就是这次行为变更的说明书；
 4. 如果是新规则编号，记得在 `PROTOCOL.md` §6.1 的编号段里给它一个位置。
@@ -96,12 +96,12 @@ python3 classlint/tests/run_tests.py
 ## 4. 验证命令（改完必须跑）
 
 ```bash
-python3 tests/run_tests.py            # 10 个世界夹具 + 23 项检查，逐字节比对快照
+python3 tests/run_tests.py            # 10 个世界夹具 + 26 项检查，逐字节比对快照
 python3 tests/test_schema.py          # 契约 ↔ 代码常量
 python3 tests/test_store.py           # 存储层边界与写入路径
 python3 tests/test_serve.py           # 接口（serve.py）与解析器（wgp-client.js）
 python3 tests/test_docs.py            # 文档里的数字 ↔ 代码
-python3 classlint/tests/run_tests.py  # 15 个 classlint 夹具
+python3 classlint/tests/run_tests.py  # 17 个 classlint 夹具
 ```
 
 两个 Python 版本都要过（CI 跑 3.12 与 3.14；本机可用

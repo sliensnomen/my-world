@@ -255,7 +255,8 @@ def check_code_identifiers_exist():
     """
     code = "".join(p.read_text(encoding="utf-8")
                    for p in (*CORE_SRC, *ECON_SRC, *CL_SRC, WORKFLOW,
-                             *sorted((ROOT / "tests").glob("*.py"))))
+                             *sorted((ROOT / "tests").glob("*.py")),
+                             *sorted((ROOT / "classlint" / "tests").glob("*.py"))))
     known = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", code))
     skip = {
         "extensions": "SillyTavern 角色卡规范里的字段名，不是我们的代码名（PR#5 才接线）",

@@ -18,6 +18,7 @@ from __future__ import annotations
 import difflib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -217,9 +218,10 @@ def check_missing_dependency_is_clean() -> list[str]:
 
 
 def _card(entry_id: str, extra: str = "", status: str = "canon",
-          body: str | None = None) -> str:
+          body: str | None = None, load_bearing: bool = False) -> str:
     return (f"---\nid: {entry_id}\ntitle: {entry_id}\ntype: location\nauthor: t\n"
-            f"date: 2026-01-01\nstatus: {status}\nload_bearing: false\n"
+            f"date: 2026-01-01\nstatus: {status}\n"
+            f"load_bearing: {'true' if load_bearing else 'false'}\n"
             f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
             f"---\n\n{body if body is not None else '正文' * 120}\n")
 
@@ -405,6 +407,141 @@ def check_mutual_exchange_is_not_a_perpetual_motion() -> list[str]:
     return problems
 
 
+def _rules(out: str) -> set[str]:
+    """输出里出现过的规则号（用于比较两种写法的判定集合）。"""
+    return set(re.findall(r"\[(CA\d+)\]", out))
+
+
+def check_legitimacy_is_its_own_relation_not_a_material_kind() -> list[str]:
+    """「名分依据」必须是一个关系名，不再是 `depends_on` 的 kind 值（拆分 `depends_on`）。
+
+    以前一个词装两种意思：`depends_on` + `kind: legitimacy` 表示「我的说法以它为依据」，
+    而 CA501/CA502/CA503 的门禁是 `kind not in 物质族: continue`——于是「算不算承重」
+    由副标签决定，`legitimacy` 还和物资挤在同一张类别表里。拆开之后门禁看**关系名**：
+    `derives_legitimacy_from` 不进任何承重图，`depends_on` 只有物资 kind 才算。
+    （CA503「承重墙要有物质来源」两种写法都照报：名分不是物资来源。）
+    """
+    problems = []
+    # 实验组：新关系名——承重墙从名分来源取得正当性，不构成物质依赖
+    new_form = {
+        "church-node": _card("church-node", "layer: ideology\n"),
+        "a-node": _card("a-node", "layer: political\nderives_legitimacy_from:\n  - church-node\n",
+                        load_bearing=True),
+    }
+    tmp, world = _temp_world("canonlint-legit-relation-", new_form)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"derives_legitimacy_from 把 traceback 写到了 stderr：\n{err}")
+        carried = _rules(out) & {"CA501", "CA502"}
+        if carried:
+            problems.append(
+                "名分依据被判成了承重依赖（它不该进 CA501/CA502 的图）：\n" + out)
+        if "CA110" in out:
+            problems.append("契约认得的规范名被当成拼写近失报了 CA110：\n" + out)
+    # 旧写法：kind: legitimacy——同一句话，判定集合必须完全一致（迁移不改结论）
+    old_form = {
+        "church-node": _card("church-node", "layer: ideology\n"),
+        "a-node": _card(
+            "a-node",
+            "layer: political\ndepends_on:\n  - {id: church-node, kind: legitimacy, critical: true}\n",
+            load_bearing=True),
+    }
+    tmp2, world2 = _temp_world("canonlint-legit-kind-", old_form)
+    with tmp2:
+        code2, out2, err2 = _judge(world2)
+        if err2:
+            problems.append(f"旧写法 kind: legitimacy 把 traceback 写到了 stderr：\n{err2}")
+        carried2 = _rules(out2) & {"CA501", "CA502"}
+        if carried2:
+            problems.append("旧写法 kind: legitimacy 被判成了承重依赖：\n" + out2)
+        if code != code2 or _rules(out) != (_rules(out2) - {"CA111"}):
+            problems.append(
+                "两种写法（关系名 / 旧的 kind 值）判定不一致——迁移必须不改结论：\n"
+                f"新关系名 rc={code} {sorted(_rules(out))}\n"
+                f"旧 kind   rc={code2} {sorted(_rules(out2))}")
+        if "CA111" not in out2:
+            problems.append("旧写法没有提示作者迁移（CA111 必须报，废弃不许静默）：\n" + out2)
+    # 物质路径不受影响：真的靠物资活着仍然要判
+    material = {
+        "mine-node": _card("mine-node", "layer: resource\n"),
+        "b-node": _card("b-node", "layer: economy\ndepends_on:\n  - {id: mine-node, kind: resource, critical: true}\n"),
+    }
+    tmp3, world3 = _temp_world("canonlint-legit-material-", material)
+    with tmp3:
+        code3, out3, err3 = _judge(world3)
+        if err3:
+            problems.append(f"物质依赖把 traceback 写到了 stderr：\n{err3}")
+        if code3 != 0:
+            problems.append(f"正常的物质依赖不该报错，实际退出码 {code3}：\n{out3}")
+    return problems
+
+
+def check_legitimacy_edge_checks_existence_only() -> list[str]:
+    """名分来源只查**存在性**：悬空要报，对象退休了不报（与 canon_refs 不同）。
+
+    名分是「说法以它为依据」，不是「靠它活着」——来源条目归档不等于这个说法失效，
+    所以状态不参与判定。这条同时钉住新接线没有被顺手接进 CA402/CA405。
+    """
+    problems = []
+    dangling = {
+        "a-node": _card("a-node", "derives_legitimacy_from:\n  - ghost-node\n"),
+    }
+    tmp, world = _temp_world("canonlint-legit-dangling-", dangling)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"悬空名分来源把 traceback 写到了 stderr：\n{err}")
+        if "CA401" not in out:
+            problems.append("名分来源指向不存在的 id 却没报 CA401：\n" + out)
+    retired = {
+        "old-doctrine": _card("old-doctrine", status="archived"),
+        "a-node": _card("a-node", "derives_legitimacy_from:\n  - old-doctrine\n"),
+    }
+    tmp2, world2 = _temp_world("canonlint-legit-archived-", retired)
+    with tmp2:
+        code2, out2, err2 = _judge(world2)
+        if err2:
+            problems.append(f"名分来源退休把 traceback 写到了 stderr：\n{err2}")
+        if _rules(out2) & {"CA402", "CA405"}:
+            problems.append(
+                "名分来源归档被判成引用失效（名分只查存在性，不看状态）：\n" + out2)
+    return problems
+
+
+def check_experimental_kinds_are_still_exempt() -> list[str]:
+    """`x-` 实验 kind 继续豁免 CA501/CA502，但不豁免 CA503 的「物质来源」义务。
+
+    三个演示世界里有四条承重边用 `x-faith-engineering` / `x-will-binding` /
+    `x-faith` / `x-magic-logistics` 当 kind。门禁从「看 kind」改成「看关系名」之后，
+    它们仍然写成 `depends_on`，只是 kind 落不到物资类别上——层级方向（CA501）与物质
+    成环（CA502）照旧不判；而 CA503「承重墙要有一条物质族 critical 依赖」本来就是
+    在问「你的物质来源在哪」，只写实验 kind 就是没写，报出来是对的（拆分前后一致）。
+    """
+    problems = []
+    case = {
+        "target-node": _card("target-node", "layer: production\n"),
+        "a-node": _card("a-node",
+                        "layer: military\ndepends_on:\n  - {id: target-node, kind: x-will-binding, critical: true}\n",
+                        load_bearing=True),
+    }
+    tmp, world = _temp_world("canonlint-x-kind-", case)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"x- 实验 kind 把 traceback 写到了 stderr：\n{err}")
+        carried = _rules(out) & {"CA501", "CA502"}
+        if carried:
+            problems.append(
+                f"x- 实验 kind 被当成物质依赖判了 {sorted(carried)}（契约自由档要求豁免）：\n" + out)
+        if "CA108" not in out:
+            problems.append("x- 实验 kind 没有被记成实验值（CA108 info）：\n" + out)
+        # 边仍然存在：不许因为 kind 不是物资就当作者没声明依赖
+        if "CA302" in out:
+            problems.append("x- 实验 kind 的边被当成了「没声明依赖」：\n" + out)
+    return problems
+
+
 def main() -> int:
     update = "--update" in sys.argv[1:]
     failures: list[str] = []
@@ -455,6 +592,9 @@ def main() -> int:
         ("--impact 从不把主体列进自己的下游", check_impact_never_lists_the_subject),
         ("提示性规则不阻断 draft（CA301 只对定档条目报）", check_advisory_rules_do_not_gate_drafts),
         ("互相交换不是永动机（exchanges_with 不进 CA502，互相供养照报）", check_mutual_exchange_is_not_a_perpetual_motion),
+        ("名分依据是关系名不是物资类别（拆分 depends_on 后判定不变）", check_legitimacy_is_its_own_relation_not_a_material_kind),
+        ("名分来源只查存在性（悬空报 CA401，归档不报 CA402/CA405）", check_legitimacy_edge_checks_existence_only),
+        ("x- 实验 kind 继续豁免 CA501/CA502（门禁改看关系名也不许收走）", check_experimental_kinds_are_still_exempt),
     ]
     for label, check in extras:
         problems = check()

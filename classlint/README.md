@@ -32,7 +32,7 @@ PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以�
 
 报告级输出（永不进退出码）：`classlint graph <仓库> [--format dot|json]` 关系图；`classlint check <仓库> --impact ID...` 下游影响报告。
 
-测试：`python3 tests/run_tests.py`（15 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood，期望判定钉死）。
+测试：`python3 tests/run_tests.py`（17 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
 
 ## 世界仓库结构
 

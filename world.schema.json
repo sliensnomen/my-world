@@ -21,8 +21,8 @@
     "type": ["character", "event", "faction", "item", "location"],
     "status": ["draft", "trial", "canon", "archived"],
     "layer": ["geo", "resource", "production", "economy", "fiscal", "military", "political", "ideology"],
-    "depends_on.kind": ["resource", "production", "economy", "fiscal", "manpower", "legitimacy"],
-    "depends_on.kind-exception": "以 x- 开头的实验值合法（CA108 记 info）",
+    "depends_on.kind": ["resource", "production", "economy", "fiscal", "manpower"],
+    "depends_on.kind-exception": "以 x- 开头的实验值合法（CA108 记 info）。它对 CA501/502/503 同样是豁免：实验值不进承重链条判定。",
     "type-exception": "以 x-<命名空间>-<名称> 开头的实验类型合法（CA102 记 info，协议 1.1）。确定普适的类型进入 type 词表是收紧词表的协议变更（§9.1），不能在这里悄悄做。"
   },
   "x-stricter-than-contract": [
@@ -46,6 +46,7 @@
       "extracts": {"type": "extracts", "required": [], "attrs": ["what", "note"], "item": "id 字符串 或 {id, what?, note?}", "canonical-item": "{type: extracts, target: <id>, what?, note?}"},
       "coerces": {"type": "coerces", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}", "canonical-item": "{type: coerces, target: <id>, note?}"},
       "legitimizes": {"type": "legitimizes", "required": [], "attrs": ["note"], "item": "id 字符串 或 {id, note?}", "canonical-item": "{type: legitimizes, target: <id>, note?}"},
+      "derives_legitimacy_from": {"type": "derives_legitimacy_from", "required": [], "attrs": ["critical", "note"], "item": "id 字符串 或 {id, critical?, note?}", "canonical-item": "{type: derives_legitimacy_from, target: <id>, critical?, note?}"},
       "owes": {"type": "owes", "required": [], "attrs": ["what", "note"], "item": "id 字符串 或 {id, what?, note?}", "canonical-item": "{type: owes, target: <id>, what?, note?}"}
     }
   },
@@ -54,23 +55,30 @@
     "note": "关系名**唯一真值表**：keys = 具名字段与规范形 type 的规范名，value.accept = 工具必须一并认下的历史拼法（连字符/下划线变体），value.means = 这个关系**是什么意思**（工具据此下判语，作者据此选词）。两个引擎都读本表做归一化（canonlint 读的是存储层归一化后的统一视图；classlint 直接读本文件）。漏认一个变体的后果是整族规则静默失效，所以这里宁可宽；但接受 ≠ 输出：报错文案与 --json 一律用规范名。",
     "canonical-form": "canon_refs",
     "spelling-guard": "与任一规范名的编辑距离 ≤1 的 type 值记 warning（CA110），保留对真正新词的 fail-open——自由档允许用户自定义关系名，不许把未知名一律判错。",
-    "why-definitions": "关系名曾经只有拼法没有定义：工具按名字建图，作者按直觉选词，双方对「这条边算不算承重」没有共识。一个具体后果是 depends_on 一个词同时承载了两种意思（「我靠它活着」与「我在说法上以它为依据」），只能靠 kind 这个副标签区分。下面每条 means 是双方都该照的那份定义；material-kinds 单独说清「物质依赖」指什么。",
-    "material-kinds": {
-      "note": "**物质依赖**：depends_on 的 kind 落在 kinds 五值时，被依赖的是「要被人生产出来、会耗尽、能断供」的东西——受 CA501（层级方向）、CA502（物质族成环）、CA503（承重墙须有物质来源）三条规则约束。kind 为 normative 值或 x- 实验值时是**规范依赖**：依赖的是说法/名分，不是物资，三条规则豁免（豁免不等于无意义，只是这三条判不了它）。",
-      "kinds": ["resource", "production", "economy", "fiscal", "manpower"],
-      "normative": ["legitimacy"],
-      "caveat": "同一关系名靠 kind 副标签区分两种意思是当前词汇表的已知弱点。彻底的做法是把「物质承重」与「名分依据」拆成两个关系名；在那之前，kind 是唯一的分界，所以 depends_on 的 kind 在规范形里是必填的（CA107）。"
+    "deprecations": [
+      {
+        "relation": "depends_on",
+        "kind": "legitimacy",
+        "becomes": "derives_legitimacy_from",
+        "note": "拆分前的写法：用 `depends_on` 的 `kind` 副标签表示「名分依据」。存储层读到就把它归一成关系名 `becomes`（判定结果与迁移后逐条相同），判定层记一条 CA111 提示作者改写。两者都写在这里，存储层只做搬运——它不认识任何理论词。"
+      }
+    ],
+    "why-definitions": "关系名曾经只有拼法没有定义：工具按名字建图，作者按直觉选词，双方对「这条边算不算承重」没有共识。一个具体后果是 depends_on 一个词同时承载了两种意思（「我靠它活着」与「我在说法上以它为依据」），只能靠 kind 这个副标签区分——而一个词装两种意思，就会让「承重」这一层的门禁挂在一个副标签上，也让「依赖的是哪一类物资」这个本义被污染。现在两种意思各有一个关系名：depends_on 是物质承重，derives_legitimacy_from 是名分依据。下面每条 means 是双方都该照的那份定义。",
+    "material-dependency": {
+      "note": "**物质依赖**：depends_on 边本身。它依赖的是「要被人生产出来、会耗尽、能断供」的东西，因此受 CA501（层级方向）、CA502（物质族成环）、CA503（承重墙须有物质来源）三条规则约束；load_bearing: true 的条目也由此确定 CA504 的影响闭包走哪些边。kind 只说明依赖的是哪一类物资（resource/production/economy/fiscal/manpower 五值，见 x-strict-vocabulary.depends_on.kind），**不再是「算不算承重」的开关**——门禁看关系名。kind 为 x- 实验值时仍豁免这三条：那是作者声明的实验类别，契约允许它存在，只是这三条判不了它。",
+      "kind-table": "kind 的类别表只有 x-strict-vocabulary.depends_on.kind 一张。历史上这里另有一张 material-kinds（kinds + normative），与它互补；拆出 derives_legitimacy_from 之后那张表已删除，避免同一个概念有两处真值。"
     },
     "names": {
       "canon_refs": {"accept": ["canon-ref", "canon_refs", "canon-refs", "canonrefs"], "attrs": [], "means": "引用：本条目的说法在文本上以目标条目为依据（「如上文所述」）。它不表示生存依赖，只表示叙事上的引用。工具据此查：目标是否存在、状态是否允许被引用（须 canon，CA402）、目标降级后是否已处置（CA405）。"},
       "conflicts_with": {"accept": ["conflicts-with", "conflicts_with", "conflictwith"], "attrs": ["stance"], "means": "矛盾：两条设定不能同时成立（并置时读者会觉得打架）。它是标注不是错误——刻意设计的矛盾同样合法。stance 说明本方的立场；工具只查对称性（对方有没有回指，CA403）。"},
-      "depends_on": {"accept": ["depends-on", "depends_on", "dependson"], "attrs": ["kind", "critical", "note"], "means": "依赖：本条目的存续需要目标条目——目标断了或停产，这条就塌。kind 说明依赖的是哪一类东西（物质 vs 规范，见 material-kinds）；critical: true 说明不可或缺，false 或省略是可用但可替代。承重墙（load_bearing: true）的物质依赖受 CA501/CA502/CA503 约束，CA504 的闭包也走这个关系。"},
+      "depends_on": {"accept": ["depends-on", "depends_on", "dependson"], "attrs": ["kind", "critical", "note"], "means": "物质依赖：本条目的存续需要目标条目——目标断了或停产，这条就塌。kind 说明依赖的是哪一类物资（见 x-strict-vocabulary.depends_on.kind）；critical: true 说明不可或缺，false 或省略是可用但可替代。承重墙（load_bearing: true）的 depends_on 受 CA501/CA502/CA503 约束，CA504 的闭包也走这个关系。要表达「我的名分以它为依据」（曾经的 kind: legitimacy），请用 derives_legitimacy_from。"},
       "exchanges_with": {"accept": ["exchanges-with", "exchanges_with", "exchangeswith"], "attrs": ["what", "note"], "means": "交换：两条目互相提供东西（分工、互市、贸易），但各自都另有底座。它是**流通**关系，不是承重关系——因此不进 CA501/CA502/CA503 的承重判定，「互相交换」在模型里合法。要表达「互相供养、谁断了谁都塌」请用两条 depends_on（那会并且应当报 CA502）。what 说明交换的是什么。"},
       "owns": {"accept": ["owns"], "attrs": ["note"], "means": "占有：目标在法律或名义上属于本条（所有制关系）。它不等于能指挥目标——那是 controls。PE001 用它判断「被抽取者有没有基础」。"},
       "controls": {"accept": ["controls"], "attrs": ["note"], "means": "支配：本条能实际指挥目标做什么，不问名义归属。PE001 与 PE002 用它判断控制关系。"},
       "extracts": {"accept": ["extracts"], "attrs": ["what", "note"], "means": "抽取：本条从目标身上取走剩余（地租、利息、利润、贡赋）。what 说明取走的是什么。PE001/PE004/PE005 围绕它展开。定量抽取是否真超过剩余，属流量层，本层不判。"},
       "coerces": {"accept": ["coerces"], "attrs": ["note"], "means": "强制：本条用暴力或胁迫使目标就范。与 controls 的分界是手段（强制 vs 权威），不是方向。PE001 把「控制/强制/占有」都算作基础。"},
       "legitimizes": {"accept": ["legitimizes"], "attrs": ["note"], "means": "正当化：本条为目标的存续或行为提供正当性说法（意识形态关系）。PE003 用它找自我正当化的闭环——闭环要能接通一个外部锚点才算有依据。"},
+      "derives_legitimacy_from": {"accept": ["derives-legitimacy-from", "derives_legitimacy_from", "deriveslegitimacyfrom", "legitimacy"], "attrs": ["critical", "note"], "means": "名分依据：本条目的正当性以目标为依据（「我的名分来自它」）。它不是生存依赖——名分断了不等于这条塌了，所以不进 CA501/CA502/CA503 的承重判定，也不进 CA504 的影响闭包；工具只查目标是否存在（CA401）。它与 legitimizes 是同一断言的两个方向：A derives_legitimacy_from B 就是 B legitimizes A。历史写法是在 depends_on 里写 kind: legitimacy（已废弃，工具会照本条判定并发 CA111 提示迁移）。"},
       "owes": {"accept": ["owes"], "attrs": ["what", "note"], "means": "欠负：本条对目标负有债务性义务。what 说明欠的是什么（税、息、贡）。它有语法有规则位，但本版 PE 规则还没用它下判语——这是已知的缺口，不是它没有意义。"}
     }
   },
@@ -102,11 +110,13 @@
     "canon_refs": {"$ref": "#/$defs/canonRefs"},
     "conflicts_with": {"$ref": "#/$defs/conflictsWith"},
     "depends_on": {"$ref": "#/$defs/relationList"},
+    "exchanges_with": {"$ref": "#/$defs/relationList"},
     "owns": {"$ref": "#/$defs/relationList"},
     "controls": {"$ref": "#/$defs/relationList"},
     "extracts": {"$ref": "#/$defs/relationList"},
     "coerces": {"$ref": "#/$defs/relationList"},
     "legitimizes": {"$ref": "#/$defs/relationList"},
+    "derives_legitimacy_from": {"$ref": "#/$defs/relationList"},
     "owes": {"$ref": "#/$defs/relationList"}
   },
   "patternProperties": {"^x-": {}},

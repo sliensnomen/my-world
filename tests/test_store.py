@@ -245,26 +245,37 @@ def check_relation_alias_drift():
         f"具名字段与关系名不是一一对应：字段多出 {sorted(set(aliases) - set(names))}，"
         f"词表多出 {sorted(set(names) - set(aliases))}")
 
+    # (5) 每个关系名都必须是可写的字段。`properties` 是第三张清单（词表一张、具名字段一张、
+    #     JSON Schema 的属性一张），而 `additionalProperties: false` 意味着漏一项就等于
+    #     「契约允许你写这个关系，但校验器拒收」——上一轮加 exchanges_with 时正是漏在这里，
+    #     因为没有夹具用它，所以没有任何测试发现。
+    declared_props = set(schema["properties"])
+    unwritable = sorted(set(names) - declared_props)
+    assert not unwritable, (
+        f"契约词表声明了但 properties 里没有的关系名：{unwritable}——"
+        f"additionalProperties: false 会让用了它的世界校验失败")
 
-def check_material_kinds_have_one_truth():
-    """「物质依赖」的类别表只能有一份：契约 material-kinds ↔ CA501/502/503 用的常量。
 
-    物质依赖是本次评审里被反复问到的一句话（「物质依赖到底是什么」）。它在代码里
-    表现为 CA501/502/503 的门禁常量 MATERIAL_KINDS，在契约里表现为 material-kinds——
-    两份不一致就会一边判一边不判，而且没人会发现。
+def check_kind_vocabulary_has_one_truth():
+    """`kind` 的类别表只能有一份：契约 x-strict-vocabulary.depends_on.kind ↔ 判定常量。
+
+    物质依赖是本次评审里被反复问到的一句话（「物质依赖到底是什么」）。它在代码里表现为
+    CA501/CA502/CA503/CA504 的门禁常量 `canonlint.KIND_INITIAL_SET`，在契约里表现为
+    `x-strict-vocabulary.depends_on.kind`——两份不一致就会一边判一边不判，而且没人会发现。
+
+    拆分 `depends_on` 之前，这里另有一张 `material-kinds`（kinds + normative）与词表互补，
+    用来区分「物质依赖」和「名分依据」；现在名分是关系名，那张中介表已删除。同一条断言仍要
+    守着：`kind` 的取值集合不许有两处真值。
     """
     schema = json.loads((ROOT / "world.schema.json").read_text(encoding="utf-8"))
-    kinds = schema["x-relation-vocabulary"]["material-kinds"]
-    declared = set(kinds["kinds"])
-    assert declared == set(canonlint.MATERIAL_KINDS), (
-        f"契约说物质依赖是 {sorted(declared)}，CA501/502/503 用的却是 "
-        f"{sorted(canonlint.MATERIAL_KINDS)}")
-    assert not (declared & set(kinds["normative"])), "规范依赖的类别不能同时算物质依赖"
-    # 物质族 + 规范族恰好补全 depends_on.kind 词表（一个类别不许两族都不在）
-    vocab = set(schema["x-strict-vocabulary"]["depends_on.kind"])
-    assert vocab == declared | set(kinds["normative"]), (
-        f"depends_on.kind 词表 {sorted(vocab)} 不等于物质族 + 规范族 "
-        f"{sorted(declared | set(kinds['normative']))}")
+    declared = set(schema["x-strict-vocabulary"]["depends_on.kind"])
+    assert declared == set(canonlint.KIND_INITIAL_SET), (
+        f"契约说 kind 可以是 {sorted(declared)}，CA501/502/503 用的却是 "
+        f"{sorted(canonlint.KIND_INITIAL_SET)}")
+    # 名分依据已经搬出 kind 词表——它现在是关系名，不许再作为类别出现。
+    names = schema["x-relation-vocabulary"]["names"]
+    assert "legitimacy" not in declared, "名分已拆成关系名，不该再留在 kind 词表里"
+    assert "derives_legitimacy_from" in names, "名分依据必须作为关系名有定义"
 
 
 # ---- 9. 存储层不认识理论 ---------------------------------------------------
@@ -279,8 +290,11 @@ ALLOWED_SNIPPETS = (
     "承重墙条目必须给 layer",       # cmd_new 的错误提示
     "--kind fiscal 连线",          # cmd_new 打印的连线示例
     "层级方向/环/状态",             # cmd_link 打印的收尾提示
+    # 契约声明的关系名。名字里带理论词是历史包袱（它从 `depends_on` 的某个 kind 值搬出来），
+    # 但存储在**名字**上认识它，不解释它的含义——名字由 world.schema.json 定义，理论在判定层。
+    "derives_legitimacy_from",
 )
-THEORY_NAMES = ("LAYERS", "LAYER_INDEX", "KIND_INITIAL_SET", "MATERIAL_KINDS",
+THEORY_NAMES = ("LAYERS", "LAYER_INDEX", "KIND_INITIAL_SET",
                 "CA503_LAYERS", "CA505_TRIGGER_LAYERS", "LOAD_BEARING_KEYWORDS",
                 "MIN_BODY_CHARS", "MIN_DUP_CHARS", "VALID_STATUS", "VALID_STANCE")
 
@@ -631,8 +645,8 @@ CHECKS = (
     ("两种写法混用被记录（旧字段在前）", check_mixed_forms_are_recorded),
     ("字段表与判定侧常量一致", check_field_table_matches_rules),
     ("type 词表与存储布局一致", check_type_vocabulary_matches_layout),
-    ("关系别名漂移被钉住（十个都接线 + 拼法/定义与契约逐字一致）", check_relation_alias_drift),
-    ("物质依赖的类别表只有一份真值（契约 ↔ CA501/502/503）", check_material_kinds_have_one_truth),
+    ("关系别名漂移被钉住（十一个都接线 + 拼法/定义与契约逐字一致）", check_relation_alias_drift),
+    ("kind 的类别表只有一份真值（契约 ↔ CA501/502/503）", check_kind_vocabulary_has_one_truth),
     ("存储层不认识理论（不 import 判定侧）", check_store_keeps_theory_out),
     ("通过符号链接调用也能 import store", check_symlink_invocation),
     ("init 装的钩子指向 canonlint（不是 store）", check_init_hook_points_at_canonlint),

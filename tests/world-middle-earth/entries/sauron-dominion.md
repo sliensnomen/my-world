@@ -9,9 +9,8 @@ load_bearing: true
 layer: ideology
 canon_refs: []
 conflicts_with: []
-depends_on: 
+derives_legitimacy_from:
   - id: the-one-ring
-    kind: legitimacy
     critical: false
 superseded_by: null
 ai_assisted: false

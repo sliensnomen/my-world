@@ -7,7 +7,7 @@
 >
 > 1. `world.schema.json` —— 条目格式的唯一契约；
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
-> 3. 本文档 —— 规则表（§6.3，**24 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
+> 3. 本文档 —— 规则表（§6.3，**25 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
 > 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.1"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
@@ -26,9 +26,10 @@
 9. **`--impact` 从不把主体列进自己的下游**：`--impact x` 问的是「谁依赖 x」，环内闭包以前会把 x 自己带回列表（环由 CA502 单独报）。
 10. **参数越界是用法错误**：`--dup-threshold` 必须落在 `(0, 1]`，越界返回退出码 2；以前 `2.5` 会让 CA201 永不触发而退出码仍为 0——一条规则被一个参数悄悄关掉。
 11. **新增 `exchanges_with`（流通关系）**（§4.3）：表达「两条目互相提供东西」（分工/互市/贸易），形状与 `conflicts_with` 同构。它**不进** CA501/CA502/CA503/CA504 的承重图，因此互相交换在模型里合法；要表达「互相供养、谁断谁塌」仍写两条 `depends_on`（照报 CA502）。补这个缺口是因为以前**没有表达交换的合法写法**：互市只能写成两条 `depends_on`，被判成永动机，作者要么改模型要么关规则。
-12. **关系名有了定义**（§4.4）：契约 `x-relation-vocabulary` 的每个名字都带 `means`（这个关系是什么意思、哪些规则用它），并新增 `material-kinds` 段把「**物质依赖**」写死为 `depends_on` 的 `kind` ∈ {resource, production, economy, fiscal, manpower}——受 CA501/CA502/CA503 约束；`legitimacy` 与 `x-` 实验值是规范依赖，三条规则豁免。此前关系名只有拼法没有定义，作者按直觉选词、工具按名字建图，双方对「这条边算不算承重」没有共识。`tests/test_store.py` 现在钉住「每个关系名必须有 `means`」与「物质族只有一份真值」。
+12. **关系名有了定义**（§4.4）：契约 `x-relation-vocabulary` 的每个名字都带 `means`（这个关系是什么意思、哪些规则用它），并把「**物质依赖**」写死为 `depends_on` 的 `kind` ∈ {resource, production, economy, fiscal, manpower}——受 CA501/CA502/CA503 约束；`x-` 实验值是规范依赖，三条规则豁免（第 15 条把这个缺口彻底补齐：名分依据搬出去之后，类别表只剩 `x-strict-vocabulary.depends_on.kind` 一份）。此前关系名只有拼法没有定义，作者按直觉选词、工具按名字建图，双方对「这条边算不算承重」没有共识。`tests/test_store.py` 现在钉住「每个关系名必须有 `means`」与「物质族只有一份真值」。
 13. **关掉规则必须落在退出码上**（classlint §4）：`rules: {PE00x: off}` 时 `check` 返回 **3**（判定通过，但通过的是少了几条规则的机器），只有显式 `--accept-disabled-rules` 才回到 0；`--json` 增 `judgement_complete`。以前这只看摘要行一句附注，退出码与全规则通过完全相同。
 14. **PE005 的消音必须是一次物质关系声明**（classlint §3.2）：来源侧边只认 `extracts`、`exchanges_with`、或带物质类别 `kind` 的 `depends_on`。以前一条任意出边即消音，`depends_on: [weather]` 一行就能让「被抽取者的再生产不可见」消失——自然条件不是生产关系，也不承担再生产，消音门槛低到等于没有门槛。相关夹具已补上 `kind`。
+15. **拆开 `depends_on`：名分依据成为独立关系名 `derives_legitimacy_from`**（§4.4/§4.5）。一个关系名曾经装两种意思——「我靠它活着」与「我的说法以它为依据」——而 CA501/CA502/CA503 的门禁恰好是 `kind`：于是副标签决定了「算不算承重」，`legitimacy` 还和物资挤在同一张类别表里，漏填或拼错 `kind` 就能合法关掉整族判定；反过来 `kind` 也不再是纯粹的类别标签。现在门禁看**关系名**，`kind` 只回答「靠哪一类物资」。旧写法 `depends_on` + `kind: legitimacy` 继续接受：存储层按契约 `deprecations` 归一成新关系名（判定与迁移后逐条相同），另记一条 CA111 warning 提示改写。`tests/test_store.py` 钉住「每个关系名必须有 `means`」与「`kind` 词表只有一份真值」，`classlint/tests/` 钉住两种写法同判。
 
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
@@ -38,7 +39,7 @@
 **v1.0 封版记录（三个测试世界 dogfood 完成）：**
 1. **kind 初始集封版**：六值冻结（resource/production/economy/fiscal/manpower/legitimacy）。证据：魔戒、冰与火、沙丘三个差异极大的世界中，物质五值零例外；装不下的全部落在规范族（`x-will-binding`、`x-magic-logistics`、`x-faith-engineering` 各出现一次，证据不足以升格，留档观察）
 2. **`x-` 实验通道永久开放**：不作为过渡机制，作为协议的长期泄压阀（CA108 info 级收集）
-3. 一致性终审完成：规则表 23 条（CA100–CA109、CA201、CA301/302、CA401–CA405、CA501–CA505）与参考实现逐条互证（v1.1 增列 CA110，见 §6.3 与 §9 修订记录）；清除死代码（v0.4 的 CA503 旧阈值常量）
+3. 一致性终审完成：规则表 23 条（CA100–CA109、CA201、CA301/302、CA401–CA405、CA501–CA505）与参考实现逐条互证（v1.1 增列 CA110、CA111，见 §6.3 与 §9 修订记录）；清除死代码（v0.4 的 CA503 旧阈值常量）
 4. 自本版起，结构性变更走 major 版本（§9）
 
 **v0.5 修订记录（魔戒/冰火真实数据 dogfood 回流）：**
@@ -72,7 +73,7 @@
 
 - 条目格式（frontmatter 规范）；
 - Canon 状态机（条目的生命周期）；
-- 引用、矛盾与流通标注（`canon_refs` / `conflicts_with` / `depends_on` / `exchanges_with`）；
+- 引用、矛盾、流通标注与名分依据（`canon_refs` / `conflicts_with` / `depends_on` / `exchanges_with` / `derives_legitimacy_from`）；
 - 审计规则注册表（CA 编号规则集）。
 
 本协议**不规定**：存储后端（git、数据库、纯文件皆可）、编辑界面、发布形式、AI 实现细节、权限模型。
@@ -122,6 +123,7 @@ ai_assisted: false
 | `canon_refs` | 必须 | id 列表 | 本条目语义依赖的已定档条目，可以为空列表 |
 | `conflicts_with` | 必须 | 列表 | 元素为 id 或对象（§4.1），可以为空列表 |
 | `exchanges_with` | 可选 | 列表 | 元素为 id 或对象（`{id, what?}`）；**流通**关系，不参与承重判定（§4.3） |
+| `derives_legitimacy_from` | 可选 | 列表 | 元素为 id 或对象（`{id, critical?, note?}`）；**名分依据**（§4.5）。与旧写法 `B legitimizes A` 同义（方向相反），判定完全一致；不进承重图，只查存在性 |
 | `depends_on` | 条件必填 | 对象列表 | 见 §5.3 schema；`load_bearing: true` 时必填 |
 | `layer` | 条件必填 | enum | 见 §5.2；`load_bearing: true` 时必填 |
 | `superseded_by` | 条件必填 | id 或 null | 见 §3.4；`archived` 必填，其他状态可省略或填 null |
@@ -131,7 +133,7 @@ ai_assisted: false
 
 ### 2.3 引用语法
 
-所有跨条目引用（`canon_refs` / `conflicts_with` / `exchanges_with[].id` / `depends_on[].id` / `superseded_by`）**必须**使用 `id`，**禁止**使用文件路径或标题。
+所有跨条目引用（`canon_refs` / `conflicts_with` / `exchanges_with[].id` / `derives_legitimacy_from[].id` / `depends_on[].id` / `superseded_by`）**必须**使用 `id`，**禁止**使用文件路径或标题。
 
 理由：`id` 不可变，文件可以移动、重命名、换目录而不炸任何引用。文件路径是存储细节，不是身份。
 
@@ -241,15 +243,33 @@ conflicts_with:
 `world.schema.json` 的 `x-relation-vocabulary` 里，两个引擎读同一份。本文档不再复述定义，
 以免出现第二份会过期的说法。
 
-**「物质依赖」的定义**（契约 `material-kinds`）：`depends_on` 的 `kind` 落在
-`resource` / `production` / `economy` / `fiscal` / `manpower` 五值时，依赖的是**要被人生产
-出来、会耗尽、能断供**的东西，受 §5 三条规则约束；`kind: legitimacy` 或 `x-` 实验值是
-**规范依赖**（依赖的是说法/名分，不是物资），三条规则豁免——豁免不等于无意义，只是这三条
-判不了它。
+**「物质依赖」的定义**（契约 `x-strict-vocabulary.depends_on.kind`，词表只有一份）：`depends_on`
+的 `kind` 落在 `resource` / `production` / `economy` / `fiscal` / `manpower` 五值时，依赖的是
+**要被人生产出来、会耗尽、能断供**的东西，受 §5 三条规则约束；`x-` 实验值是**规范依赖**
+（依赖的是说法/名分，不是物资），三条规则豁免——豁免不等于无意义，只是这三条判不了它。
 
-已知弱点（不掩饰）：`depends_on` 一个关系名同时装了「我靠它活着」与「我在说法上以它为依据」
-两种意思，只能靠 `kind` 这个副标签区分。彻底的做法是把二者拆成两个关系名；在那之前，
-`kind` 是唯一的分界，所以它在两种写法里都是必填的（§5.4）。
+v1.1 起，名分依据**不再借用 `depends_on` 的 `kind`**（§4.5）：它有了自己的关系名，
+所以「算不算承重」由**关系名**决定，`kind` 只回答「靠哪一类物资」。这条拆分消灭了旧写法里
+一个真实的合法绕过口——`kind` 曾经既是类别标签又是承重门禁，拼错或省略就能悄悄关掉整族判定。
+
+### 4.5 名分依据（`derives_legitimacy_from`，v1.1 新增）
+
+`A derives_legitimacy_from B` 表示「A 的说法以 B 为依据」——王权来自神授、产权来自惯例、
+命令来自授权。它与旧写法 `B legitimizes A` 是**同一句话**，方向相反：两个引擎都把前者
+翻译成后者再进图（classlint 的 `legitimizes` 图），因此：
+
+- **判定完全一致**：同一个闭环、同一个外部锚点、同一条报在哪一侧，两种写法逐条相同。
+  `tests/world-*` 与 `classlint/tests/legit-canonical-*` 夹具守着这条。
+- **不进任何承重图**：CA501 / CA502 / CA503 / CA504 都不看它。名分来源断了是叙事问题，
+  不是供应链断裂。
+- **只查存在性**（CA401）：目标条目必须存在；目标**状态**不参与判定（与 `conflicts_with`、
+  `exchanges_with` 同口径）——来源条目归档不等于这个说法失效，所以既不报 CA402 也不报 CA405。
+- **它不冒充生产关系**：classlint 的 PE001 / PE004 / PE005（抽取/供给）不看它；PE003
+  （合法性闭环）看它，这正是它存在的意义。
+
+**旧写法兼容**：`depends_on` + `kind: legitimacy` 仍然被接受，存储层按契约
+`x-relation-vocabulary.deprecations` 把它归一成这个关系名，**判定结果与迁移后逐条相同**；
+同时记一条 CA111 warning 提示作者改写。废弃不静默，也不让旧数据变成错误。
 
 ---
 
@@ -302,7 +322,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 | 字段 | 类型 | 约束 |
 |---|---|---|
 | `id` | id 引用 | 必填 |
-| `kind` | string | 必填。**六值已封版（v1.0）**：`resource` / `production` / `economy` / `fiscal` / `manpower` / `legitimacy`；封版集外仅允许 `x-` 前缀实验值（如 `x-faith`），作为协议的长期泄压阀，CA108 info 级收集证据 |
+| `kind` | string | 必填。**五值初始集**：`resource` / `production` / `economy` / `fiscal` / `manpower`（哪一类物资）；集外仅允许 `x-` 前缀实验值（如 `x-faith`），作为协议的长期泄压阀，CA108 info 级收集证据。v1.1 起 `legitimacy` **不再是 kind 值**——名分依据是关系名（§4.5） |
 | `critical` | bool | 必填；`true` = 断供即崩塌 |
 
 缺字段、多字段（非 `x-`）= CA107 error；`kind` 在初始集外且无 `x-` 前缀 = CA108 error，有 `x-` 前缀 = CA108 info 级提示（计入案例收集）。
@@ -374,6 +394,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 | CA108 | error/info | `depends_on[].kind` 在初始集外：无 `x-` 前缀 = error；有 `x-` 前缀 = info（案例收集） |
 | CA109 | error | 字段类型/格式非法：`canon_refs` 非列表或元素非字符串、`load_bearing`/`ai_assisted`/`critical` 非 bool、id 引用不符合 `^[a-z0-9-]+$` 格式（`world:id` 形式除外，归 CA401）等 |
 | CA110 | warning | 关系名拼写近失：规范形 `relations[].type` 与某个规范关系名的编辑距离 ≤1（如 `depends-onn`）。工具仍按**规范名**判定该边，本条只提示疑似拼写错误；真正的新关系名不报（自由档，见 §5.4） |
+| CA111 | warning | 旧写法迁移提示：某个关系名拆分前用「旧关系名 + 某个注解值」表达（见契约 `x-relation-vocabulary.deprecations`）。工具**已按新关系名判定**（结论与迁移后逐条相同），本条只提示作者改写，例如把 `depends_on` 里 `kind: legitimacy` 的那一条改写成关系名 `derives_legitimacy_from`。这是唯一允许的迁移提示；迁移完成后本条不再触发 |
 | CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复 |
 | CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明）。**只对已定档条目（trial/canon）发出**：draft 还没到做决定的时候，而 `--strict` 会把 warning 当失败 |
 | CA302 | error | `load_bearing: true` 但缺 `layer` 或 `depends_on` |
@@ -392,7 +413,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 
 **三张依赖图（同一份 frontmatter，三条规则读的子图各不相同，必须分别记）：**
 
-- **CA501 / CA503**（承重链条规则）：只读该条目**自身**的 `depends_on` 边。CA501 按 `kind` 区分「物质族 / 规范族」判层级方向；CA503 数**物质族**里 `critical: true` 的有几条。两者都以 `load_bearing: true` 为门禁。
+- **CA501 / CA503**（承重链条规则）：只读该条目**自身**的 `depends_on` 边。CA501 按 `kind` 判层级方向（落物资五类才判）；CA503 数物资类里 `critical: true` 的有几条。两者都以 `load_bearing: true` 为门禁。名分依据（`derives_legitimacy_from`）不在这张图里。
 - **CA502**（物质族成环）：读全库 `depends_on` 边的**物质族子图**（目标条目必须存在）。只看 `kind` 是否落在物质族；不看 `load_bearing`，也不看层。
 - **CA504**（影响闭包）：读全库 `depends_on` 边的**全图**并做传递闭包。都不看：任何 `depends_on` 边都算下游，连 `kind` 缺失的也算。
 

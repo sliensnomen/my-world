@@ -69,15 +69,15 @@ def _load_relation_vocabulary() -> dict[str, tuple[str, ...]]:
 
 
 def _load_material_kinds() -> frozenset[str]:
-    """从契约读「物质依赖」的类别表（x-relation-vocabulary.material-kinds）。
+    """从契约读 `depends_on` 的物资类别表（x-strict-vocabulary.depends_on.kind）。
 
-    契约是唯一真值（tests/test_store.py 钉着它与 canonlint.MATERIAL_KINDS 相等）。
+    契约是唯一真值（tests/test_store.py 钉着它与 canonlint.KIND_INITIAL_SET 相等）。
     读不到时退化为这份内置表——PE005 收紧消音条件必须依赖它，宁可退化也不静默放过。
     """
     fallback = {"resource", "production", "economy", "fiscal", "manpower"}
     try:
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-        kinds = schema["x-relation-vocabulary"]["material-kinds"]["kinds"]
+        kinds = schema["x-strict-vocabulary"]["depends_on.kind"]
         return frozenset(kinds) or frozenset(fallback)
     except (OSError, ValueError, KeyError, TypeError):
         return frozenset(fallback)
@@ -114,7 +114,7 @@ KNOWN_FIELDS = ({"id", "title", "type", "relations"}
                 | set(ALL_RELATION_NAMES) | set(CONTRACT_ATTESTED))
 REQUIRED_FIELDS = ["id", "title", "type"]
 
-# 物质依赖的类别表（契约 material-kinds）。PE005 用它判断「来源侧边算不算数」。
+# 物资类别表（契约 x-strict-vocabulary.depends_on.kind）。PE005 用它判断「来源侧边算不算数」。
 MATERIAL_KINDS: frozenset[str] = _load_material_kinds()
 
 # 兼容旧名（本文件与测试夹具用过 RELATIONS）——同一对象，避免悄悄分叉
@@ -366,6 +366,14 @@ class World:
         for e in index.values():
             for edge in e.edges[0]:
                 self.edges.append((e.id, edge))
+                # 「名分依据」与「正当化」是同一断言的两个方向：A derives_legitimacy_from B
+                # 就是 B legitimizes A。这里把反向边物化出来，PE003（找自我正当化的闭环）
+                # 因此不必关心作者把边写在哪一端——两个引擎对同一份数据必须同判。
+                # 目标必须真实存在：悬空的名分来源不能凭空充当锚点（悬空已由 CA401/CL105 报）。
+                if edge.rel == "derives_legitimacy_from" and edge.target in index:
+                    self.edges.append(
+                        (edge.target, Edge("legitimizes", e.id,
+                                           {"note": edge.attrs.get("note", "")})))
 
     def edges_of(self, rel: str) -> list[tuple[str, Edge]]:
         """按关系名取边。入参允许任意历史拼法（canon-ref / canon_refs / canon_refs），

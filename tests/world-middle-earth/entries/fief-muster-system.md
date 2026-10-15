@@ -9,9 +9,8 @@ load_bearing: true
 layer: military
 canon_refs: [gondor-realm]
 conflicts_with: []
-depends_on: 
+derives_legitimacy_from:
   - id: rohan-oath-2510
-    kind: legitimacy
     critical: true
 superseded_by: null
 ai_assisted: false

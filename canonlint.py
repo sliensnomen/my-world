@@ -57,10 +57,10 @@ LAYERS = ["geo", "resource", "production", "economy", "fiscal", "military",
           "political", "ideology"]
 LAYER_INDEX = {name: i for i, name in enumerate(LAYERS)}
 
-KIND_INITIAL_SET = {"resource", "production", "economy", "fiscal",
-                    "manpower", "legitimacy"}
-# kind 分族（§5.4）：物质族受 CA501/CA502 约束；legitimacy 与 x- 实验值属规范族，豁免
-MATERIAL_KINDS = {"resource", "production", "economy", "fiscal", "manpower"}
+# `depends_on` 的 kind 词表：这五类就是「哪一类物资」（契约 x-strict-vocabulary.depends_on.kind）。
+# 「算不算承重」不再由 kind 决定——那是关系名的事：物质承重是 `depends_on`，
+# 名分依据是 `derives_legitimacy_from`（拆分前写作 depends_on + kind: legitimacy）。
+KIND_INITIAL_SET = {"resource", "production", "economy", "fiscal", "manpower"}
 CA503_LAYERS = {"economy", "fiscal", "military", "political"}  # ideology 豁免
 CA505_TRIGGER_LAYERS = {"military", "political"}
 
@@ -192,6 +192,11 @@ def check_structure(e: Entry, findings: list[Finding],
                                     f"关系名 `{raw_name}` 与规范名 `{near}` 只差一个字符，"
                                     f"疑似拼写错误，已按 `{near}` 判定；"
                                     f"确是新关系请改用其它名字或加 `x-` 前缀"))
+    # CA111: 拆分前的写法（depends_on + kind=legitimacy）。存储层已经把它归一成关系名
+    # derives_legitimacy_from 并按那条关系判定，这里只提示作者把写法改过来——废弃如果
+    # 完全静默，就等于留了一条只有工具知道的新关系名。
+    for err in e.relation_migrations:
+        findings.append(Finding(err.rule, "warning", rel, err.msg))
 
 
 def check_content(e: Entry, findings: list[Finding]) -> None:
@@ -263,9 +268,13 @@ def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
         for ref in e.edges_of("conflicts_with"):
             check_target(ref.target, "conflicts_with")
         # 交换只是流通关系，目标存在性要查（悬空引用是坏的），但**不**查状态：
-        # 交换对象降级不必处置，交换本身也不构成承重（见契约 material-kinds）。
+        # 交换对象降级不必处置，交换本身也不构成承重（见契约 x-relation-vocabulary）。
         for ref in e.edges_of("exchanges_with"):
             check_target(ref.target, "exchanges_with")
+        # 名分依据只查存在性，且**不**查状态：依据来源是草稿/降级不构成违规，
+        # 「名分断了」与「物资断了」不是一回事（CA402/CA404 都针对生存依赖）。
+        for ref in e.edges_of("derives_legitimacy_from"):
+            check_target(ref.target, "derives_legitimacy_from")
 
         # superseded_by 的目标存在性（CA401）
         sb = e.meta.get("superseded_by")
@@ -310,14 +319,19 @@ def check_refs(index: dict[str, Entry], findings: list[Finding]) -> None:
 
 
 def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
-    """CA5xx 政治经济学链条。物质族边受 CA501/CA502 约束，规范族豁免。"""
+    """CA5xx 政治经济学链条。判据只看**关系名**与 kind 是不是已知物资类别。
+
+    拆分之后 `depends_on` 就是物质承重，所以「算不算承重」不再挂在 kind 副标签上：
+    `kind` 只回答「依赖的是哪一类物资」。x- 实验值仍豁免（契约把它定义成泄压阀，
+    能存、只记 info、不进链条判定）。
+    """
     graph: dict[str, list[str]] = {}  # 仅物质族边（CA502 用）
     for e in index.values():
         if e.parse_error or not e.id:
             continue
         deps = e.edges_of("depends_on")
         graph[e.id] = [d.target for d in deps
-                       if d.target in index and d.attrs.get("kind") in MATERIAL_KINDS]
+                       if d.target in index and d.attrs.get("kind") in KIND_INITIAL_SET]
 
         if e.meta.get("load_bearing") is not True:
             continue
@@ -325,8 +339,8 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
         if layer not in LAYER_INDEX:
             continue  # CA102/CA302 已报
         for d in deps:
-            if d.attrs.get("kind") not in MATERIAL_KINDS:
-                continue  # 规范族边豁免方向检查（§5.5）
+            if d.attrs.get("kind") not in KIND_INITIAL_SET:
+                continue  # 未知/实验类别不参与方向检查（§5.5）
             target = index.get(d.target)
             if target is None:
                 continue  # CA401 已报
@@ -337,7 +351,8 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
                                         f"高于本条目 {layer}（序号 {LAYER_INDEX[layer]}）"))
         # CA503: economy/fiscal/military/political 层须有物质族 critical 依赖；ideology 豁免
         if layer in CA503_LAYERS and not any(
-                d.attrs.get("critical") and d.attrs.get("kind") in MATERIAL_KINDS for d in deps):
+                d.attrs.get("critical") and d.attrs.get("kind") in KIND_INITIAL_SET
+                for d in deps):
             findings.append(Finding("CA503", "warning", e.rel,
                                     f"{layer} 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）"))
 

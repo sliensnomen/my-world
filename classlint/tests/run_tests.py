@@ -31,6 +31,11 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("PE003", "error", "codex/prophet.md"),    # 自环
     ],
     "pe003-ok": [],  # king↔pope 互锁但有 tradition 外部锚点，合法
+    # 同一结构的**规范形**写法（derive 方向反过来）：名分依据是关系名，不再是 kind 值
+    "legit-canonical-ok": [],
+    "legit-canonical-bad": [
+        ("PE003", "error", "codex/king.md"),  # 无锚闭环，报在最小 id 侧
+    ],
     "clean": [],
     # 真实作品 dogfood：结构自洽的世界应当零误报（真阴性回归锁）
     "world-westeros": [],
@@ -165,6 +170,81 @@ def check_disabled_rules_change_exit_code() -> int:
     return failures
 
 
+def _legit_world(td: str, king: str, pope: str, tradition: str = "") -> Path:
+    world = Path(td)
+    (world / "codex").mkdir(parents=True, exist_ok=True)
+    (world / "classlint.yaml").write_text("name: legit\nclasslint: \"0.1\"\n", encoding="utf-8")
+    for entry_id, body in (("king", king), ("pope", pope), ("tradition", tradition)):
+        if not body:
+            continue
+        (world / "codex" / f"{entry_id}.md").write_text(
+            f"---\nid: {entry_id}\ntitle: {entry_id}\ntype: character\n{body}---\n正文。\n",
+            encoding="utf-8")
+    return world
+
+
+def check_legitimacy_forms_are_indistinguishable() -> int:
+    """「名分依据」的两种写法必须得到同一份判定（拆分 `depends_on` 的核心承诺）。
+
+    新关系名 `A derives_legitimacy_from B` 与旧写法 `B legitimizes A` 是**同一句话**：
+    翻译在进图时完成，方向反过来，于是 PE003 的闭环、外部锚点、报在哪一侧全都一致。
+    这里同时钉住方向（写反了要么闭环消失、要么凭空多一个闭环）与「名分不冒充生产关系」
+    （不触发 PE001/PE004/PE005——它既不是抽取，也不是供给）。
+    """
+    failures = 0
+    # 无锚闭环：两种写法都必须报 PE003，并且报在同一个条目上
+    with tempfile.TemporaryDirectory() as td:
+        legacy = _legit_world(td, "legitimizes: [pope]\n", "legitimizes: [king]\n")
+        _, _, findings_legacy, _ = classlint.run_checks(legacy)
+    with tempfile.TemporaryDirectory() as td:
+        canonical = _legit_world(
+            td,
+            "relations:\n  - {type: derives_legitimacy_from, target: pope}\n",
+            "relations:\n  - {type: derives_legitimacy_from, target: king}\n")
+        _, _, findings_canonical, _ = classlint.run_checks(canonical)
+    key = lambda fs: sorted((f.rule, f.level, f.entry) for f in fs)
+    if key(findings_canonical) != key(findings_legacy):
+        print(f"FAIL 名分依据两种写法判定不一致：\n"
+              f"  旧写法 legitimizes：{key(findings_legacy)}\n"
+              f"  新关系名：{key(findings_canonical)}")
+        failures += 1
+    if not any(f.rule == "PE003" for f in findings_canonical):
+        print("FAIL 新关系名的无锚闭环没有报 PE003（方向写反会让闭环消失）")
+        failures += 1
+    # 有外部锚点：两种写法都必须全绿
+    with tempfile.TemporaryDirectory() as td:
+        canonical_ok = _legit_world(
+            td,
+            "relations:\n  - {type: derives_legitimacy_from, target: pope}\n",
+            "relations:\n  - {type: derives_legitimacy_from, target: king}\n"
+            "  - {type: derives_legitimacy_from, target: tradition}\n",
+            tradition="legitimizes: [king]\n")
+        _, _, findings_ok, _ = classlint.run_checks(canonical_ok)
+    if any(f.rule == "PE003" for f in findings_ok):
+        print(f"FAIL 有外部锚点的名分闭环被误报：{key(findings_ok)}")
+        failures += 1
+    # 悬空的名分来源不能凭空当锚点：king↔pope 闭环 + king 另写一条指向不存在的传统，
+    # 那条悬空边既不能救活闭环（当锚点），也不能把闭环变成别的形状。
+    with tempfile.TemporaryDirectory() as td:
+        ghost = _legit_world(
+            td,
+            "relations:\n  - {type: derives_legitimacy_from, target: pope}\n"
+            "  - {type: derives_legitimacy_from, target: ghost-tradition}\n",
+            "relations:\n  - {type: derives_legitimacy_from, target: king}\n")
+        _, _, findings_ghost, _ = classlint.run_checks(ghost)
+    if not any(f.rule == "PE003" for f in findings_ghost):
+        print("FAIL 悬空的名分来源被当成了外部锚点（闭环应当照报 PE003）")
+        failures += 1
+    # 名分不是生产关系：不触发抽取/供给三规则
+    spurious = sorted({f.rule for f in findings_canonical} & {"PE001", "PE004", "PE005"})
+    if spurious:
+        print(f"FAIL 名分依据被当成了生产关系：{spurious}")
+        failures += 1
+    if not failures:
+        print("PASS 名分依据的两种写法同判（方向、锚点、报在哪一侧都一致）")
+    return failures
+
+
 def main() -> int:
     failures = 0
     worlds = sorted(p.name for p in TESTS.iterdir()
@@ -191,6 +271,7 @@ def main() -> int:
     failures += check_cl100_intent()
     failures += check_pe005_requires_material_source()
     failures += check_disabled_rules_change_exit_code()
+    failures += check_legitimacy_forms_are_indistinguishable()
     extra = set(EXPECTED) - set(worlds)
     for name in sorted(extra):
         print(f"FAIL {name}: EXPECTED 登记了期望但夹具目录不存在")
