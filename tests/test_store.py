@@ -720,6 +720,139 @@ def check_both_engines_share_one_parser():
             f"{engine.canonical_rel(v)!r} vs {store.canonical_relation_name(v)!r}")
 
 
+def check_both_engines_build_the_same_graph():
+    """同一份 frontmatter，两个引擎必须建出**同一张边图**、报出**同一批形状问题**。
+
+    这是 CONTRIBUTING §7「同一份数据同一份判定」的机器版本：读卡合并之后，剩下的分歧只
+    允许有一处，而且必须是契约 `x-stricter-than-contract` 第一条自己登记的那处——
+    `depends_on` 的项 canonlint 要求对象式且 `kind`/`critical` 给全（CA107），classlint
+    的协议 §2.2 把二者降为可选。例外**只许长这样**：多出来的报错必须是 `depends_on[i]`
+    的「必须是对象」或「缺字段 kind/critical」，多出来的边必须正好是那几个目标。
+
+    以前这条缝两边各有一份建边代码（约 90 行），于是契约声明合法的 `stance`/`what` 在
+    classlint 里变成硬错误、整条边消失，`depends_on + kind: legitimacy` 的搬家只在一边
+    执行。这份表就是这么攒出来的：每一种拼法、每一种坏形状都两边跑一遍。
+    """
+    import importlib.util  # noqa: PLC0415
+    from collections import Counter  # noqa: PLC0415
+
+    spec = importlib.util.spec_from_file_location(
+        "classlint_engine_for_graph_check", ROOT / "classlint" / "classlint.py")
+    engine = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = engine
+    spec.loader.exec_module(engine)
+
+    def build(meta, cls):
+        raw = store.model.RawEntry(Path("synthetic.md"), "synthetic.md", meta, BODY, None)
+        entry = raw.as_entry(cls)
+        # 取值可能是 list（例如坏掉的 stance）：repr 之后才能进 Counter
+        edges = [(e.type, e.target, tuple(sorted((k, repr(v)) for k, v in e.attrs.items())))
+                 for e in entry.relations]
+        return edges, Counter(e.msg for e in entry.relation_shape_errors)
+
+    # 契约登记的那处口径差：允许 canonlint 多报的，只有这些词
+    # 措辞在两种写法里不同（具名字段「缺字段 kind」/ 规范形「缺必填字段 kind（§5.4）」），
+    # 所以只钉「说的是 depends_on + 这两件事之一」。
+    DECLARED = ("必须是对象", "`kind`", "`critical`")
+
+    def annotation_free_targets(meta):
+        """这份 frontmatter 里「canonlint 建不出边、classlint 建得出」的 depends_on 目标。"""
+        raw = meta.get("depends_on")
+        out = set()
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str):
+                    out.add(item)
+                elif isinstance(item, dict) and isinstance(item.get("id"), str) \
+                        and not {"kind", "critical"} <= set(item):
+                    out.add(item["id"])
+        for item in meta.get("relations") or []:
+            if (isinstance(item, dict)
+                    and store.canonical_relation_name(str(item.get("type") or "")) == "depends_on"
+                    and isinstance(item.get("target"), str)
+                    and not {"kind", "critical"} <= set(item)):
+                out.add(item["target"])
+        return out
+
+    shapes = {
+        "契约声明的注解（stance/what/note）":
+            {"conflicts_with": [{"id": "a-node", "stance": "heretic"}],
+             "exchanges_with": [{"id": "a-node", "what": "谷物"}],
+             "extracts": [{"id": "a-node", "what": "利息"}]},
+        "三种老字段的简式字符串": {"canon_refs": ["a-node"],
+                                  "conflicts_with": ["a-node"],
+                                  "depends_on": [{"id": "a-node", "kind": "fiscal",
+                                                  "critical": True}]},
+        "契约自己声明的每一种拼法":
+            {"canon-ref": ["a-node"], "conflicts-with": ["a-node"],
+             "exchanges-with": [{"id": "a-node", "what": "谷物"}]},
+        "规范形的每一种关系":
+            {"relations": [{"type": "canon_refs", "target": "a-node"},
+                           {"type": "conflicts_with", "target": "a-node",
+                            "stance": "official"},
+                           {"type": "exchanges_with", "target": "a-node", "what": "谷物"},
+                           {"type": "depends_on", "target": "a-node", "kind": "fiscal",
+                            "critical": True, "note": "注解"}]},
+        "两处口径差：缺 kind、裸字符串":
+            {"depends_on": [{"id": "a-node", "critical": True}, "b-node"]},
+        "口径差在规范形里":
+            {"relations": [{"type": "depends_on", "target": "a-node"}]},
+        "口径差 + 另一条边（边集差只许是那一条）":
+            {"depends_on": [{"id": "a-node", "critical": False}],
+             "owes": ["b-node"]},
+        "旧写法的搬家（kind: legitimacy）":
+            {"depends_on": [{"id": "a-node", "kind": "legitimacy", "critical": True}]},
+        "搬家的规范形写法":
+            {"relations": [{"type": "depends_on", "target": "a-node",
+                            "kind": "legitimacy", "critical": True}]},
+        "坏 id 的对象式": {"owns": [{"id": "Bad Id"}]},
+        "未声明的注解（具名字段与规范形）":
+            {"controls": [{"id": "a-node", "zzz": 1}],
+             "relations": [{"type": "coerces", "target": "a-node", "zzz": 1}]},
+        "取值坏掉（stance 写成列表）":
+            {"conflicts_with": [{"id": "a-node", "stance": ["official"]}]},
+        "未知关系名原样保留":
+            {"relations": [{"type": "zzz-not-a-relation", "target": "a-node"}]},
+        "缺 type / 缺 target":
+            {"relations": [{"target": "a-node"}, {"type": "owes"}]},
+        "重复边":
+            {"relations": [{"type": "owes", "target": "a-node"},
+                           {"type": "owes", "target": "a-node"}]},
+        "坏容器": {"depends_on": "a-node", "canon_refs": {"a": 1}},
+        "x- 泄压阀两边都放行":
+            {"controls": [{"id": "a-node", "x-note": "扩展"}],
+             "relations": [{"type": "coerces", "target": "a-node", "x-note": "扩展"}]},
+    }
+
+    for label, raw_meta in shapes.items():
+        meta = {k: v for k, v in raw_meta.items() if v is not None}
+        edges_c, msgs_c = build(meta, store.model.Entry)
+        edges_l, msgs_l = build(meta, engine.Entry)
+
+        extra_msgs = msgs_c - msgs_l
+        missing_msgs = msgs_l - msgs_c
+        assert not missing_msgs, (
+            f"{label}：classlint 报了 canonlint 不报的形状问题——"
+            f"这不在契约登记的口径差里：{dict(missing_msgs)}")
+        for msg, count in extra_msgs.items():
+            assert "depends_on" in msg and any(d in msg for d in DECLARED), (
+                f"{label}：canonlint 多报了一条不在契约登记口径差里的问题（{count} 条）：{msg!r}")
+
+        allowed = annotation_free_targets(meta)
+        if not allowed:
+            assert edges_c == edges_l, (
+                f"{label}：这份 frontmatter 不涉及 depends_on 口径差，两个引擎的边图必须"
+                f"逐条（含顺序）相同\n  canonlint={edges_c}\n  classlint={edges_l}")
+            continue
+        only_c = Counter(edges_c) - Counter(edges_l)
+        only_l = Counter(edges_l) - Counter(edges_c)
+        assert not only_c, f"{label}：canonlint 建了 classlint 建不出的边：{dict(only_c)}"
+        for (type_, target, _attrs), count in only_l.items():
+            assert type_ == "depends_on" and target in allowed, (
+                f"{label}：classlint 多建了不在口径差里的边（{count} 条）："
+                f"{type_} → {target}（口径差目标：{sorted(allowed)}）")
+
+
 CHECKS = (
     ("规范形与旧写法等价（三种关系）", check_canonical_equals_legacy),
     ("规范形的形状错误会出现在报告里", check_shape_errors_reach_the_report),
@@ -740,6 +873,7 @@ CHECKS = (
     ("关系写法不可区分（规范形/旧写法/拼法变体同判）", check_relation_forms_are_indistinguishable),
     ("superseded_by: null 不是承接者（CA405 不能被关掉）", check_superseded_by_null_is_not_a_successor),
     ("两个引擎共用同一份读卡代码（store/parse.py）", check_both_engines_share_one_parser),
+    ("两个引擎建同一张边图（口径差只许契约登记的那一处）", check_both_engines_build_the_same_graph),
 )
 
 

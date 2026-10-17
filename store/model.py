@@ -121,6 +121,8 @@ for _field in LEGACY_RELATION_FIELDS:
 
 # 具名字段 → (规范名, 允许的注解键)。注解键从契约 attrs 推；depends_on 之所以多一个
 # `kind`，是因为契约把它同时列进 depends_on.kind 词表（CA108），不是本层在讲理论。
+# （`depends_on` 今天不走 `_parse_named_relation`，但保留这条 spec 是为了让
+# 「契约 aliases 与代码表一致」这把锁能拿它比对。）
 _ANNOTATION_KEYS: dict[str, tuple[str, ...]] = {
     key: tuple(attrs) for key, attrs in NAMED_RELATION_ATTRS.items()}
 _RELATION_FIELD_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {}
@@ -129,10 +131,10 @@ for _field in LEGACY_RELATION_FIELDS:
     _keys = _ANNOTATION_KEYS.get(_name, ())
     if _name == "depends_on":
         _keys = _keys + ("kind",)
-    _RELATION_FIELD_SPECS[_field] = (_name, _keys)
+    _RELATION_FIELD_SPECS[_field] = (_name, tuple(dict.fromkeys(_keys)))
 
 # 具名字段的对象项允许的键（`id` + 该关系的注解键；x- 前缀永远允许）
-_NAMED_RELATION_ITEM_KEYS: tuple[str, ...] = ("id", "kind")
+_NAMED_RELATION_ITEM_KEYS: tuple[str, ...] = ("id",)
 
 # ---- 结构 ----------------------------------------------------------------
 
@@ -142,6 +144,7 @@ class Dep:
     id: str
     kind: str
     critical: bool
+    note: str | None = None  # 契约 `x-relation-source.aliases.depends_on.attrs` 里有它
 
 
 @dataclass
@@ -218,6 +221,51 @@ def _parse_named_relation(raw, field: str, name: str,
     return edges, errs
 
 
+def _parse_contract_dep_items(raw) -> tuple[list[Relation], list[SchemaError]]:
+    """**契约级**的 `depends_on` 项解析：只要求 `id`，`kind`/`critical` 可选。
+
+    契约 `x-relation-source.aliases.depends_on.item` 写的是「id 字符串 或
+    {id, kind?, critical?}」，`x-stricter-than-contract` 记着 canonlint 额外要求
+    对象式且两个注解给全（CA107），classlint 的协议 §2.2 明确把二者降为可选。
+    这是**契约自己登记的差异**，所以两个引擎各自用声明的口径，但建边只有这一份代码
+    （开关见 `Entry.depends_on_requires_annotations`）。
+    """
+    if raw is None:
+        return [], []
+    if not isinstance(raw, list):
+        return [], [SchemaError("CA109", "depends_on 必须是列表")]
+    edges: list[Relation] = []
+    errs: list[SchemaError] = []
+    for i, item in enumerate(raw):
+        where = f"depends_on[{i}]"
+        if isinstance(item, str):
+            # 简式字符串一律建边：id 语法与 world:id 由判定层报
+            edges.append(Relation("depends_on", item, {}))
+            continue
+        if not isinstance(item, dict):
+            errs.append(SchemaError("CA107", f"{where} 必须是 id 字符串或对象"))
+            continue
+        extra = [k for k in item if k not in ("id", "kind", "critical", "note")
+                 and not str(k).startswith("x-")]
+        missing = [k for k in ("id",) if k not in item]
+        for m in missing:
+            errs.append(SchemaError("CA107", f"{where} 缺字段 `{m}`"))
+        for x in extra:
+            errs.append(SchemaError("CA107", f"{where} 含未定义字段 `{x}`（扩展须 x- 前缀）"))
+        if missing or extra:
+            continue
+        if not isinstance(item["id"], str) or not ID_RE.match(item["id"]):
+            errs.append(SchemaError("CA109", f"{where}.id={item['id']!r} 不符合 id 格式 ^[a-z0-9-]+$"))
+            continue
+        for k, want in (("kind", str), ("critical", bool), ("note", str)):
+            if k in item and not isinstance(item[k], want):
+                errs.append(SchemaError("CA109", f"{where}.{k} 必须是"
+                                        + (" bool" if want is bool else "字符串")))
+        edges.append(Relation("depends_on", item["id"],
+                              {k: v for k, v in item.items() if k != "id"}))
+    return edges, errs
+
+
 # 拆分前的旧写法（清单在契约 `x-relation-vocabulary.deprecations`）：某个关系的某个注解值，
 # 后来成了一个独立的关系名。迁移做在**存储层**，所以两个引擎看到的是同一条边
 # （CONTRIBUTING §7：同一份数据必须得到同一份判定）。
@@ -248,6 +296,15 @@ class Entry(RawEntry):
     """条目 + 存储层的字段视图。文件层字段（path/rel/meta/body/parse_error/id）继承自
     `RawEntry`——两个引擎的条目对象从同一个文件层结果长出来。"""
 
+    # depends_on 项的**口径**。契约的 `x-stricter-than-contract` 第一条自己登记了这处差异：
+    # 「本契约只要求 id；canonlint 额外要求 kind 与 critical 一并给全（CA107），classlint
+    # 只要求 id」（classlint 侧写在自己的协议 §2.2：八层链与 kind 分族是 WGP 治理层的建模
+    # 工具，审计只关心边的存在性与方向）。既然是**声明的**口径而不是漂移，就把它做成一个
+    # 开关：两条口径各有一个名字，但建边只有这一份代码。
+    # 注意：这里**不能**写类型标注——`@dataclass` 会把带标注的类属性变成字段，字段默认值
+    # 会在 `__init__` 里覆盖子类的类属性，开关就永远关不掉。
+    depends_on_requires_annotations = True
+
     @property
     def status(self) -> str | None:
         v = self.meta.get("status")
@@ -277,7 +334,7 @@ class Entry(RawEntry):
             if not isinstance(item, dict):
                 errs.append(SchemaError("CA107", f"{where} 必须是对象"))
                 continue
-            extra = [k for k in item if k not in ("id", "kind", "critical")
+            extra = [k for k in item if k not in ("id", "kind", "critical", "note")
                      and not str(k).startswith("x-")]
             missing = [k for k in ("id", "kind", "critical") if k not in item]
             for m in missing:
@@ -295,12 +352,24 @@ class Entry(RawEntry):
             if not isinstance(item["kind"], str):
                 errs.append(SchemaError("CA109", f"{where}.kind 必须是字符串"))
                 continue
-            deps.append(Dep(item["id"], item["kind"], item["critical"]))
+            # `note` 是仅供人读的注解：取值不合格式也要报，但**照旧建边**（形状坏掉时
+            # 不吞边，是本模块的既定分工；没有别的规则在看 note 的取值）。
+            if "note" in item and not isinstance(item["note"], str):
+                errs.append(SchemaError("CA109", f"{where}.note 必须是字符串"))
+            deps.append(Dep(item["id"], item["kind"], item["critical"], item.get("note")))
         return deps, errs
 
     @cached_property
     def conflicts(self) -> tuple[list[ConflictRef], list[SchemaError]]:
-        """解析 conflicts_with（§4.1：简式字符串或带 stance 的对象），结果缓存。"""
+        """解析 conflicts_with（§4.1：简式字符串或带 stance 的对象），结果缓存。
+
+        契约 `x-relation-source.aliases.conflicts_with` 只给了 `stance` 一个注解，而
+        `$defs/legacyItem` 是 `additionalProperties: false`——所以这里要检查未声明的属性
+        （以前对象式写什么键都收下，写错的注解既不报错也不进边）。但**取值**不管：
+        `stance` 写成列表也必须照旧建边，由判定层的 CA102 报「取值非法」——这是本模块
+        的既定分工（形状坏掉时照旧建边，坏值留给判定层）。存储层抢着报会把 CA102 变成
+        CA109，等于把一条判定规则悄悄搬走。
+        """
         raw = self.meta.get("conflicts_with")
         if raw is None:
             return [], []
@@ -308,12 +377,18 @@ class Entry(RawEntry):
             return [], [SchemaError("CA109", "conflicts_with 必须是列表")]
         refs, errs = [], []
         for i, item in enumerate(raw):
+            where = f"conflicts_with[{i}]"
             if isinstance(item, str):
                 refs.append(ConflictRef(item, None))
-            elif isinstance(item, dict) and isinstance(item.get("id"), str):
-                refs.append(ConflictRef(item["id"], item.get("stance")))
-            else:
-                errs.append(SchemaError("CA109", f"conflicts_with[{i}] 必须是 id 字符串或含 id 的对象"))
+                continue
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                errs.append(SchemaError("CA109", f"{where} 必须是 id 字符串或含 id 的对象"))
+                continue
+            extra = [k for k in item if k not in ("id", "stance")
+                     and not str(k).startswith("x-")]
+            for x in extra:
+                errs.append(SchemaError("CA107", f"{where} 含未定义字段 `{x}`（扩展须 x- 前缀）"))
+            refs.append(ConflictRef(item["id"], item.get("stance")))
         return refs, errs
 
     @cached_property
@@ -379,7 +454,7 @@ class Entry(RawEntry):
             if bad:
                 continue
             canonical_type = canonical_relation_name(item["type"])
-            if canonical_type == "depends_on":
+            if canonical_type == "depends_on" and self.depends_on_requires_annotations:
                 # §5.4：depends_on 对象的 kind / critical **必填**（缺 = CA107）。
                 # 这条以前只对旧写法生效，于是规范形省掉 kind 就能让 CA501（层级方向）
                 # 整条静默跳过——同一句话两种写法两个结果（评审 F2）。
@@ -401,6 +476,26 @@ class Entry(RawEntry):
         return out, errs
 
     @cached_property
+    def contract_dep_relations(self) -> tuple[list[Relation], list[SchemaError]]:
+        """**契约级**的 depends_on 边：只有 `id` 必填（classlint 的口径）。
+
+        与 `deps` 走的是同一个字段、同一份契约，区别只在口径：`deps` 是 canonlint 的严格
+        视图（kind/critical 必填，缺一个整条不进图），这里是契约本身写下的形状。判定侧要
+        哪一份由 `depends_on_requires_annotations` 决定。
+
+        **搬家在这里也要做**：`kind: legitimacy` 是拆分前的写法，要变成关系名
+        `derives_legitimacy_from`。两条口径各建一次边，搬迁就得分两处执行——漏一处就是
+        评审 blocker 3 的复现（同一份数据两个引擎判得不一样）。新锁
+        `check_both_engines_build_the_same_graph` 钉住了这一点。
+        """
+        edges, errs = _parse_contract_dep_items(self.meta.get("depends_on"))
+        out: list[Relation] = []
+        for edge in edges:
+            name, attrs = migrate_legacy_kind(edge.type, edge.attrs)
+            out.append(Relation(name, edge.target, attrs))
+        return out, errs
+
+    @cached_property
     def named_relations(self) -> tuple[list[Relation], list[SchemaError]]:
         """契约 aliases 的九个具名字段 → 边，`type` 一定是规范名。
 
@@ -409,10 +504,15 @@ class Entry(RawEntry):
         记在 `named_relation_errors` 里——接线不许顺手把错误吞掉。
         """
         out: list[Relation] = []
-        for dep in self.deps[0]:
-            name, attrs = migrate_legacy_kind(
-                "depends_on", {"kind": dep.kind, "critical": dep.critical})
-            out.append(Relation(name, dep.id, attrs))
+        if self.depends_on_requires_annotations:
+            for dep in self.deps[0]:
+                attrs = {"kind": dep.kind, "critical": dep.critical}
+                if dep.note is not None:
+                    attrs["note"] = dep.note
+                name, attrs = migrate_legacy_kind("depends_on", attrs)
+                out.append(Relation(name, dep.id, attrs))
+        else:
+            out.extend(self.contract_dep_relations[0])
         for ref in self.conflicts[0]:
             attrs = {} if ref.stance is None else {"stance": ref.stance}
             out.append(Relation("conflicts_with", ref.id, attrs))
@@ -543,6 +643,24 @@ class Entry(RawEntry):
     def relation_errors(self) -> list[SchemaError]:
         """规范形 `relations` 的形状问题（旧字段的问题仍在 `deps`/`conflicts`/`canon_ref_ids` 里）。"""
         return self.canonical_relations[1]
+
+    @cached_property
+    def relation_shape_errors(self) -> list[SchemaError]:
+        """**全部**关系形状问题，顺序固定：三个老字段 → 其余具名字段 → 规范形。
+
+        两个引擎都从这里取。在此之前 classlint 自己建边、自己校验，于是同一份
+        frontmatter 在一边是边、在另一边是错：契约声明合法的 `conflicts_with: [{id, stance}]`
+        与 `exchanges_with: [{id, what}]` 被它当成「未定义的属性」，整条边消失
+        （评审 blocker：契约声明合法的写法在一边变成硬错误）。
+        """
+        out: list[SchemaError] = []
+        out.extend(self.deps[1] if self.depends_on_requires_annotations
+                   else self.contract_dep_relations[1])
+        out.extend(self.conflicts[1])
+        out.extend(self.canon_ref_ids[1])
+        out.extend(self.named_relation_errors)
+        out.extend(self.relation_errors)
+        return out
 
     @property
     def uses_canonical_relations(self) -> bool:

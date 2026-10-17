@@ -287,12 +287,56 @@ def check_non_world_directory_is_a_usage_error() -> list[str]:
             problems.append("它还是把文档当条目审了（应当直接说指错目录）")
         if "不像一个世界" not in err:
             problems.append(f"stderr 没说清为什么（实际：{err.strip()!r}）")
-    # 反面：根目录里真有一篇条目卡的扁平世界照旧能审
-    tmp2, flat = _temp_world("canonlint-flat-", {"solo": _card("solo")})
+    # 反面：根目录里真有一篇条目卡的扁平世界照旧能审。
+    # （手工铺：`_temp_world` 会先建出 `entries/`，拿它测扁平世界测的不是扁平。）
+    tmp2 = tempfile.TemporaryDirectory(prefix="canonlint-flat-")
     with tmp2:
+        flat = Path(tmp2.name)
+        (flat / "solo.md").write_text(_card("solo"), encoding="utf-8")
         code, out, _ = _judge(flat)
         if code != 0:
             problems.append(f"扁平世界（根目录直接放条目）反而被拒了：exit {code}")
+    return problems
+
+
+def check_root_cards_survive_an_entries_dir() -> list[str]:
+    """有 `entries/` 时，根目录级的卡片照样要进审计（评审 blocker：整批静默蒸发）。
+
+    判据用「这张卡有没有留下痕迹」，不用退出码——一张卡被丢掉时退出码仍是 0，
+    所以让它带一条必然的发现（悬空引用），蒸发才看得见。
+    """
+    problems = []
+    tmp = tempfile.TemporaryDirectory(prefix="canonlint-rootcard-")
+    with tmp:
+        root = Path(tmp.name)
+        (root / "entries").mkdir()
+        (root / "entries" / "resident.md").write_text(_card("resident"), encoding="utf-8")
+        # 根目录级的卡片，带一条悬空引用：它收没被收进来，由这条 CA401 证明
+        (root / "gray-harbor.md").write_text(
+            _card("gray-harbor", "canon_refs: [ghost-nowhere]\n"), encoding="utf-8")
+        # 散文文档不是卡片，不许被当成坏条目
+        (root / "README.md").write_text("# 这是世界说明\n\n没有 frontmatter。\n",
+                                        encoding="utf-8")
+        code, out, _ = _judge(root)
+        if "gray-harbor.md" not in out:
+            problems.append(
+                f"有 entries/ 时根目录的卡片整个消失了（退出码 {code}）：{out.strip()!r}")
+        if "ghost-nowhere" not in out:
+            problems.append("根目录卡片上的悬空引用没被报出来")
+        if "README.md" in out:
+            problems.append(f"根目录的散文文档被当成条目审了：{out.strip()!r}")
+    # 坏掉的根级卡片必须被看见——不能拿「解析成功」当收不收的判据
+    tmp2 = tempfile.TemporaryDirectory(prefix="canonlint-rootcardbad-")
+    with tmp2:
+        root = Path(tmp2.name)
+        (root / "entries").mkdir()
+        (root / "entries" / "resident.md").write_text(_card("resident"), encoding="utf-8")
+        (root / "broken.md").write_text("---\ntitle: 没有 id\n---\n\n正文\n", encoding="utf-8")
+        code, out, _ = _judge(root)
+        if "broken.md" not in out:
+            problems.append(f"frontmatter 坏的根级卡片被静默跳过了：{out.strip()!r}")
+        if code == 0:
+            problems.append("根级坏卡片在，退出码不该是 0")
     return problems
 
 
@@ -672,6 +716,7 @@ def main() -> int:
         ("降级承接对不算重复（CA201 豁免）", check_supersede_pairs_are_not_duplicates),
     ("被遮蔽条目的引用照样检查", check_shadowed_entries_still_get_their_refs_checked),
     ("指错目录给用法错误，而不是硬审", check_non_world_directory_is_a_usage_error),
+    ("有 entries/ 时根目录的卡片不蒸发", check_root_cards_survive_an_entries_dir),
     ("每一种关系的悬空引用都报 CA401", check_every_relation_reference_is_checked),
         ("--dup-threshold 越界是用法错误（不退化成静默关规则）", check_dup_threshold_range_is_usage_error),
         ("--impact 从不把主体列进自己的下游", check_impact_never_lists_the_subject),

@@ -15,6 +15,12 @@
 加行为锁（同一段字节喂给两个引擎，读出来必须一模一样）钉着它。
 新增关系别名、改 id 语法、改 frontmatter 规则，都只改这一个文件。
 
+**边层也只有一份**：`Entry.relations` / `relation_shape_errors` 在 `store/model.py`，
+`classlint` 只把形状问题映射成自己的编号。唯一的差异开关是
+`Entry.depends_on_requires_annotations`（契约 `x-stricter-than-contract` 第一条登记的口径：
+canonlint 要求 `depends_on` 对象式且 `kind`/`critical` 给全，classlint 按自己的协议降为可选），
+由 `tests/test_store.py` 的「两个引擎建同一张边图」钉着——例外只许是这一处。
+
 规则不在这里。层级方向、承重墙、盲区、合法性闭环、关系讲不讲得通——那些在
 `canonlint.py`（未来拆到 `rules/`）。**存储层不认识理论**：它不知道 `fiscal` 与
 `manpower` 有什么区别，也不知道哪一层该养哪一层。
@@ -26,7 +32,7 @@
 ### 改完必须跑的命令
 
 ```sh
-python3 tests/run_tests.py        # 10 个世界夹具 + 29 项检查，输出与快照逐字节比对
+python3 tests/run_tests.py        # 10 个世界夹具 + 30 项检查，输出与快照逐字节比对
 python3 tests/test_schema.py      # 契约与代码常量不漂移
 python3 tests/test_store.py       # 存储层边界（包括本文件的规矩）
 ```

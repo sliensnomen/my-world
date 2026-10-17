@@ -31,6 +31,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from store import model as shared_model  # noqa: E402
 from store import parse as shared  # noqa: E402
 
 VERSION = "0.1"
@@ -40,19 +41,6 @@ VERSION = "0.1"
 # 实体 ID 规范：小写字母/数字/连字符，全库唯一，一旦发布永不更改、永不复用。
 # 实现在 store/parse.py（与 canonlint 共用一份）。
 ID_RE = shared.ID_RE
-
-# 七种生产关系（协议 §2，固定语法）：relation → 允许的 optional 属性键。
-# 这是本引擎**必须懂**的结构性子集，用来建图跑 PE 规则；它不是关系名的真值表。
-RELATION_ATTRS: dict[str, set[str]] = {
-    "owns": {"note"},
-    "controls": {"note"},
-    "extracts": {"what", "note"},
-    "coerces": {"note"},
-    "legitimizes": {"note"},
-    "owes": {"what", "note"},
-    "depends_on": {"critical", "kind", "note"},
-}
-ATTR_TYPES = {"what": str, "note": str, "kind": str, "critical": bool}
 
 # ---- 关系名词表：唯一真值在契约 world.schema.json ------------------------------
 # 契约 `x-relation-vocabulary` 是唯一真值。读取与归一化（「同一关系的所有历史拼法」
@@ -91,9 +79,6 @@ REQUIRED_FIELDS = ["id", "title", "type"]
 
 # 物资类别表（契约 x-strict-vocabulary.depends_on.kind）。PE005 用它判断「来源侧边算不算数」。
 MATERIAL_KINDS: frozenset[str] = _load_material_kinds()
-
-# 兼容旧名（本文件与测试夹具用过 RELATIONS）——同一对象，避免悄悄分叉
-RELATIONS = RELATION_ATTRS
 
 ENTRY_ROOT = "codex"   # 条目唯一位置；目录纯组织，身份只认 frontmatter
 SKIP_DIRS = {".git"}
@@ -145,114 +130,36 @@ class Finding:
 
 
 @dataclass
-class Entry(shared.RawEntry):
+class Entry(shared_model.Entry):
     """一个条目 = 一个带 YAML frontmatter 的 Markdown 文件。
 
-    文件层字段（path/rel/meta/body/parse_error/id）继承自 `shared.RawEntry`——两个引擎的
-    条目对象从同一个文件层结果长出来，本类只挂政治经济学判定需要的关系视图。
+    文件层字段（path/rel/meta/body/parse_error/id）与**边层**（关系视图、形状校验、
+    旧写法搬家）都继承自 `store/model.py`——两个引擎从同一份结果长出来。本类只剩
+    「形状问题要说成本引擎的编号」和「depends_on 按本引擎的口径」这两件事。
     """
+
+    # 契约 `x-stricter-than-contract` 第一条登记的口径差：本引擎的协议 §2.2 明确把
+    # `kind`/`critical` 降为可选（八层链与 kind 分族是 WGP 治理层的建模工具，审计只关心
+    # 边的存在性与方向）。所以这里把开关关掉——**不是**另写一份建边代码。
+    depends_on_requires_annotations = False
 
     @cached_property
     def edges(self) -> tuple[list[Edge], list[Finding]]:
-        """全部边 = 九个具名字段 + 规范形 `relations`，结果缓存。
+        """全部边 = 存储层的统一视图（契约是唯一真值表），结果缓存。
 
-        契约 `world.schema.json` 是关系的唯一真值表：具名字段照单全收（契约列过的
-        九个，含连字符/下划线变体），`relations:` 里的 `type` 走同一张归一化表。
-        这样「同一条边写在哪、报的都一样」才成立（协议 §1 等价性承诺）。
+        本引擎**不再自己建边**。以前它自带一套约 90 行的建边与形状校验，于是同一份
+        frontmatter 两个引擎给出两种结果：契约声明合法的 `conflicts_with: [{id, stance}]`
+        与 `exchanges_with: [{id, what}]` 被本引擎当成「未定义的属性」，**整条边消失**；
+        `depends_on` 的裸字符串与缺 `critical` 在 canonlint 报错、在本引擎却是边；
+        `depends_on + kind: legitimacy` 的搬家只在 canonlint 侧执行，PE002/PE003 因此
+        对同一份数据判得不一样（评审 blocker）。
+
+        形状问题一律映射成 CL104：本引擎只有这一个形状编号，存储层用的是 canonlint 的
+        CA107/CA109（契约 x-stricter-than-contract 记着这条；文案两个引擎逐字相同）。
         """
-        out: list[Edge] = []
-        errs: list[Finding] = []
-        # 1) 具名字段（契约 x-relation-source.aliases）
-        field_names = tuple(RELATION_ATTRS) + tuple(
-            sorted(set(ALL_RELATION_NAMES) - set(RELATION_ATTRS)))
-        for field in field_names:
-            raw = self.meta.get(field)
-            if raw is None:
-                continue
-            name = canonical_rel(field)
-            allowed = RELATION_ATTRS.get(name, set())
-            if not isinstance(raw, list):
-                errs.append(Finding("CL104", "error", self.rel, f"{field} 必须是列表"))
-                continue
-            for i, item in enumerate(raw):
-                where = f"{field}[{i}]"
-                if isinstance(item, str):
-                    out.append(Edge(name, item, {}))
-                    continue
-                if not isinstance(item, dict):
-                    errs.append(Finding("CL104", "error", self.rel,
-                                        f"{where} 必须是 id 字符串或对象"))
-                    continue
-                tid = item.get("id")
-                if not isinstance(tid, str):
-                    errs.append(Finding("CL104", "error", self.rel,
-                                        f"{where} 缺 id 或 id 不是字符串"))
-                    continue
-                bad = False
-                for k, v in item.items():
-                    if k == "id" or str(k).startswith("x-"):
-                        continue
-                    if k not in allowed:
-                        errs.append(Finding("CL104", "error", self.rel,
-                                            f"{where} 含 {field} 未定义的属性 `{k}`"))
-                        bad = True
-                    elif not isinstance(v, ATTR_TYPES.get(k, object)):
-                        errs.append(Finding("CL104", "error", self.rel,
-                                            f"{where}.{k}={v!r} 类型错误"
-                                            f"（须为 {ATTR_TYPES.get(k, object).__name__}）"))
-                        bad = True
-                if not bad:
-                    out.append(Edge(name, tid,
-                                    {k: v for k, v in item.items() if k != "id"}))
-        # 2) 规范形 relations（契约新写法；修复前它对本引擎完全隐形）
-        out.extend(self.canonical_edges[0])
-        errs.extend(self.canonical_edges[1])
-        return out, errs
-
-    @cached_property
-    def canonical_edges(self) -> tuple[list[Edge], list[Finding]]:
-        """解析规范形 `relations:`：项键 `type`/`target`（**不是** `id`）。"""
-        raw = self.meta.get("relations")
-        if raw is None:
-            return [], []
-        if not isinstance(raw, list):
-            return [], [Finding("CL104", "error", self.rel, "relations 必须是列表")]
-        out: list[Edge] = []
-        errs: list[Finding] = []
-        for i, item in enumerate(raw):
-            where = f"relations[{i}]"
-            if not isinstance(item, dict):
-                errs.append(Finding("CL104", "error", self.rel, f"{where} 必须是对象"))
-                continue
-            missing = [k for k in ("type", "target") if k not in item]
-            for m in missing:
-                errs.append(Finding("CL104", "error", self.rel, f"{where} 缺字段 `{m}`"))
-            extra = [k for k in item if k not in CANONICAL_RELATION_ITEMS
-                     and not str(k).startswith("x-")]
-            for x in extra:
-                errs.append(Finding("CL104", "error", self.rel,
-                                    f"{where} 含未定义字段 `{x}`（扩展须 x- 前缀）"))
-            if missing or extra:
-                continue
-            bad = False
-            for key in ("type", "target"):
-                if not isinstance(item[key], str) or not item[key]:
-                    errs.append(Finding("CL104", "error", self.rel,
-                                        f"{where}.{key} 必须是字符串"))
-                    bad = True
-            for key, want in (("kind", str), ("stance", str), ("note", str),
-                              ("what", str), ("critical", bool)):
-                if key in item and not isinstance(item[key], want):
-                    errs.append(Finding("CL104", "error", self.rel,
-                                        f"{where}.{key} 类型错误（须为 {want.__name__}）"))
-                    bad = True
-            if bad:
-                continue
-            # 未知名原样保留、不下判语（契约 x-profiles 自由档；见 store/model.py 同名 note）
-            name = canonical_rel(item["type"])
-            out.append(Edge(name, item["target"],
-                            {k: v for k, v in item.items() if k not in ("type", "target")}))
-        return out, errs
+        errs = [Finding("CL104", "error", self.rel, e.msg)
+                for e in self.relation_shape_errors]
+        return list(self.relations), errs
 
 
 def parse_entry(path: Path, root: Path) -> Entry:
@@ -297,6 +204,13 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
             else:
                 index[e.id] = e
         findings.extend(e.edges[1])
+    # CL106: 拆分前的写法（`depends_on` + `kind=legitimacy`）。存储层已经把它归一成
+    # 关系名 derives_legitimacy_from 并按那条关系判定，这里只提示作者改写法——canonlint
+    # 的 CA111 是同一件事。搬家如果完全静默，就等于留了一条只有工具知道的新关系名，
+    # 而且本引擎的 PE002/PE003 会因此和作者以为的写法对不上（评审 blocker 3）。
+    for e in entries:
+        for err in e.relation_migrations:
+            findings.append(Finding("CL106", "warning", e.rel, err.msg))
     return entries, index, findings
 
 

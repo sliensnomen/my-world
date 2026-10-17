@@ -35,6 +35,8 @@
 
 17. **`owes` 有了判语：债务必须收得回来**（classlint PE009，见 `classlint/PROTOCOL.md` §3.3）：存在 `A —owes→ B` 时，模型里必须有收账通道——债主对债务人的支配（`controls`/`coerces`/`extracts`/`legitimizes` 任一条），或债务人依赖债主（`depends_on`）。两条都没有就报 warning：那样的 `owes` 只是一句记账，模型里没有能兑现它的结构。此前 `owes` 有词表、有形状、有定义，却没有一条规则用它——契约自己写着「本版 PE 规则还没用它下判语」，这是已知缺口。编号取 **PE009** 而不是 PE006：`classlint` 规划里的 PE006–PE008 属流量层（剩余量/人口/交叉），编号即协议，不占用已规划的空位。
 
+18. **两个引擎共用同一份边层，读卡合并才算到底**。`db1ef88` 合并了文件层（`store/parse.py`：id 语法、frontmatter 切分、契约词表、拼法归一化），但**建边与形状校验**仍是 classlint 自己一份（约 90 行），于是契约声明合法的 `conflicts_with: [{id, stance}]`、`exchanges_with: [{id, what}]` 在 classlint 里变成硬错误、**整条边消失**；`depends_on + kind: legitimacy` 的搬家也只在 canonlint 侧执行——同一份数据两个引擎判得不一样。现在 `Entry.relations` 与 `relation_shape_errors` 只有 `store/model.py` 一份实现，classlint 只把形状问题映射成本引擎编号（CL104），并新增 CL106（旧写法搬家提示，与 CA111 同一件事）。保留的唯一差异是契约 `x-stricter-than-contract` 第一条登记的 `depends_on` 口径（canonlint 要求对象式且 `kind`/`critical` 给全，classlint 按自己的协议 §2.2 降为可选）——它现在是一个开关 `Entry.depends_on_requires_annotations`，而不是两份代码。两把新锁钉住它：`tests/test_store.py`「两个引擎建同一张边图」（17 种形状两边跑，边图含顺序与形状问题必须逐条相同，例外只许是登记的那处口径差）与 `tests/test_schema.py` 改写后的别名锁（遍历**契约**逐个真的解析：声明合法的形状必须建出边，多写未声明的键必须报错）。后者刚写完就抓出两处真缺陷：canonlint 的 `deps` 拒收契约声明合法的 `depends_on.note`（CA107 冤报），`conflicts_with` 的对象式多写键无声通过。
+
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
 - §6.5 JSON schema 的 `entry` 字段允许伪值 `"(仓库级)"`，用于 CA505 等仓库级 finding
@@ -208,6 +210,10 @@ conflicts_with:
     stance: heretic                    # 本条目自认的叙事地位
 ```
 
+对象式只允许 `id` 与 `stance` 两个键（外加 `x-` 前缀扩展）：多写一个键 = CA107。
+`stance` 的**取值**不在存储层判——写成列表也照旧建边，由 CA102 报「取值非法」
+（形状坏掉时不吞边，是存储层的既定分工）。
+
 `stance` 三值，**描述本条目自认的世界内叙事地位**：
 
 | stance | 含义 |
@@ -321,7 +327,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 
 ### 5.4 `depends_on` 对象 schema（kind 已封版，v1.0）
 
-每个元素**必须**恰好包含以下三个必填字段，可以加 `x-` 扩展字段。**这条对两种写法同样成立**：旧具名字段 `depends_on:` 的元素按 `id`/`kind`/`critical`，规范形 `relations:` 里的 `depends_on` 项按 `target`/`kind`/`critical`——缺一个就报 CA107，两条路径都不跳过，否则「规范形省掉 `kind`」就能合法地关掉 CA501/CA502/CA503（见 §9 v1.1 修订记录第 2 条）。
+每个元素**必须**恰好包含以下三个必填字段，可以加 `x-` 扩展字段。**这条对两种写法同样成立**：旧具名字段 `depends_on:` 的元素按 `id`/`kind`/`critical`，规范形 `relations:` 里的 `depends_on` 项按 `target`/`kind`/`critical`——缺一个就报 CA107，两条路径都不跳过，否则「规范形省掉 `kind`」就能合法地关掉 CA501/CA502/CA503（见 §9 v1.1 修订记录第 2 条）。契约 `attrs` 里另有可选的 `note`（仅供人读，不参与判定）。
 
 | 字段 | 类型 | 约束 |
 |---|---|---|

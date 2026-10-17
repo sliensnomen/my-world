@@ -89,7 +89,7 @@ depends_on:
 
 ### 2.2 与 WGP 的差异说明
 
-WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；classlint 将二者降为可选、kind 改自由词汇——八层链与 kind 分族是 WGP 治理层的建模工具，classlint 的审计只关心边的存在性与方向。
+WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；classlint 将二者降为可选、kind 改自由词汇——八层链与 kind 分族是 WGP 治理层的建模工具，classlint 的审计只关心边的存在性与方向。这条差异是契约 `x-stricter-than-contract` 登记过的，实现在存储层的**一个开关**上（`store/model.py` 的 `Entry.depends_on_requires_annotations`，本引擎置 `False`）——不是两份建边代码：边层（`Entry.relations` / `relation_shape_errors`）与 canonlint 共用同一份，`tests/test_store.py` 的「两个引擎建同一张边图」钉住它。
 
 ## 3. 审计规则注册表
 
@@ -110,6 +110,7 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；clas
 | CL103 | error | 存在不带 `x-` 前缀的未定义字段 |
 | CL104 | error | 关系字段违反 §2.1 schema |
 | CL105 | error | 关系目标 `id` 不存在 |
+| CL106 | warning | 拆分前的旧写法（`depends_on` + `kind: legitimacy`）——已按新关系名判定，只在输出里提示改写法（同 canonlint 的 CA111） |
 
 ### 3.3 政治经济学规则
 

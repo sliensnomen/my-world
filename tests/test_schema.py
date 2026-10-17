@@ -275,15 +275,68 @@ def check_vocabulary_matches_code(problems):
             problems.append(f"{label}: 契约写 {a}，代码写 {b}")
 
 
+def _sample_attr_value(spec):
+    """按契约自己声明的类型造一个合法取值（`$defs/legacyItem.properties`）。"""
+    if "enum" in spec:
+        return spec["enum"][0]
+    return {"string": "sample", "boolean": True, "integer": 1}.get(spec.get("type"), "sample")
+
+
 def check_relation_aliases_match_classlint(problems):
-    aliases = SCHEMA["x-relation-source"]["aliases"]
-    for rel, attrs in CLASSLINT.RELATIONS.items():
-        got = aliases.get(rel)
-        if got is None:
-            problems.append(f"classlint 有 {rel}，契约的 x-relation-source.aliases 里没有")
-        elif sorted(got["attrs"]) != sorted(attrs):
-            problems.append(f"{rel}: 契约允许 {sorted(got['attrs'])}，"
-                            f"classlint 允许 {sorted(attrs)}")
+    """契约声明的每一种关系别名，存储层都必须**按声明的形状**收下，一个属性都不许漏。
+
+    这条锁以前遍历 `classlint.RELATIONS`——classlint 自己那份八字段属性表——于是契约
+    声明了而那张表没写的属性（`conflicts_with.stance`、`exchanges_with.what`）从来没有
+    被任何测试看过：classlint 把它们当成「未定义字段」，**整条边消失**（评审 blocker 2
+    正是从这里漏过去的）。现在遍历**契约**，并且逐个真的解析一遍。
+
+    两个引擎共用 `store/model.py` 的边层，所以这条锁同时钉住两边；`depends_on` 那处口径
+    差（`kind`/`critical` 可选）见契约 `x-stricter-than-contract`，由
+    `Entry.depends_on_requires_annotations` 开关承载，两边各自声明。
+    """
+    from store import model as shared_model  # noqa: PLC0415
+
+    item_props = SCHEMA["$defs"]["legacyItem"]["properties"]
+
+    def parse(meta, cls):
+        raw = shared_model.RawEntry(Path("synthetic.md"), "synthetic.md", meta, "", None)
+        return raw.as_entry(cls)
+
+    for rel, spec in SCHEMA["x-relation-source"]["aliases"].items():
+        canonical = spec["type"]
+        good = {a: _sample_attr_value(item_props[a]) for a in (spec.get("attrs") or [])}
+        # 多写一个未声明的属性必须报错（否则「什么都收下」也能骗过上面两项）
+        # 注意不能用 `x-` 前缀：那是契约留的扩展泄压阀，两边都必须放行。
+        probe = {**good, "zzz-undeclared": "1"}
+        # 项的写法按契约 `item` 的登记：只写了「id 字符串」的别名不构造对象式
+        # （canon_refs 就是这种——给对象式是契约不允许的，不是存储层漏收）。
+        object_form = "或" in spec["item"]
+        # 合法形状：契约为该别名登记的写法
+        spellings = [(f"具名字段 {rel}", lambda attrs: {rel: [dict(id="a-target", **attrs)]})]
+        if not object_form:
+            # 契约只登记了字符串式：对象式（哪怕只多一个键）都必须被拒
+            spellings = [(f"具名字段 {rel}", lambda attrs: {rel: ["a-target"]})]
+        spellings.append((
+            f"规范形 relations 里的 {canonical}",
+            lambda attrs: {"relations": [dict(type=canonical, target="a-target", **attrs)]}))
+        # 坏形状：对象式多一个未声明的键。对 bare-only 的别名，对象式本身就是坏形状。
+        probe_named = lambda attrs: {rel: [dict(id="a-target", **attrs)]}  # noqa: E731
+        probe_canon = lambda attrs: {  # noqa: E731
+            "relations": [dict(type=canonical, target="a-target", **attrs)]}
+        for label, make in ((f"具名字段 {rel}", probe_named),
+                            (f"规范形 relations 里的 {canonical}", probe_canon)):
+            if not parse(make(probe), shared_model.Entry).relation_shape_errors:
+                problems.append(f"{label}：多写了未声明的属性，存储层却一声不吭")
+        for label, make in spellings:
+            for engine_name, cls in (("canonlint", shared_model.Entry),
+                                     ("classlint", CLASSLINT.Entry)):
+                entry = parse(make(good), cls)
+                if entry.relation_shape_errors:
+                    problems.append(
+                        f"{label}（{engine_name}）：契约声明合法的形状被当成错误 "
+                        f"{[e.msg for e in entry.relation_shape_errors]}")
+                if not entry.edges_of(canonical):
+                    problems.append(f"{label}（{engine_name}）：契约声明合法的边没有建出来")
     canonical = SCHEMA["$defs"]["relation"]
     if canonical.get("required") != ["type", "target"]:
         problems.append(f"规范形 relations 的必填键应为 ['type','target']，"

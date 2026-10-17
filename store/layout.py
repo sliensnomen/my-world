@@ -24,10 +24,39 @@ TYPE_DIRS = {"location": "locations", "faction": "factions",
              "character": "characters", "event": "events", "item": "items"}
 
 
+def root_cards(root: Path) -> list[Path]:
+    """根目录级的条目卡：以 frontmatter 围栏（`---`）开头的 `.md`。
+
+    判据是**文件是不是打算当卡片写**，不是「解析得成功」。用「解析得成功」当判据
+    会造出新的静默：一张 frontmatter 写坏的根级卡片会被悄悄跳过，连 CA100 都看不到。
+    所以只看开头的围栏——`README.md` 这类散文文档（按名字排除）不算卡片，
+    围栏在而 frontmatter 坏掉的，一律交给 `parse_entry` 去报。
+    """
+    out: list[Path] = []
+    for path in sorted(root.glob(ENTRY_SUFFIX)):
+        if not path.is_file() or path.name.lower() == "readme.md":
+            continue  # 同名目录、悬空软链与目录说明都不是条目
+        try:
+            head = path.read_text(encoding="utf-8-sig")[:3]
+        except (OSError, UnicodeDecodeError):
+            out.append(path)  # 读不了也让解析器去说，别在这里吞掉
+            continue
+        if head == "---":
+            out.append(path)
+    return out
+
+
 def iter_entry_paths(root: Path) -> list[Path]:
-    """按确定序列出所有条目文件（跳过 SKIP_DIRS、同名目录与悬空符号链接）。"""
+    """按确定序列出所有条目文件（跳过 SKIP_DIRS、同名目录与悬空符号链接）。
+
+    `entries/` 存在时**根目录级的卡片照样要收**：扁平世界只要跑过一次
+    `canonlint new` 建出 `entries/`，根目录那张卡就会整批隐身，退出码还是 0
+    （评审 blocker）。扁平模式（没有 ENTRY_DIRS）行为不变，仍把根目录下每篇
+    `.md` 都交给解析器——那里没有「散文 vs 卡片」的歧义空间。
+    """
     dirs = [root / d for d in ENTRY_DIRS if (root / d).is_dir()]
-    if not dirs:
+    flat = not dirs
+    if flat:
         dirs = [root]
     paths: list[Path] = []
     for d in dirs:
@@ -38,6 +67,8 @@ def iter_entry_paths(root: Path) -> list[Path]:
             if SKIP_DIRS & set(p.relative_to(root).parts):
                 continue
             paths.append(p)
+    if not flat:
+        paths.extend(root_cards(root))
     return paths
 
 
@@ -45,19 +76,11 @@ def looks_like_world(root: Path) -> bool:
     """这个目录看起来是不是一个世界？判据只看**布局**（不涉及理论）。
 
     有 `entries/`（或 canon/sandbox/archive）就是；否则要求根目录里至少有一篇
-    `.md` 的 frontmatter 能解成带 id 的条目。两者都没有就是走错了地方——拿一个
-    普通目录（仓库根、docs/）当世界审，会把每篇文档都当成坏条目，吐几百条假错误，
+    条目卡（见 `root_cards`）。两者都没有就是走错了地方——拿一个普通目录
+    （仓库根、docs/）当世界审，会把每篇文档都当成坏条目，吐几百条假错误，
     而真正的答案只是「你指错目录了」（评审：752 条）。
     """
-    if any((root / d).is_dir() for d in ENTRY_DIRS):
-        return True
-    for path in sorted(root.glob(ENTRY_SUFFIX)):
-        if not path.is_file() or path.name == "README.md":
-            continue  # 同名目录、悬空软链与目录说明都不是条目
-        entry = parse_entry(path, root)
-        if not entry.parse_error and entry.id:
-            return True
-    return False
+    return bool(any((root / d).is_dir() for d in ENTRY_DIRS) or root_cards(root))
 
 
 def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[ShapeIssue]]:
