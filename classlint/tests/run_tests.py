@@ -140,7 +140,7 @@ def check_pe005_requires_material_source() -> int:
     return failures
 
 
-def check_pe006_requires_a_collection_channel() -> int:
+def check_pe009_requires_a_collection_channel() -> int:
     """PE009：记一笔债，就要说清它凭什么收得回来。
 
     两种通道都算数——债主对债务人的支配（controls/coerces/extracts/legitimizes），
@@ -187,6 +187,77 @@ def check_pe006_requires_a_collection_channel() -> int:
             failures += 1
     if not failures:
         print("PASS 债务必须收得回来（四条支配通道 + 债务人依赖，各自都能消音）")
+    return failures
+
+
+def check_rule_guards_and_usage_errors() -> int:
+    """四条「判得不对 / 静默通过」的守卫（评审 3、4、6、10）。
+
+    - PE001 对**不存在**的目标论证「没有基础」：CL105 已经报过，这句是空话；
+    - `--impact` 在环里把主体带回自己的下游：CA504 早就不这么做了，本引擎没跟上；
+    - 指错目录时 0 条目 + `judgement_complete: true` + exit 0：整机版的「看起来在审」；
+    - 近失拼写（`extractss`）让 PE 族永久失明：边要按规范名建，且必须说出来。
+    """
+    failures = 0
+    with tempfile.TemporaryDirectory() as td:
+        world = _probe_world(td, "")
+        # PE001：extracts 指向不存在的目标，只许有 CL105，许没有 PE001
+        (world / "codex" / "dangling.md").write_text(
+            "---\nid: dangling\ntitle: 悬空\ntype: faction\nextracts: [ghost]\n---\n。\n",
+            encoding="utf-8")
+        _, _, findings, _ = classlint.run_checks(world)
+        rules = {f.rule for f in findings if f.entry == "codex/dangling.md"}
+        if "CL105" not in rules or "PE001" in rules:
+            print(f"FAIL PE001 不该对不存在的目标下判语，实际 {sorted(rules)}")
+            failures += 1
+        else:
+            print("PASS PE001 跳过悬空目标（CL105 已报，不双报）")
+
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td)
+        (world / "codex").mkdir()
+        (world / "classlint.yaml").write_text("name: probe\nclasslint: \"0.1\"\n",
+                                              encoding="utf-8")
+        (world / "codex" / "a.md").write_text(
+            "---\nid: a\ntitle: A\ntype: faction\ndepends_on: [a]\n---\n。\n",
+            encoding="utf-8")
+        index = classlint.collect(world)[1]
+        reports = classlint.impact_report(index, ["a"])
+        if reports and reports[0]["downstream"]:
+            print(f"FAIL --impact 把主体列进了自己的下游：{reports}")
+            failures += 1
+        else:
+            print("PASS --impact 不把主体列进自己的下游（自环也一样）")
+
+    with tempfile.TemporaryDirectory() as td:
+        empty = Path(td)
+        (empty / "classlint.yaml").write_text("name: nope\nclasslint: \"0.1\"\n",
+                                              encoding="utf-8")
+        (empty / "entries").mkdir()
+        (empty / "entries" / "a.md").write_text("---\nid: a\n---\n。\n", encoding="utf-8")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = classlint.cmd_check(empty, as_json=False, impact_ids=[])
+        if rc != 2 or "指错目录" not in err.getvalue():
+            print(f"FAIL 指错目录应 exit 2 并说明原因，实际 rc={rc} err={err.getvalue()!r}")
+            failures += 1
+        else:
+            print("PASS 指错目录是用法错误（exit 2，不再给全绿报告）")
+
+    with tempfile.TemporaryDirectory() as td:
+        world = _probe_world(td, "")
+        (world / "codex" / "typo.md").write_text(
+            "---\nid: typo\ntitle: 手滑\ntype: faction\n"
+            "relations:\n  - type: extractss\n    target: tenant\n---\n。\n",
+            encoding="utf-8")
+        _, _, findings, _ = classlint.run_checks(world)
+        got = {(f.rule, f.entry) for f in findings}
+        # 边按 extracts 建 → PE001 判得到；同时 CL107 说明「你写的是 extractss」
+        if ("PE001", "codex/typo.md") not in got or ("CL107", "codex/typo.md") not in got:
+            print(f"FAIL 近失拼写既不提示也不判定，实际 {sorted(got)}")
+            failures += 1
+        else:
+            print("PASS 近失拼写按规范名判定，并报 CL107")
     return failures
 
 
@@ -323,7 +394,8 @@ def main() -> int:
                     print(f"  漏报: {item}")
     failures += check_cl100_intent()
     failures += check_pe005_requires_material_source()
-    failures += check_pe006_requires_a_collection_channel()
+    failures += check_pe009_requires_a_collection_channel()
+    failures += check_rule_guards_and_usage_errors()
     failures += check_disabled_rules_change_exit_code()
     failures += check_legitimacy_forms_are_indistinguishable()
     extra = set(EXPECTED) - set(worlds)

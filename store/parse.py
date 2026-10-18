@@ -24,7 +24,11 @@ import yaml
 # ---- id 语法与文件形状 ------------------------------------------------------
 
 ID_RE = re.compile(r"^[a-z0-9-]+$")
-FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
+# 结尾必须是「闭合围栏那一行」为止，**不许再多吃空白**：以前写作 `\s*\n?`，`\s*` 会连同
+# 正文开头的空行/缩进一起吞掉，于是 `link` 写回时正文首行的 4 空格缩进（markdown 代码块）
+# 被无声删掉。分组 1 仍是 frontmatter 本身，写回时只替换 `m.start(1)..m.end(1)`，
+# 围栏字节与正文原样保留（见 store/write.py 的 `_splice`）。
+FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
 CODE_FENCE_RE = re.compile(r"```.*?```", re.S)
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 
@@ -131,11 +135,22 @@ def edit_distance(a: str, b: str) -> int:
     return prev[-1]
 
 
+def _squash(name: str) -> str:
+    """去掉分隔符再比：`depends-on` 与 `depends_on` 是同一种拼法，不是两处差异。
+
+    不这么做的话，「编辑距离 ≤1」的阈值量的是**分隔符风格**而不是**打错没有**：
+    `depends-onn`（本协议自己举的例子）距离规范名 2，于是既不发 CA110 也不归一化，
+    那条边整条静默——一句话说「≤1」，一个例子却落在 ≤1 之外。
+    """
+    return name.replace("-", "").replace("_", "")
+
+
 def nearest_relation_name(name: str) -> str | None:
     """`name` 不是已知拼法、但与某个规范名只差一个字符时返回那个规范名，否则 None。
 
     这是**标记**不是**拒绝**：契约 world.schema.json:16-17 的自由档允许用户自定义关系名，
     所以真正的新词必须继续 fail-open；只有「看着像打错」的名字才提示。
+    距离在**去掉分隔符之后**算（见 `_squash`）。
     """
     if not isinstance(name, str) or not name or name.startswith("x-"):
         return None
@@ -143,10 +158,29 @@ def nearest_relation_name(name: str) -> str | None:
         return None  # 本身就是规范名
     if RELATION_TYPE_NAMES.get(name) is not None:
         return None  # 是已知历史拼法，已经归一化，不必提示
+    squashed = _squash(name)
     for canonical in ALL_RELATION_NAMES:
-        if edit_distance(name, canonical) <= 1:
+        if edit_distance(squashed, _squash(canonical)) <= 1:
             return canonical
     return None
+
+
+def judged_relation_name(name: str) -> str:
+    """**建边时该用的关系名**——CA110 文案「已按规范名判定该边」的兑现处。
+
+    两级归一：契约登记的历史拼法走 `canonical_relation_name`；不在登记表里、但与某个
+    规范名编辑距离 ≤1 的名字（`depend_on`、`controlss`、`canon_ref`）走
+    `nearest_relation_name`。以前只做第一级，第二级只发一句提示就完了，于是那条边以
+    拼错的名字留在图里，**所有图规则都看不见它**（漏判 CA401/CA501/CA504，冤报
+    CA302/CA503）。同一处缝在两个引擎里各有一个入口，所以归一化放在这里。
+
+    编辑距离 ≥2 的名字不归一：那是自由档（自定义关系名），工具判不了它，也不该改它的名。
+    """
+    canonical = canonical_relation_name(name)
+    if canonical != name:
+        return canonical
+    near = nearest_relation_name(name)
+    return near if near is not None else name
 
 
 # ---- 一条边长什么样 ---------------------------------------------------------
@@ -206,6 +240,9 @@ class RawEntry:
     meta: dict
     body: str
     parse_error: str | None = None
+    # YAML 里重复出现的键（PyYAML last-wins，不报）。判定层要报出来，否则「写了两遍」
+    # 与「只写一遍」在工具眼里完全一样。
+    duplicate_keys: tuple[str, ...] = ()
 
     @property
     def id(self) -> str | None:
@@ -214,7 +251,65 @@ class RawEntry:
 
     def as_entry(self, cls):
         """按目标引擎的 Entry 类重建（字段名一致，故可直接搬运）。"""
-        return cls(self.path, self.rel, self.meta, self.body, self.parse_error)
+        return cls(self.path, self.rel, self.meta, self.body, self.parse_error,
+                   self.duplicate_keys)
+
+
+class _DuplicateKeyLoader(yaml.SafeLoader):
+    """记录 YAML 里重复出现的键。
+
+    PyYAML 对重复键是 last-wins 且**一声不响**：`depends_on: [a]` 写两遍，第一条边
+    就这么从图里消失，没有任何规则会报。这里把重复的键记下来交给判定层（CA112）。
+    """
+
+    duplicates: list[str] = []
+
+    def construct_mapping(self, node, deep=False):  # noqa: D102 - 覆写
+        seen: set = set()
+        for key_node, _value_node in node.value:
+            if isinstance(key_node, yaml.ScalarNode):
+                if key_node.value in seen:
+                    self.duplicates.append(key_node.value)
+                seen.add(key_node.value)
+        return super().construct_mapping(node, deep=deep)
+
+
+def load_meta(fm_text: str) -> tuple[object, tuple[str, ...]]:
+    """解析 frontmatter YAML，返回（值, 重复键元组）。异常原样抛给调用方处理。"""
+    loader = _DuplicateKeyLoader(fm_text)
+    loader.duplicates = []
+    try:
+        value = loader.get_single_data()
+        return value, tuple(loader.duplicates)
+    finally:
+        loader.dispose()
+
+
+def parse_text(text: str, rel: str, path: Path | None = None) -> RawEntry:
+    """把**整份文件文本**解析成一个条目。读文件与「校验我刚写出来的文本」共用这一条路。
+
+    YAML 错误要按**文件行号**报，所以给 frontmatter 补一行 `---` 再交给解析器：
+    行号于是与磁盘上的文件一一对应。以前漏了这一步，CA100 报的行号恒比文件小 1
+    （frontmatter 字符串不含开场围栏行），照着报错去改文件会改错行。
+    """
+    m = FRONTMATTER_RE.match(text)
+    if not m:
+        return RawEntry(path or Path(rel), rel, {}, text,
+                        parse_error="缺少 frontmatter（文件须以 --- 包裹的 YAML 头开始）")
+    try:
+        meta, duplicates = load_meta("---\n" + m.group(1))
+    except yaml.YAMLError as e:
+        return RawEntry(path or Path(rel), rel, {}, "",
+                        parse_error=f"frontmatter YAML 解析失败: {e}")
+    except RecursionError:
+        # 深嵌套流式集合（几百层 `[`）让 PyYAML 递归爆栈。它不是 YAMLError，以前直接逃出
+        # `except`，一张这样的卡就能把整场审计打成 traceback（连 new/link 也崩，因为都要
+        # 先扫全库）。「失败也是一个结果」这句话必须对它也成立。
+        return RawEntry(path or Path(rel), rel, {}, "",
+                        parse_error="frontmatter 嵌套过深，解析器栈溢出（这张卡的 YAML 不正常）")
+    if not isinstance(meta, dict):
+        return RawEntry(path or Path(rel), rel, {}, "", parse_error="frontmatter 必须是键值映射")
+    return RawEntry(path or Path(rel), rel, meta, text[m.end():], None, duplicates)
 
 
 def read_frontmatter(path: Path, root: Path) -> RawEntry:
@@ -226,15 +321,4 @@ def read_frontmatter(path: Path, root: Path) -> RawEntry:
     except (UnicodeDecodeError, OSError) as e:
         # 无法读取也是「文件无法解析」，按引擎的解析错误码报，而不是让 traceback 逃逸
         return RawEntry(path, rel, {}, "", parse_error=f"文件无法读取: {e}")
-    m = FRONTMATTER_RE.match(text)
-    if not m:
-        return RawEntry(path, rel, {}, text,
-                        parse_error="缺少 frontmatter（文件须以 --- 包裹的 YAML 头开始）")
-    try:
-        meta = yaml.safe_load(m.group(1))
-    except yaml.YAMLError as e:
-        return RawEntry(path, rel, {}, "",
-                        parse_error=f"frontmatter YAML 解析失败: {e}")
-    if not isinstance(meta, dict):
-        return RawEntry(path, rel, {}, "", parse_error="frontmatter 必须是键值映射")
-    return RawEntry(path, rel, meta, text[m.end():])
+    return parse_text(text, rel, path)

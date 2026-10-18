@@ -194,6 +194,16 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
             if k not in KNOWN_FIELDS and not str(k).startswith("x-"):
                 findings.append(Finding("CL103", "error", e.rel,
                                         f"未定义字段 `{k}`（扩展字段须 x- 前缀）"))
+        # CL107：关系名拼写近失。存储层已经把这条边**按规范名建好**（所以 PE 族判得到
+        # 它），但作者写下的那个词与判定用的名字不同，必须说出来——否则「我明明写的是
+        # extractss，工具却判 extracts」是一句无法追溯的结论。
+        for raw_name in e.raw_relation_names:
+            near = shared.nearest_relation_name(raw_name)
+            if near is not None:
+                findings.append(Finding(
+                    "CL107", "warning", e.rel,
+                    f"关系名 `{raw_name}` 与规范名 `{near}` 只差一个字符，疑似拼写错误，"
+                    f"已按 `{near}` 判定；确是新关系请改用其它名字或加 `x-` 前缀"))
         if e.id is not None and not ID_RE.match(e.id):
             findings.append(Finding("CL102", "error", e.rel,
                                     f"id={e.id!r} 非法（仅允许小写字母/数字/连字符）"))
@@ -307,6 +317,10 @@ def rule(rid: str, level: str, doc: str):
 @rule("PE001", "error", "抽取必须有基础（controls/coerces/owns）")
 def pe001(world: World, emit) -> None:
     for src, e in world.edges_of("extracts"):
+        if e.target not in world.index:
+            # 目标不存在时「对不存在的目标论证它没有基础」是空话，且 CL105 已经报过。
+            # 同族规则（PE003/PE005/PE009）都自己守卫悬空目标，只 PE001 以前漏了这一道。
+            continue
         if world.find_edge(src, {"controls", "coerces", "owns"}, e.target) is None:
             emit(None, world.index[src].rel,
                  f"extracts → `{e.target}` 无基础：对该目标没有任何 controls/coerces/owns 边")
@@ -401,7 +415,7 @@ def pe005(world: World, emit) -> None:
 class ConfigError(Exception):
     pass
 @rule("PE009", "warning", "债务必须收得回来：债权关系要有能兑现它的结构")
-def pe006(world: World, emit) -> None:
+def pe009(world: World, emit) -> None:
     """A —owes→ B（A 欠 B）时，模型里必须至少有一条**收得回来**的通道：
 
     - B 对 A 有 `controls` / `coerces` / `extracts` / `legitimizes` 任一条：债主能指挥、
@@ -497,7 +511,10 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
 
     reports = []
     for subj in subjects:
-        seen, order = set(), []
+        # `seen` 预置主体：环（ra ↔ rb，或自环）会把主体带回下游，而"改 A 会炸 A"
+        # 是环的结论（CA502/CL50x 报），不是影响报告的结论。canonlint 的 CA504 早就是
+        # 这么做的（PROTOCOL.md「不含主体自身」），classlint 以前没跟上。
+        seen, order = {subj}, []
         queue = [subj]
         while queue:
             cur = queue.pop(0)
@@ -588,6 +605,13 @@ def cmd_check(root: Path, as_json: bool, impact_ids: list[str],
     if not (root / "classlint.yaml").is_file():
         print(f"error: {root} 不是 classlint 世界仓库（缺 classlint.yaml）",
               file=sys.stderr)
+        return 2
+    # 指错目录必须当用法错误处理：`codex/` 不在时 collect 收 0 条，会给出
+    # 「0 个条目 | 0 错误」的全绿报告——那是「整批条目看起来在被审，实际一张都没审」。
+    # 与 canonlint 的「不像一个世界仓库……（指错目录了？）」对齐成同一个退出码 2。
+    if not (root / ENTRY_ROOT).is_dir():
+        print(f"error: {root} 不像一个 classlint 世界仓库：没有 {ENTRY_ROOT}/ 目录"
+              f"（指错目录了？classlint 只审 {ENTRY_ROOT}/ 下的卡片）", file=sys.stderr)
         return 2
     try:
         entries, index, findings, disabled = run_checks(root)

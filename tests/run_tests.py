@@ -249,10 +249,22 @@ def check_every_relation_reference_is_checked() -> list[str]:
     于是 `owns: [幽灵]` 在 canonlint 里完全隐形（只在 classlint 那边有 CL105）。
     """
     problems = []
-    families = ["owns", "controls", "extracts", "coerces", "legitimizes"]
-    for fam in families:
+    # 清单**从契约推导**，不手写：上一版手写了五个家族，漏掉 `owes` 就让「删掉 owes
+    # 的检查」这个变异全绿（评审 high）。有专属引用检查的关系（各自带状态语义）排除。
+    contract = json.loads((ROOT / "world.schema.json").read_text(encoding="utf-8"))
+    declared = set(contract["x-relation-vocabulary"]["names"])
+    # 这五种各自有专属引用检查（要求目标状态 / 形状 / 名分语义），本锁不重复覆盖。
+    own_rules = {"canon_refs", "conflicts_with", "depends_on", "exchanges_with",
+                 "derives_legitimacy_from"}
+    families = sorted(declared - own_rules)
+    # 自由档也在这条锁里：作者自定义的关系名，指向不存在的 id 同样是结构问题。
+    # 以前 canonlint 只查契约登记过的那几种，而 classlint 的 CL105 查全部——同一份数据
+    # 两个引擎两种结论，且这处差异没在任何地方登记（评审 low）。
+    for fam in families + ["mentor-of"]:
         for style, extra in (("具名字段", f"{fam}:\n  - ghost-x\n"),
                              ("规范形", f"relations:\n  - type: {fam}\n    target: ghost-x\n")):
+            if fam == "mentor-of" and style == "具名字段":
+                continue  # 自定义名字只能写在规范形里
             tmp, world = _temp_world("canonlint-relref-", {"a-node": _card("a-node", extra)})
             with tmp:
                 code, out, _ = _judge(world)
@@ -267,6 +279,134 @@ def check_every_relation_reference_is_checked() -> list[str]:
         code, out, _ = _judge(world)
         if "CA401" in out:
             problems.append(f"目标存在时不该报 CA401：{out.strip()!r}")
+    return problems
+
+
+def check_near_miss_names_are_judged_under_the_canonical_name() -> list[str]:
+    """拼错一个字符的关系名，边要**真的按规范名进图**，而不是只发一句提示。
+
+    评审 blocker：CA110 的文案说「已按归一化后的规范名判定该边」，实现里这条边却以
+    拼错的名字留在图里，于是谁都不判它——漏判 CA401/CA501/CA504、冤报 CA302/CA503。
+    另有第二处缝：契约 `x-relation-vocabulary.value.accept` 登记的历史拼法（`canon-ref:`）
+    写成字段名时被报 CA106「未定义字段」，同一张卡在两个引擎里一个硬错误、一个整族规则
+    静默失效。
+    """
+    problems = []
+    cases = [
+        # (说明, 卡片里写的关系, 期望出现, 期望不出现)
+        ("近失：depend_on", "relations:\n  - type: depend_on\n    target: ghost-x\n"
+                            "    kind: fiscal\n    critical: true\n",
+         ["CA110", "CA401"], []),
+        ("近失：分隔符风格不同（depends-onn）",
+         "relations:\n  - type: depends-onn\n    target: ghost-x\n"
+         "    kind: fiscal\n    critical: true\n", ["CA110", "CA401"], []),
+        ("近失：extractss", "relations:\n  - type: extractss\n    target: ghost-x\n",
+         ["CA110", "CA401"], []),
+        # 真正的新词必须继续 fail-open：不提示、不换名、原样保留
+        ("自由档：mentor-of", "relations:\n  - type: mentor-of\n    target: b-node\n",
+         [], ["CA110"]),
+        # 契约登记的拼法：认下，不冤报 CA106
+        ("登记拼法：canon-ref:", "canon-ref:\n  - b-node\n", [], ["CA106"]),
+        ("登记拼法：depends-on:", "depends-on:\n  - id: b-node\n    kind: fiscal\n"
+                                   "    critical: true\n", [], ["CA106"]),
+    ]
+    for label, extra, must, must_not in cases:
+        tmp, world = _temp_world("canonlint-nearmiss-", {
+            "a-node": _card("a-node", extra), "b-node": _card("b-node")})
+        with tmp:
+            _, out, _ = _judge(world)
+            for token in must:
+                if token not in out:
+                    problems.append(f"{label}：应当出现 {token}\n{out.strip()}")
+            for token in must_not:
+                if token in out:
+                    problems.append(f"{label}：不该出现 {token}\n{out.strip()}")
+    # 换名必须真的影响**判定**，不能只影响一条提示。两个只有换名才会正确的结论：
+    #   (a) 承重墙的 depends_on 义务：near-miss 的边也算数（否则 CA302 冤报「缺 depends_on」）
+    #   (b) 层级方向：near-miss 的边照样要过 CA501（否则漏判）
+    tmp, world = _temp_world("canonlint-nearmiss-ca302-", {
+        "a-node": _card("a-node", "relations:\n  - type: depend_on\n    target: b-node\n"
+                                   "    kind: fiscal\n    critical: true\n",
+                        load_bearing=True).replace("load_bearing: true\n",
+                                                   "load_bearing: true\nlayer: political\n"),
+        "b-node": _card("b-node"),
+    })
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA302" in out:
+            problems.append(f"near-miss 的 depends_on 没算数（CA302 冤报缺 depends_on）：\n{out.strip()}")
+    tmp, world = _temp_world("canonlint-nearmiss-ca501-", {
+        "a-node": _card("a-node", "relations:\n  - type: depend_on\n    target: b-node\n"
+                                   "    kind: fiscal\n    critical: true\n",
+                        load_bearing=True).replace("load_bearing: true\n",
+                                                   "load_bearing: true\nlayer: military\n"),
+        "b-node": _card("b-node").replace("layer: ", "").replace(
+            "type: location", "type: location\nlayer: political"),
+    })
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA501" not in out:
+            problems.append(f"near-miss 的 depends_on 漏判层级方向（该报 CA501）：\n{out.strip()}")
+    # 契约认证的字段名拼法：不只是「不报 CA106」，边必须**真的建出来**（悬空才看得见）
+    # 注意不能走 `_card(extra)`：它自带 `canon_refs: []`，而字段名拼法的查找是
+    # 「文档序里第一个对应的键」，先出现的空列表会赢。这里替换掉那一行。
+    tmp, world = _temp_world("canonlint-attested-", {
+        "a-node": _card("a-node").replace("canon_refs: []", "canon-ref:\n  - ghost-x"),
+        "b-node": _card("b-node")})
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA401" not in out:
+            problems.append(f"`canon-ref:` 字段名认下了，边却没建（漏掉 CA401）：\n{out.strip()}")
+    # CA103：文案说「须为 YYYY-MM-DD」，那 ISO 基本格式与周历格式就不能放行
+    for bad in ('"20261015"', '"2026-W42-6"', '"2026-02-30"', '"2026-1-5"'):
+        tmp, world = _temp_world("canonlint-date-", {"a-node": _card("a-node")})
+        with tmp:
+            card = world / "entries" / "a-node.md"
+            card.write_text(card.read_text(encoding="utf-8").replace(
+                "date: 2026-01-01", f"date: {bad}"), encoding="utf-8")
+            _, out, _ = _judge(world)
+            if "CA103" not in out:
+                problems.append(f"date={bad} 应当报 CA103（契约 pattern 是 ^\\d{{4}}-\\d{{2}}-\\d{{2}}$）")
+    # CA103 反面：YAML 原生日期与规范字符串都合法
+    for good in ("date: 2026-01-01", "date: '2026-01-01'"):
+        tmp, world = _temp_world("canonlint-dateok-", {"a-node": _card("a-node")})
+        with tmp:
+            card = world / "entries" / "a-node.md"
+            card.write_text(card.read_text(encoding="utf-8").replace(
+                "date: 2026-01-01", good), encoding="utf-8")
+            _, out, _ = _judge(world)
+            if "CA103" in out:
+                problems.append(f"{good} 不该报 CA103：{out.strip()}")
+    return problems
+
+
+def check_econ_figures_are_shape_checked() -> list[str]:
+    """econ 扩展包的 CA601 必须有**意图断言**（评审：`figures` 非映射 / `unit` 非字符串两条守卫没锁）。
+
+    `tests/world-econ` 只覆盖了「缺 unit」与「value 非数字」，把 `.git` 之外的两条分支删掉
+    照样全绿。这里直接构造那两种形态。
+    """
+    problems = []
+    cases = [
+        ("figures 不是映射", "figures: 12\n", "figures 必须是映射"),
+        ("unit 不是字符串", "figures:\n  grain:\n    value: 100\n    unit: 123\n",
+         "必须是非空字符串"),
+        ("unit 是 bool", "figures:\n  grain:\n    value: 100\n    unit: true\n",
+         "必须是非空字符串"),
+    ]
+    for label, extra, want in cases:
+        tmp, world = _temp_world("canonlint-econ-", {"a-node": _card("a-node", extra)})
+        with tmp:
+            _, out, _ = _judge(world, "--pack", "econ")
+            if "CA601" not in out or want not in out:
+                problems.append(f"{label}：应当报 CA601（含「{want}」）\n{out.strip()}")
+    # 反面：合法 figures 一条都不许报
+    tmp, world = _temp_world("canonlint-econ-ok-", {
+        "a-node": _card("a-node", "figures:\n  grain:\n    value: 100\n    unit: 石/亩\n")})
+    with tmp:
+        _, out, _ = _judge(world, "--pack", "econ")
+        if "CA601" in out:
+            problems.append(f"合法的 figures 不该报 CA601：{out.strip()}")
     return problems
 
 
@@ -718,6 +858,9 @@ def main() -> int:
     ("指错目录给用法错误，而不是硬审", check_non_world_directory_is_a_usage_error),
     ("有 entries/ 时根目录的卡片不蒸发", check_root_cards_survive_an_entries_dir),
     ("每一种关系的悬空引用都报 CA401", check_every_relation_reference_is_checked),
+    ("拼错一个字符的关系名按规范名判定（自定义名仍 fail-open）",
+     check_near_miss_names_are_judged_under_the_canonical_name),
+    ("econ 的 figures 形状（非映射 / unit 非字符串）都报 CA601", check_econ_figures_are_shape_checked),
         ("--dup-threshold 越界是用法错误（不退化成静默关规则）", check_dup_threshold_range_is_usage_error),
         ("--impact 从不把主体列进自己的下游", check_impact_never_lists_the_subject),
         ("提示性规则不阻断 draft（CA301 只对定档条目报）", check_advisory_rules_do_not_gate_drafts),

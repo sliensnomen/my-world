@@ -103,6 +103,11 @@ def is_valid_date(value) -> bool:
     if isinstance(value, (date, datetime)):  # YAML 原生日期/时间对象
         return True
     if isinstance(value, str):
+        # 契约的 pattern 是 `^\d{4}-\d{2}-\d{2}$`，而 `date.fromisoformat` 从 3.11 起
+        # 还收 ISO 基本格式（`20261015`）与周历格式（`2026-W42-6`）——两种都过了 CA103，
+        # 而文案写的是「须为 YYYY-MM-DD」。先把形状钉死，再验日期本身是否真实（2 月 30 日）。
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return False
         try:
             date.fromisoformat(value)
         except ValueError:
@@ -111,7 +116,20 @@ def is_valid_date(value) -> bool:
     return False
 
 
-def _has_successor(e: Entry) -> bool:
+def _valid_successor(e: Entry, index: dict[str, Entry]) -> str | None:
+    """`superseded_by` 指向的那个条目 id；值坏掉/指向自己/指向不存在都返回 None。
+
+    以前只判「不是 None」，于是一个 `superseded_by: 42`、或指向自己、或指向不存在的
+    承接者，都能让 CA405「降级处置不完整」静默消音，同时 CA402 还会让作者「迁移至
+    `42`」——一处坏值，两处误导。
+    """
+    sb = e.meta.get("superseded_by")
+    if not isinstance(sb, str) or not sb or sb == e.id:
+        return None
+    return sb if sb in index else None
+
+
+def _has_successor(e: Entry, index: dict[str, Entry]) -> bool:
     """archived 条目是否真有承接者。
 
     `superseded_by` 字段缺 或 显式为 null，都表示**没有**承接者——契约把 null
@@ -119,7 +137,7 @@ def _has_successor(e: Entry) -> bool:
     （CA402 报在引用方、CA405 报在目标方）必须把 null 与字段缺当成同一件事，
     否则填一个 null 就能把 CA405 关掉（评审 F4）。
     """
-    return e.meta.get("superseded_by") is not None
+    return _valid_successor(e, index) is not None
 
 
 def check_structure(e: Entry, findings: list[Finding],
@@ -143,7 +161,8 @@ def check_structure(e: Entry, findings: list[Finding],
                                     f"type={e.meta['type']!r} 为实验类型（x- 前缀），已计入案例收集"))
         else:
             findings.append(Finding("CA102", "error", rel,
-                                    f"type={e.meta['type']!r} 非法，须为 {sorted(VALID_TYPES)}"))
+                                    f"type={e.meta['type']!r} 非法，须为 {sorted(VALID_TYPES)}"
+                                    f"（实验类型须形如 `x-<命名空间>-<名称>`，如 `x-mine-weather`）"))
     if "status" in e.meta and (not isinstance(e.meta["status"], str)
                                or e.meta["status"] not in VALID_STATUS):
         findings.append(Finding("CA102", "error", rel,
@@ -160,9 +179,22 @@ def check_structure(e: Entry, findings: list[Finding],
             findings.append(Finding("CA105", "error", rel,
                                     f"id={e.meta['id']!r} 非法（仅允许小写字母/数字/连字符）"))
     for k in e.meta:
-        if k not in known_fields and not str(k).startswith("x-"):
-            findings.append(Finding("CA106", "error", rel,
-                                    f"未定义字段 `{k}`（扩展字段须 x- 前缀）"))
+        if k in known_fields or str(k).startswith("x-"):
+            continue
+        # 契约 `x-relation-vocabulary.value.accept` 登记的历史拼法必须认下：
+        # `canon-ref:` / `depends-on:` 是契约声明合法的写法，判成「未定义字段」是硬错误。
+        # 认下的范围严格等于登记表（`canonical_relation_name`），编辑距离 ≤1 的机械变体
+        # （`canon_ref` 单数之类）仍然报错——字段名拼错该被抓住。
+        if isinstance(k, str) and store.canonical_relation_name(k) in known_fields:
+            continue
+        findings.append(Finding("CA106", "error", rel,
+                                f"未定义字段 `{k}`（扩展字段须 x- 前缀）"))
+    # CA112: YAML 重复键。PyYAML 对重复键是 last-wins 且一声不响，写在前面的那一条
+    # 等于没写；`depends_on` 写两遍会让一条边在解析结果里彻底消失，而所有规则都看不到。
+    for k in e.duplicate_keys:
+        findings.append(Finding("CA112", "error", rel,
+                                f"字段 `{k}` 在 frontmatter 里出现了不止一次：YAML 只保留最后一个，"
+                                f"写在前面的那条等于没写"))
     # CA109: bool 字段类型
     for bf in ("load_bearing", "ai_assisted"):
         if bf in e.meta and not isinstance(e.meta[bf], bool):
@@ -251,10 +283,10 @@ def check_content(e: Entry, findings: list[Finding]) -> None:
 # 从前这六种字段一条都不查，于是 `owns: [幽灵]` 在 canonlint 里完全隐形。
 # 只取**规范名**：`RELATION_TYPE_NAMES` 的键包含每一种可接受拼法，按它遍历会把同一条
 # 边按 canon-ref / canon-refs / canonrefs 报三遍。
-_RELATIONS_NEEDING_PLAIN_EXISTENCE_CHECK = tuple(
-    name for name in sorted(store.RELATION_VOCABULARY)
-    if name not in ("canon_refs", "conflicts_with", "depends_on",
-                    "exchanges_with", "derives_legitimacy_from"))
+# 有专属引用检查的关系（各自带状态语义，见下）。
+_RELATIONS_WITH_OWN_REFERENCE_RULES = frozenset({
+    "canon_refs", "conflicts_with", "depends_on", "exchanges_with",
+    "derives_legitimacy_from"})
 
 
 def check_refs(entries: list[Entry], index: dict[str, Entry],
@@ -286,12 +318,12 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
             target = check_target(ref_id, "canon_refs")
             if target is None or target.status == "canon":
                 continue
-            if target.status == "archived" and not _has_successor(target):
+            if target.status == "archived" and not _has_successor(target, index):
                 continue  # 没有承接者，由 CA405 在 archived 条目侧报告，避免双报
             if target.status == "archived":
                 findings.append(Finding("CA402", "error", rel,
                                         f"canon_refs 目标 `{ref_id}` 已 archived，"
-                                        f"请迁移至其 superseded_by 承接条目 `{target.meta.get('superseded_by')}`"))
+                                        f"请迁移至其承接条目 `{_valid_successor(target, index)}`"))
             else:
                 findings.append(Finding("CA402", "error", rel,
                                         f"canon_refs 目标 `{ref_id}` 状态为 {target.status}，须为 canon"))
@@ -311,11 +343,16 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
         for ref in e.edges_of("derives_legitimacy_from"):
             check_target(ref.target, "derives_legitimacy_from")
 
-        # 其余关系（owns / controls / extracts / coerces / legitimizes / owes）：语义住在
-        # classlint 那一层，但「引用指向不存在的 id」是结构问题，不该因为规则归属而看不见。
-        for name in _RELATIONS_NEEDING_PLAIN_EXISTENCE_CHECK:
-            for ref in e.edges_of(name):
-                check_target(ref.target, name)
+        # 其余关系，**包括作者自定义的关系名**（owns / controls / extracts / coerces /
+        # legitimizes / owes，以及 `relations: [{type: mentor-of}]` 这种自由档）：
+        # 语义住在 classlint 那一层，但「引用指向不存在的 id」是结构问题，不该因为规则
+        # 归属而看不见。以前只列了六个具名字段，于是 `type: mentor-of` 指向幽灵时
+        # classlint 报 CL105、canonlint 一声不响——同一份数据两个引擎两种结论，而且这处
+        # 差异没在任何地方登记过。
+        for edge in e.relations:
+            if edge.type in _RELATIONS_WITH_OWN_REFERENCE_RULES:
+                continue
+            check_target(edge.target, edge.type)
 
         # superseded_by 的目标存在性（CA401）
         sb = e.meta.get("superseded_by")
@@ -323,6 +360,9 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
             if not isinstance(sb, str):
                 findings.append(Finding("CA109", "error", rel,
                                         f"superseded_by={sb!r} 必须是 id 字符串或 null"))
+            elif sb == e.id:
+                findings.append(Finding("CA109", "error", rel,
+                                        "superseded_by 不能指向自己（承接者须是另一条目）"))
             else:
                 check_target(sb, "superseded_by")
 
@@ -337,9 +377,19 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
             for o in index.values() if not o.parse_error
             for ref_id in (r.target for r in o.edges_of("canon_refs"))
         )
-        if referenced and not _has_successor(e):
-            why = ("未填 `superseded_by`" if "superseded_by" not in e.meta
-                   else "声称没有承接者（`superseded_by: null`）")
+        if referenced and not _has_successor(e, index):
+            sb = e.meta.get("superseded_by")
+            if "superseded_by" not in e.meta:
+                why = "未填 `superseded_by`"
+            elif sb is None:
+                why = "声称没有承接者（`superseded_by: null`）"
+            elif not isinstance(sb, str) or not sb:
+                why = f"`superseded_by={sb!r}` 不是合法的承接者"
+            elif sb == e.id:
+                why = "`superseded_by` 指向自己（承接者不能是本条目）"
+            else:
+                why = f"`superseded_by` 指向不存在的条目 `{sb}`"
+            why += "（没有可迁移的承接条目）"
             findings.append(Finding("CA405", "error", e.rel,
                                     f"archived 条目仍被 canon_refs 引用，但{why}——降级处置不完整"))
 
@@ -533,7 +583,7 @@ def _entry_export(e: Entry) -> dict:
         "ai_assisted": meta.get("ai_assisted"),
         "superseded_by": meta.get("superseded_by"),
         "parse_error": e.parse_error,
-        "body_chars": len(e.body or ""),
+        "body_chars": len((e.body or "").strip()),
         "body_excerpt": (e.body or "").strip()[:EXPORT_EXCERPT_CHARS],
         "x_fields": {k: v for k, v in meta.items() if str(k).startswith("x-")},
         "relations": [{"source": e.id, "type": r.type, "target": r.target, **r.attrs}

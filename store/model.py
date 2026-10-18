@@ -58,6 +58,7 @@ from .parse import (  # noqa: E402  (import 位置：与下面的常量定义同
     canonical_relation_name,
     contract_deprecations,
     contract_relation_names,
+    judged_relation_name,
     nearest_relation_name,
     read_frontmatter,
     shape_variants,
@@ -320,10 +321,27 @@ class Entry(RawEntry):
 
     # ---- 旧具名字段（保持原样；`deps`/`conflicts`/`canon_ref_ids` 是规则的现有输入）----
 
+    def meta_field(self, field: str):
+        """按字段名取值：规范键优先，其次契约登记的历史拼法（`canon-ref:` / `depends-on:`）。
+
+        契约 `x-relation-vocabulary.value.accept` 说这些拼法「工具必须一并认下」，以前
+        只有 `relations[].type` 那条路认（`canonical_relation_name`），**字段名这条路
+        完全没认**：`canon-ref: [b]` 在 canonlint 报 CA106「未定义字段」，在 classlint
+        被收下却不建边——同一张卡一个硬错误、一个整族规则静默失效。认下的范围严格等于
+        契约的登记表（`canonical_relation_name`），不顺手放宽到编辑距离 ≤1 的机械变体：
+        字段名拼错该报错，不该被猜。
+        """
+        if field in self.meta:
+            return self.meta[field]
+        for key in self.meta:
+            if isinstance(key, str) and canonical_relation_name(key) == field:
+                return self.meta[key]
+        return None
+
     @cached_property
     def deps(self) -> tuple[list[Dep], list[SchemaError]]:
         """解析 depends_on（§5.4 schema），结果缓存。"""
-        raw = self.meta.get("depends_on")
+        raw = self.meta_field("depends_on")
         if raw is None:
             return [], []
         if not isinstance(raw, list):
@@ -370,7 +388,7 @@ class Entry(RawEntry):
         的既定分工（形状坏掉时照旧建边，坏值留给判定层）。存储层抢着报会把 CA102 变成
         CA109，等于把一条判定规则悄悄搬走。
         """
-        raw = self.meta.get("conflicts_with")
+        raw = self.meta_field("conflicts_with")
         if raw is None:
             return [], []
         if not isinstance(raw, list):
@@ -394,7 +412,7 @@ class Entry(RawEntry):
     @cached_property
     def canon_ref_ids(self) -> tuple[list[str], list[SchemaError]]:
         """canon_refs 必须是字符串列表，结果缓存。"""
-        raw = self.meta.get("canon_refs")
+        raw = self.meta_field("canon_refs")
         if raw is None:
             return [], []
         if not isinstance(raw, list):
@@ -453,7 +471,10 @@ class Entry(RawEntry):
                     bad = True
             if bad:
                 continue
-            canonical_type = canonical_relation_name(item["type"])
+            # 归一化分两级：契约登记的历史拼法 + 编辑距离 ≤1 的近失（`depend_on`）。
+            # 第二级必须**真的换名建边**，否则 CA110 说「已按规范名判定」而那条边根本
+            # 没进图（评审 blocker：漏判 CA401/CA501/CA504，冤报 CA302/CA503）。
+            canonical_type = judged_relation_name(item["type"])
             if canonical_type == "depends_on" and self.depends_on_requires_annotations:
                 # §5.4：depends_on 对象的 kind / critical **必填**（缺 = CA107）。
                 # 这条以前只对旧写法生效，于是规范形省掉 kind 就能让 CA501（层级方向）
@@ -524,7 +545,7 @@ class Entry(RawEntry):
                 continue
             name, attrs = _RELATION_FIELD_SPECS[field]
             edges, field_errs = _parse_named_relation(
-                self.meta.get(field), field, name, attrs)
+                self.meta_field(field), field, name, attrs)
             out.extend(edges)
             errs.extend(field_errs)
         return out, errs
@@ -565,10 +586,13 @@ class Entry(RawEntry):
                         f"relations[{i}]", old_rel, old_kind, becomes,
                         item["target"], kind_style=True)))
                 elif raw_type == old_kind:
-                    # 把注解的值当成了关系名——归一化会把它接到新关系上，顺手提示一句。
-                    out.append(SchemaError("CA111", _migration_message(
-                        f"relations[{i}]", old_rel, old_kind, becomes,
-                        item["target"], kind_style=False)))
+                    # 把注解的**取值**当成了关系名（`type: legitimacy`）。归一化会把它接到
+                    # 新关系上，所以判定是对的；但文案不能再说「depends_on + kind=」——
+                    # 卡里根本没有 depends_on，作者照着这句去找会找不到（评审：判得对、话说错）。
+                    out.append(SchemaError("CA111", (
+                        f"relations[{i}] 把注解的取值当成了关系名（type={old_kind}）："
+                        f"「{becomes}」现在是独立的关系名，本条已按它判定。"
+                        f"请把 type 改写为 {becomes}")))
         return out
 
     @cached_property

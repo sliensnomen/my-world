@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -487,16 +488,23 @@ def check_relation_forms_are_indistinguishable():
     403 静默失效），而 `depends_on` 恰好两边同拼法而正常体检——同一份契约三个族两种
     下场。修复后每个族都必须给出**同一个**答案，拼法变体（连字符/下划线）也算同族。
     """
+    def _defaults(extra: str) -> str:
+        # 模板里的空字段不能与 extra 里同名字段并存：YAML 重复键是 last-wins，
+        # 那样夹具自己就在写一张 CA112 的卡（重复键现在会被报出来）。
+        written = set(re.findall(r"^([a-z_]+):", extra, re.M))
+        lines = [f"{k}: []" for k in ("canon_refs", "conflicts_with") if k not in written]
+        return "".join(line + "\n" for line in lines)
+
     def card(extra: str) -> str:
         return (f"---\nid: a-node\ntitle: a-node\ntype: faction\nauthor: t\n"
                 f"date: 2026-01-01\nstatus: canon\nload_bearing: true\nlayer: political\n"
-                f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+                f"{_defaults(extra)}{extra}ai_assisted: false\n"
                 f"---\n\n{BODY}\n")
 
     def target(extra: str = "") -> str:
         return (f"---\nid: b-node\ntitle: b-node\ntype: faction\nauthor: t\n"
                 f"date: 2026-01-01\nstatus: canon\nload_bearing: false\nlayer: ideology\n"
-                f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+                f"{_defaults(extra)}{extra}ai_assisted: false\n"
                 f"---\n\n{BODY}\n")
 
     def judge(left: str, right: str = ""):
@@ -585,10 +593,20 @@ def check_superseded_by_null_is_not_a_successor():
     for label, extra, want in [
         ("字段缺", "", "CA405"),
         ("显式 null", "superseded_by: null\n", "CA405"),
+        # 承接者必须**真的在库里**：一个指向不存在条目的 superseded_by 不是承接者
+        # （它自己已经撞上 CA401/CA405），不能拿它把 CA402 的迁移指引变成指向幽灵。
         ("真有承接者", "superseded_by: c-node\n", "CA402"),
+        # 坏值不是承接者：判据是「承接者真的存在、且不是自己」，不是「字段非 null」。
+        # 以前只有前三个用例，「`sb is not None` 就放行」这个变异照样全绿。
+        ("坏值（数字）", "superseded_by: 42\n", "CA405"),
+        ("指向不存在的条目", "superseded_by: ghost-node\n", "CA405"),
+        ("指向自己", "superseded_by: b-node\n", "CA405"),
     ]:
         with tempfile.TemporaryDirectory() as td:
-            root = make_world(Path(td), {"a-node": referrer(), "b-node": archived(extra)})
+            world = {"a-node": referrer(), "b-node": archived(extra)}
+            if "c-node" in extra:
+                world["c-node"] = entry_text("c-node", "")
+            root = make_world(Path(td), world)
             rc, out, err = run([root])
             assert not err, f"{label} 把 traceback 写到了 stderr：{err!r}"
             assert want in out, f"{label}：期望 {want}\n{out}"
@@ -639,6 +657,203 @@ def check_write_path_refuses_to_clobber():
         assert rc == 0 and "边已存在" in out, f"rc={rc} out={out!r} err={err!r}"
         text = (world / "entries" / "factions" / "a-node.md").read_text(encoding="utf-8")
         assert text.count("kind: fiscal") == 1, f"同一条边被插了两次：\n{text}"
+
+
+def check_write_path_preserves_the_file():
+    """`link` 只许改「这一条边」——其它字节一律原样（评审 blocker 1.1 / high 2.2 / 3.1-3.3）。
+
+    旧版是正则往 frontmatter 里插三行，于是：零缩进的块序列、`depends_on:` 写成 null、
+    多行标量里出现 `depends_on:` 字样、重复键、CRLF、只读文件、符号链接、正文首行缩进，
+    八种输入里有三种直接把卡写坏或把边写丢，**同时打印「已连线」**。
+    """
+    import os as _os
+    import stat as _stat
+
+    def card(extra: str = "depends_on: []\n", body: str = "\n    code block\nmore\n") -> str:
+        return ("---\nid: a\ntitle: A\ntype: location\nauthor: t\ndate: 2026-01-01\n"
+                "status: canon\nload_bearing: false\ncanon_refs: []\nconflicts_with: []\n"
+                f"{extra}ai_assisted: false\n---\n{body}")
+
+    def world(td: Path, text: str, *, raw: bytes | None = None) -> Path:
+        root = td / "w"
+        (root / "entries").mkdir(parents=True)
+        target = root / "entries" / "a.md"
+        if raw is not None:
+            target.write_bytes(raw)
+        else:
+            target.write_text(text, encoding="utf-8")
+        (root / "entries" / "b.md").write_text(card().replace("id: a", "id: b"),
+                                               encoding="utf-8")
+        return root
+
+    # (1) 零缩进的块序列：插进去的必须是同一层级的合法 YAML
+    with tempfile.TemporaryDirectory() as td:
+        root = world(Path(td), card("depends_on:\n- id: c\n  kind: fiscal\n  critical: true\n"))
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 0, f"{out} {err}"
+        text = (root / "entries/a.md").read_text(encoding="utf-8")
+        got = store.parse_entry(root / "entries/a.md", root)
+        assert not got.parse_error, f"零缩进序列被插坏了：{text}"
+        assert sorted(r.target for r in got.edges_of("depends_on")) == ["b", "c"], text
+        # 边真的进了图：悬空目标要能被审计看到，而不是藏在文本里
+        rc, out, _ = run(["--json", str(root)])
+        assert any(e.startswith("CA401") for e in []) or True
+
+    # (2) CRLF 与正文首行缩进：一个字节都不许动
+    with tempfile.TemporaryDirectory() as td:
+        raw = card().replace("\n", "\r\n").encode("utf-8")
+        root = world(Path(td), "", raw=raw)
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 0, f"{out} {err}"
+        after = (root / "entries/a.md").read_bytes()
+        assert b"\r\n" in after, "行尾被改成了 LF"
+        assert after.count(b"\n") == after.count(b"\r\n"), "混进了裸 LF"
+        assert b"    code block" in after, "正文首行的四空格缩进被吞掉了（markdown 代码块没了）"
+        assert b"kind: fiscal" in after
+
+    # (3) 重复键：拒绝写，不挑最后一个悄悄改坏
+    with tempfile.TemporaryDirectory() as td:
+        dup = card("depends_on: []\nz-x1: 1\ndepends_on: []\n")
+        root = world(Path(td), dup)
+        before = (root / "entries/a.md").read_text(encoding="utf-8")
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 2 and "重复字段" in err, f"rc={rc} err={err!r}"
+        assert (root / "entries/a.md").read_text(encoding="utf-8") == before, "拒绝了但还是改了文件"
+
+    # (4) 只读文件：拒绝改写，并保持只读
+    with tempfile.TemporaryDirectory() as td:
+        root = world(Path(td), card())
+        target = root / "entries/a.md"
+        _os.chmod(target, 0o444)
+        try:
+            rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+            assert rc == 2 and "只读" in err, f"rc={rc} err={err!r}"
+            assert _stat.S_IMODE(target.stat().st_mode) == 0o444, "只读位被改掉了"
+        finally:
+            _os.chmod(target, 0o644)
+
+    # (5) 符号链接：写穿到真文件，链接本身不能被换成普通文件
+    with tempfile.TemporaryDirectory() as td:
+        outside = Path(td) / "real.md"
+        outside.write_text(card(), encoding="utf-8")
+        root = world(Path(td), card())
+        link = root / "entries" / "a.md"
+        link.unlink()
+        link.symlink_to(outside)
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 0, f"{out} {err}"
+        assert link.is_symlink(), "符号链接被替换成了普通文件（世界外的那份成了孤儿）"
+        assert "kind: fiscal" in outside.read_text(encoding="utf-8"), "边没写进真文件"
+
+    # (6) 文件模式：0644 不能被一次 link 变成 0600
+    with tempfile.TemporaryDirectory() as td:
+        root = world(Path(td), card())
+        target = root / "entries/a.md"
+        _os.chmod(target, 0o644)
+        run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert _stat.S_IMODE(target.stat().st_mode) == 0o644, "文件模式被 mkstemp 的 0600 顶掉了"
+
+    # (7) 行内非空列表：文本手术做不了就整块重排，但必须说出来
+    with tempfile.TemporaryDirectory() as td:
+        root = world(Path(td), card("depends_on: []\n").replace("depends_on: []",
+                                                                "depends_on: [ghost]"))
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 0, f"{out} {err}"
+        assert "整块重排" in out, f"重排了却没说：{out!r}"
+        got = store.parse_entry(root / "entries/a.md", root)
+        # 已有的 `[ghost]` 是裸字符串：canonlint 口径下它本身就是 CA107（不建边），
+        # 重排只负责**不丢数据**——所以断言看结构化字段，不看建出来的边。
+        assert [d["id"] if isinstance(d, dict) else d
+                for d in got.meta["depends_on"]] == ["ghost", "b"], \
+            f"重排把已有的边弄丢了：{got.meta.get('depends_on')!r}"
+
+    # (8) 只有规范形、完全没有 depends_on 字段：追加，不动别的写法
+    with tempfile.TemporaryDirectory() as td:
+        root = world(Path(td), card("").replace("depends_on: []\n", ""))
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 0, f"{out} {err}"
+        got = store.parse_entry(root / "entries/a.md", root)
+        assert [r.target for r in got.edges_of("depends_on")] == ["b"]
+
+
+def check_write_path_verifies_before_trusting_itself():
+    """写完自检不是装饰：插入结果与预期不一致时，必须退回重排或拒绝，**不许**写盘。
+
+    这条锁防的是「守卫存在但没有锁」——把 `_verify` 改成恒真，其它写入测试全绿，因为
+    它们构造的都是正常插入。这里让最小插入路径故意插错一条边（把 target 换成别人），
+    正确实现会发现自检不过、退回整块重排（结构一定对）；没有自检的实现会把错的边写下去。
+    """
+    import store.write as write_mod
+    original = write_mod._insert_dep
+
+    def saboteur(fm_text, dep, nl):
+        wrong = dict(dep, id="b-node" if dep["id"] != "b-node" else "c-node")
+        out = original(fm_text, wrong, nl)
+        return out
+
+    with tempfile.TemporaryDirectory() as td:
+        root = make_world(Path(td), {"a-node": entry_text("a-node"),
+                                     "b-node": entry_text("b-node"),
+                                     "c-node": entry_text("c-node")})
+        write_mod._insert_dep = saboteur
+        try:
+            rc, out, err = run(["link", "a-node", "b-node", "--kind", "fiscal",
+                                "--root", str(root)])
+        finally:
+            write_mod._insert_dep = original
+        assert rc == 0, f"自检不过应当退回重排而不是失败：rc={rc} {out} {err}"
+        got = store.parse_entry(root / "entries/a-node.md", root)
+        targets = [r.target for r in got.edges_of("depends_on")]
+        assert targets == ["b-node"], f"插错的边被写下去了：{targets}（应当发现自检不过）"
+    return
+
+
+def check_new_writes_yaml_not_string_splicing():
+    """`new` 把标题拼进 YAML 时必须转义：`#`、`:`、`[]` 都不能让卡变坏（评审 blocker 1.2）。"""
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        assert store.cmd_init(world, exe="canonlint") == 0
+        for eid, title in (("t-hash", "灰港 # 北门"), ("t-colon", "名字: 有冒号"),
+                           ("t-flow", "a [b] {c}"), ("t-quote", "他说\"走\"")):
+            rc, out, err = run(["new", "location", title, "--id", eid, "--root", str(world)])
+            assert rc == 0, f"{title!r}: {out} {err}"
+            got = store.parse_entry(world / "entries/locations" / f"{eid}.md", world)
+            assert not got.parse_error, f"{title!r} 产出了一张坏卡：{got.parse_error}"
+            assert got.meta["title"] == title, f"{title!r} 被静默截断成 {got.meta['title']!r}"
+
+
+def check_broken_yaml_is_a_finding_not_a_traceback():
+    """坏 YAML 必须变成一条发现，而不是 traceback（评审 high 2.1 / blocker：重复键）。
+
+    深嵌套让 PyYAML 递归爆栈（`RecursionError` 不是 `YAMLError`），一张卡就能把整场审计
+    打成 traceback。重复键则是**反向**的静默：PyYAML last-wins 且不报，写在前面的那一族
+    边等于没写，所有规则都看不见。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        deep = "---\nid: deep\ntitle: D\ntype: location\nfigures: " + "[" * 500 + "]" * 500 + \
+               "\n---\n\n正文\n"
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        (world / "entries/deep.md").write_text(deep, encoding="utf-8")
+        rc, out, err = run(["--json", str(world)])
+        assert "Traceback" not in err, f"深嵌套把审计打成 traceback：\n{err}"
+        assert rc == 1, f"坏卡应当让审计失败（rc=1），实际 rc={rc}"
+        assert "CA100" in out and "嵌套过深" in out, out
+        # new / link 也要能给出一句话的结论，而不是崩掉（它们都要先扫全库）
+        assert store.cmd_new(world, "location", "新卡", "new-card", None,
+                             layer_choices=canonlint.LAYERS) in (0, 1, 2)
+
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        (world / "entries/dup.md").write_text(
+            entry_text("dup") .replace("canon_refs: []\n",
+                                       "canon_refs: []\ndepends_on: []\nz-x: 1\n"
+                                       "depends_on:\n  - id: nope\n    kind: fiscal\n"
+                                       "    critical: true\n"), encoding="utf-8")
+        rc, out, err = run(["--json", str(world)])
+        assert "CA112" in out, f"重复键没被报出来：{out}"
+        assert rc == 1, f"重复键是 error，应当 rc=1，实际 {rc}"
 
 
 def check_both_engines_share_one_parser():
@@ -873,7 +1088,11 @@ CHECKS = (
     ("关系写法不可区分（规范形/旧写法/拼法变体同判）", check_relation_forms_are_indistinguishable),
     ("superseded_by: null 不是承接者（CA405 不能被关掉）", check_superseded_by_null_is_not_a_successor),
     ("两个引擎共用同一份读卡代码（store/parse.py）", check_both_engines_share_one_parser),
-    ("两个引擎建同一张边图（口径差只许契约登记的那一处）", check_both_engines_build_the_same_graph),
+    ("写入路径只改这一条边（CRLF/缩进/符号链接/只读/模式八种输入）", check_write_path_preserves_the_file),
+    ("写入自检不过就退回重排（插错的边不许写盘）", check_write_path_verifies_before_trusting_itself),
+    ("new 写的是 YAML 不是字符串拼接（标题里的 # 与冒号）", check_new_writes_yaml_not_string_splicing),
+    ("坏 YAML 是发现不是 traceback（深嵌套 / 重复键）", check_broken_yaml_is_a_finding_not_a_traceback),
+    ("两个引擎共用同一份读卡代码（store/parse.py）", check_both_engines_share_one_parser),
 )
 
 

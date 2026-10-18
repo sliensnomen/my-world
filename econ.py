@@ -38,6 +38,12 @@ def check_entry(meta: dict, rel: str, add) -> None:
         v, u = f.get("value"), f.get("unit")
         if u is None:
             add("CA601", "error", f"figures.{name} 缺 unit")
+        elif not isinstance(u, str):
+            # 规格 PROTOCOL-ECON.md:25「unit 必须是字符串，自由文本单位」。类型不查的话
+            # `unit: 123` / `true` / `[a]` / `{}` 全都静默通过，而 CA602 照样拿它参与
+            # 参数表比较——一个不是单位的单位，在结论里被当成合法的单位。
+            add("CA601", "error",
+                f"figures.{name}.unit={u!r} 必须是非空字符串（自由文本单位，如 `石/亩`）")
         if not isinstance(v, (int, float)) or isinstance(v, bool):
             add("CA601", "error", f"figures.{name}.value={v!r} 非数字")
             continue

@@ -19,7 +19,7 @@
    这条等价承诺在第一版里有个反例：规范形曾经**不强制** `kind`，而 CA501/CA502/CA503 都以 `kind` 为门禁，于是「规范形省略 `kind`」= 合法地关掉整族承重链条判定。§5.4 说的是 `depends_on` 对象的 `kind`/`critical` 必填，与写法无关，所以现在**两种写法一致**：规范形的 `depends_on` 项缺 `kind` 或 `critical` 同样报 CA107，不再跳过。
 3. 契约侧字段面未变：`world.schema.json` 的 `x-contract-version` 保持 `0.2`。
 4. **关系名的唯一真值表进了契约**（`x-relation-vocabulary`）：契约声明的拼法、历史拼法与规范名归一化成同一族。此前契约把 `canon_refs` 写成 `canon-ref`、`conflicts_with` 写成 `conflicts-with`，而两个引擎按规范名精确匹配——**契约自己声明的写法对判定完全隐形**（整族 CA4xx 静默失效），`depends_on` 却因两边恰好同拼法而正常体检：同一份契约三个族两种下场。现在 `canon-ref`/`canon-refs`/`canon_refs` 与 `conflicts-with`/`depends-on` 等变体一律归一到规范名再判定。
-5. **CA110 拼写近失守卫**（warning，非致命）：规范形 `relations[].type` 与某个规范名编辑距离 ≤1 时提示疑似拼写错误，工具**仍按归一化后的规范名判定该边**；`x-` 前缀与真正的新关系名不报（自由档不变）。修复前 `depends-on` 一字符之差会**双向出错**：既漏判 CA501/CA401/CA504，又凭空造出 CA302/CA503（谎称作者没声明依赖）。
+5. **CA110 拼写近失守卫**（warning，非致命）：规范形 `relations[].type` 与某个规范名编辑距离 ≤1 时提示疑似拼写错误，工具**真的按归一化后的规范名把这条边建进图**（不是只发一句提示）；`x-` 前缀、契约登记过的历史拼法、真正的新关系名都不报（自由档不变）。修复前 `depends-on` 一字符之差会**双向出错**：既漏判 CA501/CA401/CA504，又凭空造出 CA302/CA503（谎称作者没声明依赖）。距离在去掉连字符/下划线之后算——否则协议自己举的例子 `depends-onn` 会落在阈值外，整条边静默（v1.1 修订记录第 19 条）。
 6. **降级级联的 `null` 语义统一**：`superseded_by: null` 是 CA101 允许的「无承接者」写法，因此 CA405（目标侧）把「字段缺」与「显式 null」当成同一件事，CA402（引用方）对两者都不报——以前填一个 `null` 就能把 CA405 关掉，且 CA402 会把 Python 的 `None` 印进报告。
 7. **降级承接对豁免 CA201**：承接条目按定义要接着旧条目写，两份正文天然高度相似；`superseded_by` 声明的两方不再判疑似重复。
 8. **提示性规则不阻断草稿**：CA301（命中承重墙关键词但未声明）只对**已定档**（trial/canon）条目发出——§5.3 说「审计器不替作者做决定」，而 `--strict` 会把任何 warning 变成失败；draft 写到「政治/经济」不该无法提交。
@@ -37,6 +37,15 @@
 
 18. **两个引擎共用同一份边层，读卡合并才算到底**。`db1ef88` 合并了文件层（`store/parse.py`：id 语法、frontmatter 切分、契约词表、拼法归一化），但**建边与形状校验**仍是 classlint 自己一份（约 90 行），于是契约声明合法的 `conflicts_with: [{id, stance}]`、`exchanges_with: [{id, what}]` 在 classlint 里变成硬错误、**整条边消失**；`depends_on + kind: legitimacy` 的搬家也只在 canonlint 侧执行——同一份数据两个引擎判得不一样。现在 `Entry.relations` 与 `relation_shape_errors` 只有 `store/model.py` 一份实现，classlint 只把形状问题映射成本引擎编号（CL104），并新增 CL106（旧写法搬家提示，与 CA111 同一件事）。保留的唯一差异是契约 `x-stricter-than-contract` 第一条登记的 `depends_on` 口径（canonlint 要求对象式且 `kind`/`critical` 给全，classlint 按自己的协议 §2.2 降为可选）——它现在是一个开关 `Entry.depends_on_requires_annotations`，而不是两份代码。两把新锁钉住它：`tests/test_store.py`「两个引擎建同一张边图」（17 种形状两边跑，边图含顺序与形状问题必须逐条相同，例外只许是登记的那处口径差）与 `tests/test_schema.py` 改写后的别名锁（遍历**契约**逐个真的解析：声明合法的形状必须建出边，多写未声明的键必须报错）。后者刚写完就抓出两处真缺陷：canonlint 的 `deps` 拒收契约声明合法的 `depends_on.note`（CA107 冤报），`conflicts_with` 的对象式多写键无声通过。
 
+19. **写入路径改成「改结构 + 写完自检」，坏 YAML 变成发现而不是 traceback**。〔这一条是第二轮评审（`docs/代码评审报告-往返与变形.md`、`docs/代码评审报告-语义.md`）的收口，包含破坏性改动：`link` 不再做文本级插入。〕
+    - **`link` 是结构级最小改动**：键的位置由 YAML 解析器给（不再用正则猜），在那个位置插入这一条边，其它行、注释、围栏字节与正文**一个字节不动**；写完重新解析、比对「旧结构 + 这一条边」，不一致就退到整块重排再验一次，还不一致就**拒绝写盘**。旧实现是正则往 frontmatter 里塞三行：零缩进的块序列、`depends_on:` 写成 null、多行标量里出现 `depends_on:` 字样这三种**合法的**写法会写坏卡或写丢边，同时打印「已连线」。代价是重排路径会丢 frontmatter 里的注释与键序——**宁可拒绝，不许写坏**，且两条路径都会在输出里说明。
+    - **`new` 用 YAML 序列化**，不再把标题拼进字符串：`title: 灰港：北城门` 与 `title: a # b` 以前分别产出一张坏卡和一次静默截断。
+    - **行尾/模式/链接**：`link` 保留 CRLF/CR（以前静默归一成 LF）、保留文件模式（以前被 `mkstemp` 的 0600 顶掉）、顺着符号链接写真正的文件（以前把链接替换成普通文件，世界外那份成了孤儿）、只读文件直说「拒绝改写」（以前无声替换）。
+    - **坏 YAML 是发现**：深嵌套（几百层 `[`）抛 `RecursionError`——它不是 `YAMLError`，以前直接逃出 `except`，一张卡就能把整场审计打成 traceback。现在报 CA100。**重复键**则相反地静默（PyYAML last-wins 且不报），新增 **CA112**：写在前面的那一族边等于没写，所有规则都看不见。
+    - **CA110 兑现了它的文案**：近失拼写（`depend_on`/`extractss`/`depends-onn`）以前只发一句提示、边仍以拼错的名字留在图里，于是漏判 CA401/CA501/CA504 又冤报 CA302/CA503；现在真的按规范名建边，距离在去掉连字符/下划线后算。契约 `value.accept` 登记的**字段名**拼法（`canon-ref:`/`depends-on:`）以前只有 `relations[].type` 这条路认，字段名那条路报 CA106 冤报，现在两条都认（认下的范围严格等于登记表，机械变体照旧报错）。
+    - **其余小口**：CA103 只收逐字符 `YYYY-MM-DD`（`"20261015"`/`"2026-W42-6"` 以前静默通过，与文案和契约 pattern 矛盾）；CA405/CA402 以「承接者真的存在」为准（坏值以前能把 CA405 消音、把 CA402 的迁移指引变成指向幽灵或自身）；CA601 查 `unit` 类型；自由档自定义关系名的悬空目标两个引擎都报（收起一处未登记的差异）；classlint 侧 PE001 跳过悬空目标（不再与 CL105 双报）、`--impact` 不把主体列进自己的下游（对齐 CA504）、指错目录 `exit 2`（不再「0 条目 + 全绿」）、新增 **CL107** 近失拼写提示。
+    - 锁：`tests/test_store.py` 新增「写入路径只改这一条边（八种输入）」「`new` 写的是 YAML 不是字符串拼接」「坏 YAML 是发现不是 traceback」；`tests/run_tests.py` 新增「拼错一个字符的关系名按规范名判定」并把「每一种关系的悬空引用」改成从契约推导（上一版手写清单漏了 `owes`）；`classlint/tests/run_tests.py` 新增「四条判得不对/静默通过的守卫」。
+
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
 - §6.5 JSON schema 的 `entry` 字段允许伪值 `"(仓库级)"`，用于 CA505 等仓库级 finding
@@ -45,7 +54,7 @@
 **v1.0 封版记录（三个测试世界 dogfood 完成）：**
 1. **kind 初始集封版**：六值冻结（resource/production/economy/fiscal/manpower/legitimacy）。证据：魔戒、冰与火、沙丘三个差异极大的世界中，物质五值零例外；装不下的全部落在规范族（`x-will-binding`、`x-magic-logistics`、`x-faith-engineering` 各出现一次，证据不足以升格，留档观察）
 2. **`x-` 实验通道永久开放**：不作为过渡机制，作为协议的长期泄压阀（CA108 info 级收集）
-3. 一致性终审完成：规则表 23 条（CA100–CA109、CA201、CA301/302、CA401–CA405、CA501–CA505）与参考实现逐条互证（v1.1 增列 CA110、CA111，见 §6.3 与 §9 修订记录）；清除死代码（v0.4 的 CA503 旧阈值常量）
+3. 一致性终审完成：规则表 26 条（CA100–CA112、CA201、CA301/302、CA401–CA405、CA501–CA505）与参考实现逐条互证（v1.1 增列 CA110、CA111、CA112，见 §6.3 与 §9 修订记录）；清除死代码（v0.4 的 CA503 旧阈值常量）
 4. 自本版起，结构性变更走 major 版本（§9）
 
 **v0.5 修订记录（魔戒/冰火真实数据 dogfood 回流）：**
@@ -346,7 +355,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 
 **两种写法，判定等价（v1.1）：** 关系可以写成旧具名字段（`depends_on:` / `conflicts_with:` / `canon_refs:` / `exchanges_with:` + classlint 的关系字段），也可以写成规范形 `relations:`（形状见 `world.schema.json` 的 `x-relation-source`）。审计器把两种写法归一化到同一张边表（`Entry.relations`）之后再判定——**同一条边，写在哪，报的都一样**，§5.4 的 `kind`/`critical` 必填对两条路径同样成立。
 
-剩下的唯一差异在**未知 `type` 值**上：规范形里未知的 `type` 原样保留、不下判语（自由档允许用户自定义关系名，见 §4.4），但**与任一规范名编辑距离 ≤1** 的值会记一条 CA110 warning（拼写近失守卫）——`depends-onn` 这类手滑既不能静默漏判，也不能凭空造出别的结论（v1.1 修订记录第 5 条）。
+剩下的唯一差异在**未知 `type` 值**上：规范形里未知的 `type` 原样保留、不下判语（自由档允许用户自定义关系名，见 §4.4），但**与任一规范名编辑距离 ≤1**（去掉连字符/下划线后算）的值会记一条 CA110 warning（拼写近失守卫），并把这条边**按规范名建进图**——`depends-onn` 这类手滑既不能静默漏判，也不能凭空造出别的结论（v1.1 修订记录第 5、19 条）。另一方面，自定义关系名（`mentor-of`）的**悬空目标**两个引擎都查（CA401 / CL105）：这一处以前只有 classlint 查，属于未登记的差异，v1.1 修订记录第 19 条收起。
 
 ### 5.5 链条合法性
 
@@ -396,23 +405,24 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 | CA100 | error | 文件无法解析（无 frontmatter / YAML 错误 / 非映射） |
 | CA101 | error | 缺少必填字段（按 §2.2，含条件必填） |
 | CA102 | error | 枚举字段非法（`type`/`status`/`layer`/`stance`）；`type` 是 `x-` 实验类型时降为 info（协议 1.1） |
-| CA103 | error | `date` 非合法 ISO 日期。**两种形态都收**：YAML 原生日期对象（`date: 2026-10-15` 没加引号时会被 YAML 解成 `datetime.date`）与契约要求的 ISO 字符串（`"2026-10-15"`）。工具自己写出的卡是字符串形态 |
+| CA103 | error | `date` 非法。**两种形态都收**：YAML 原生日期对象（`date: 2026-10-15` 没加引号时会被 YAML 解成 `datetime.date`）与契约要求的 ISO 字符串（`"2026-10-15"`）。字符串必须**逐字符**匹配 `^\d{4}-\d{2}-\d{2}$`——`"20261015"`（ISO 基本格式）与 `"2026-W42-6"`（周历）曾被 `date.fromisoformat` 静默收下，与本条文案和契约 pattern 都矛盾；形状对了还要验真日（`"2026-02-30"` 报错）。工具自己写出的卡是字符串形态 |
 | CA104 | warning | `trial`/`canon` 条目正文少于 200 字（计数算法见 §6.6） |
 | CA105 | error | `id` 重复，或含小写字母/数字/连字符以外字符。重复时按路径序首个入索引：别人引用这个 id 时指的是前者，**被遮蔽那一份自己的出边照旧检查**（它没进索引不等于没写错） |
 | CA106 | error | 存在不带 `x-` 前缀的未定义字段 |
 | CA107 | error | `depends_on` 对象违反 §5.4 schema（缺字段/多非 x- 字段） |
 | CA108 | error/info | `depends_on[].kind` 在初始集外：无 `x-` 前缀 = error；有 `x-` 前缀 = info（案例收集） |
 | CA109 | error | 字段类型/格式非法：`canon_refs` 非列表或元素非字符串、`load_bearing`/`ai_assisted`/`critical` 非 bool、id 引用不符合 `^[a-z0-9-]+$` 格式（`world:id` 形式除外，归 CA401）等 |
-| CA110 | warning | 关系名拼写近失：规范形 `relations[].type` 与某个规范关系名的编辑距离 ≤1（如 `depends-onn`）。工具仍按**规范名**判定该边，本条只提示疑似拼写错误；真正的新关系名不报（自由档，见 §5.4） |
+| CA110 | warning | 关系名拼写近失：规范形 `relations[].type` 与某个规范关系名的编辑距离 ≤1（如 `depends-onn`、`depend_on`、`extractss`）。距离在**去掉连字符/下划线之后**计算——不这么做，量的是分隔符风格而不是「打错没有」，协议自己举的例子 `depends-onn` 就会落在阈值之外、整条边静默。工具**真的把这条边按规范名建进图**（CA401/CA501/CA504 照判），本条只提示疑似拼写错误；距离 ≥2 的名字原样保留、不提示（自由档，见 §5.4） |
+| CA112 | error | YAML frontmatter 里有**重复键**。PyYAML 是 last-wins 且一声不响：`depends_on` 写两遍时，写在前面的那一条边在解析结果里彻底消失，而所有规则都看不见它——「写了两遍」与「只写一遍」在工具眼里完全一样。本条规定必须报出来；写入命令（`link`）遇到重复键直接拒绝改写 |
 | CA111 | warning | 旧写法迁移提示：某个关系名拆分前用「旧关系名 + 某个注解值」表达（见契约 `x-relation-vocabulary.deprecations`）。工具**已按新关系名判定**（结论与迁移后逐条相同），本条只提示作者改写，例如把 `depends_on` 里 `kind: legitimacy` 的那一条改写成关系名 `derives_legitimacy_from`。这是唯一允许的迁移提示；迁移完成后本条不再触发 |
 | CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复 |
 | CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明）。**只对已定档条目（trial/canon）发出**：draft 还没到做决定的时候，而 `--strict` 会把 warning 当失败 |
 | CA302 | error | `load_bearing: true` 但缺 `layer` 或 `depends_on` |
-| CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它 |
-| CA402 | error | `canon_refs` 目标状态为 `draft`/`trial`；或目标为 `archived` 且已填 `superseded_by`（提示迁移至承接条目）。目标为 `archived` 且未填 `superseded_by` 时**不报本条**，由 CA405 在 archived 条目侧单独报告，避免双报 |
+| CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
+| CA402 | error | `canon_refs` 目标状态为 `draft`/`trial`；或目标为 `archived` 且已填**有效**的 `superseded_by`（提示迁移至承接条目）。目标为 `archived` 且没有有效承接者（未填、`null`、坏值、指向不存在、指向自己）时**不报本条**，由 CA405 在 archived 条目侧单独报告，避免双报；迁移指引里印出的承接条目一定是真存在的那一个 |
 | CA403 | warning | `conflicts_with` 双方均简式且缺回指（对象式标注豁免，见 §4.2） |
 | CA404 | error | `canon` 条目的 `depends_on` 目标状态非 `canon`（链条依赖只能建立在已定档上） |
-| CA405 | error | `archived` 条目仍被 `canon_refs` 引用，且 `superseded_by` **未填或为 `null`**（两者都表示「没有承接者」，见 v1.0.1 澄清）——降级处置不完整 |
+| CA405 | error | `archived` 条目仍被 `canon_refs` 引用，且**没有有效承接者**：`superseded_by` 未填、为 `null`、不是 id 字符串、指向不存在的条目、或指向自己（前两者见 v1.0.1 澄清）——降级处置不完整。判据是「承接者真的存在」，不是「字段非空」：一个坏值曾经能把这条 error 静默消音 |
 | CA501 | error | **物质族** `depends_on` 目标的链条序号 > 本条目的链条序号（规范族边豁免） |
 | CA502 | error | **物质族**依赖子图存在环 |
 | CA503 | warning | economy/fiscal/military/political 层承重墙条目无任何**物质族** `critical: true` 依赖（ideology 层豁免） |
@@ -436,7 +446,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 - `0`：无 error（warning/info/report 不影响）；
 - `1`：存在 error；
 - `--strict` 模式下 warning 也使退出码为 1（pre-commit 等场景使用）；
-- `2`：用法/环境错误（参数越界、扩展包缺失、**指错目录**——给一个既没有 `entries/`、根目录里也没有一篇带 frontmatter 的条目卡的地方，会被直说「不像一个世界仓库」，而不是把每篇文档都当成坏条目报几百条假错误）；
+- `2`：用法/环境错误（参数越界、扩展包缺失、**指错目录**、**写入被拒绝**——`new`/`link` 遇到重复键、只读文件、写完自检不一致时宁可拒绝也不写坏；`link` 的拒绝不改动磁盘上的任何一个字节——给一个既没有 `entries/`、根目录里也没有一篇带 frontmatter 的条目卡的地方，会被直说「不像一个世界仓库」，而不是把每篇文档都当成坏条目报几百条假错误）；
 - **CA504 与 CA9xx 永不参与退出码。**
 
 ### 6.5 机器可读输出（JSON）

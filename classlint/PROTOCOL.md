@@ -111,12 +111,13 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；clas
 | CL104 | error | 关系字段违反 §2.1 schema |
 | CL105 | error | 关系目标 `id` 不存在 |
 | CL106 | warning | 拆分前的旧写法（`depends_on` + `kind: legitimacy`）——已按新关系名判定，只在输出里提示改写法（同 canonlint 的 CA111） |
+| CL107 | warning | 关系名拼写近失：`relations[].type` 与某个规范名只差一个字符（去掉连字符/下划线后算，如 `extractss`、`depend_on`）。边**已按规范名建好**（所以 PE 族判得到它），本条只提示疑似拼写错误；距离 ≥2 的自定义关系名原样保留、不提示（同 canonlint 的 CA110） |
 
 ### 3.3 政治经济学规则
 
 | 编号 | 级别 | 定义 |
 |---|---|---|
-| PE001 | error | **抽取必须有基础**：存在 `A —extracts→ B` 但 A 对 B 没有任何 `controls` / `coerces` / `owns` 边 |
+| PE001 | error | **抽取必须有基础**：存在 `A —extracts→ B` 但 A 对 B 没有任何 `controls` / `coerces` / `owns` 边。目标 `B` 不存在时**不判本条**（CL105 已报，「对不存在的东西论证它没有基础」是空话） |
 | PE002 | error/warning | **不能镇压自己的供养者**：存在 `A —coerces→ B` 且 `A —depends_on→ B`。`critical: true` = error，否则 warning |
 | PE003 | error | **合法性不得无锚闭环**：`legitimizes` 图的强连通分量（含自环）若没有任何来自分量外的 `legitimizes` 输入，报警。有外部锚点的互锁合法（依据：WGP v0.5 魔戒 dogfood，规范性互锁是常态）。**`derives_legitimacy_from` 写的那条也在这张图里**（翻译成反向的 `legitimizes`，判定与旧写法逐条相同）——名分是关系名，不再是 `depends_on` 的 `kind` 值 |
 | PE004 | error | **剩余必须收敛（定性版）**：`extracts` 子图存在环（含自环）——剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。定量判定（抽取量 vs 剩余量）待流量层数据就位后回填 |
@@ -126,7 +127,7 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；clas
 ### 3.4 报告级输出（永不进退出码）
 
 - **关系图**：`classlint graph <仓库> [--format dot|json]`——节点 = 条目，边 = 契约列过的全部关系（本层判的七种 + `canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`）；DOT 可直接喂 Graphviz，JSON 供任意前端消费。
-- **影响报告**：`classlint check <仓库> --impact ID...`——指定条目的 `depends_on` 反向传递闭包（"改 A 炸 B"的待复核队列），参考 WGP 的 CA504。
+- **影响报告**：`classlint check <仓库> --impact ID...`——指定条目的 `depends_on` 反向传递闭包（"改 A 炸 B"的待复核队列），参考 WGP 的 CA504。**不含主体自身**：环会把主体带回自己的下游，而「改 A 会炸 A」是环的结论（由结构规则报），不是影响报告的结论——与 CA504 同口径。
 
 **无传递违规原则：** 只判直接边。A 抽取 B、B 的供养断裂并不使 A 连带违规；间接影响是将来影响报告（Sprint 3）的职责。
 
@@ -151,7 +152,7 @@ rules:
 
 - `0`：无 error（warning 不影响），且**没有规则被关闭**；
 - `1`：存在 error；
-- `2`：用法/环境/配置错误；
+- `2`：用法/环境/配置错误（含**指错目录**：`codex/` 不在时直说「不像一个 classlint 世界仓库」，而不是收 0 条给出全绿报告——整机版的「看起来在被审」）；
 - `3`：判定通过，但有 PE 规则被 `rules: off` 关闭——「通过」只覆盖仍开着的规则，
   自动化无法据此断言全面通过。确认关闭是有意的，加 `--accept-disabled-rules` 回到 0
   （约定与 canonlint 侧「跳过必须显式授权」一致）。

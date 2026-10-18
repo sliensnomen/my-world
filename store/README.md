@@ -7,7 +7,7 @@
 | `store/parse.py` | **读卡代码的唯一一份**：id 语法、frontmatter 切分、契约词表、关系名归一化、`Relation`/`RawEntry` |
 | `store/model.py` | 条目模型（`Entry`）、字段表、从 `RawEntry` 长成 `Entry`（挂上 `edges` 视图） |
 | `store/layout.py` | 目录布局（`ENTRY_DIRS`/`SKIP_DIRS`/`TYPE_DIRS`）、扫描与 id 索引 |
-| `store/write.py` | 写入命令：`init` / `new` / `link`（文本级插入，diff 小到能评审） |
+| `store/write.py` | 写入命令：`init` / `new` / `link`（结构级最小改动 + 写完自检，见下） |
 
 **读卡代码只有一份**（`store/parse.py`）。`canonlint.py` 与 `classlint/classlint.py` 都只
 转发，谁都不许自己 `compile` 正则、自己切 frontmatter、或自己抄一份契约词表——
@@ -32,7 +32,7 @@ canonlint 要求 `depends_on` 对象式且 `kind`/`critical` 给全，classlint 
 ### 改完必须跑的命令
 
 ```sh
-python3 tests/run_tests.py        # 10 个世界夹具 + 30 项检查，输出与快照逐字节比对
+python3 tests/run_tests.py        # 10 个世界夹具 + 32 项检查，输出与快照逐字节比对
 python3 tests/test_schema.py      # 契约与代码常量不漂移
 python3 tests/test_store.py       # 存储层边界（包括本文件的规矩）
 ```
@@ -93,7 +93,24 @@ python3 tests/test_store.py       # 存储层边界（包括本文件的规矩�
 （层级方向/环/状态）」。改动它们等于改工具输出，所以留在原地；**新的理论措辞一律
 不许住进 `store/`**——要表达理论，去判定层。
 
-## 已知漂移（PR#3 收口）
+## 写卡的三条规矩（`store/write.py`）
+
+1. **先看清结构再动**：`link` 不再用正则往 frontmatter 里塞三行——那会在「零缩进的块
+   序列」「`depends_on:` 写成 null」「多行标量里出现 `depends_on:` 字样」这三种**合法**
+   写法上写坏卡或写丢边，还照旧打印「已连线」。现在用 YAML 解析器给出键的位置，只插
+   这一条边，其它字节（含注释、围栏、正文、行尾、BOM）不动。
+2. **写完自检，不一致就退**：插入后重新解析、比对「旧结构 + 这一条边」。不一致 → 退回
+   整块重排再验一次；还不一致 → **拒绝写盘**（退出码 2，磁盘上零改动）。重排会丢
+   frontmatter 里的注释与键序，所以它是退路，输出里会说明走了哪条路。
+3. **不动不属于自己的东西**：保留文件模式（临时文件是 0600，不能顶掉原来的 0644）、
+   保留 CRLF/CR、顺着符号链接写真正的文件、只读文件直说拒绝、写前拒绝有重复键的文件
+   （重复键会让前面的边静默消失，见 CA112）。
+
+## 已知漂移
+
+已收口：契约列的十一个关系字段全都读得进来、也都查悬空引用（CA401）；两个引擎的建边
+与形状校验共用一份代码。**今天没有「读不进来」的别名了**，剩下的唯一分歧是上面那个
+`depends_on` 口径开关（契约登记过）。再发现新漂移，写在这里并配一把锁。
 
 契约的 `x-relation-source.aliases` 列了九个别名，本工具目前能读三种。其余六种
 （`owns` / `controls` / `extracts` / `coerces` / `legitimizes` / `owes`）今天会被

@@ -28,7 +28,8 @@
   "x-stricter-than-contract": [
     "depends_on 的项：本契约只要求 id；canonlint 额外要求 kind 与 critical 一并给全（CA107），classlint 只要求 id。",
     "type/status/layer：本契约只要求是字符串；严格判定器再查词表（CA102）。",
-    "id 非法在 canonlint 里报 CA105，在 classlint 里报 CL104。"
+    "id 非法在 canonlint 里报 CA105，在 classlint 里报 CL104。",
+    "depends_on 项多写未声明的键：canonlint 报 CA107，classlint 报 CL104；conflicts_with 多写未声明的键两边都报（CA107 / CL104），但 stance 的**取值**只有判定层查（CA102），classlint 不看。"
   ],
 
   "x-relation-source": {
@@ -54,7 +55,7 @@
   "x-relation-vocabulary": {
     "note": "关系名**唯一真值表**：keys = 具名字段与规范形 type 的规范名，value.accept = 工具必须一并认下的历史拼法（连字符/下划线变体），value.means = 这个关系**是什么意思**（工具据此下判语，作者据此选词）。两个引擎都读本表做归一化（canonlint 读的是存储层归一化后的统一视图；classlint 直接读本文件）。漏认一个变体的后果是整族规则静默失效，所以这里宁可宽；但接受 ≠ 输出：报错文案与 --json 一律用规范名。",
     "canonical-form": "canon_refs",
-    "spelling-guard": "与任一规范名的编辑距离 ≤1 的 type 值记 warning（CA110），保留对真正新词的 fail-open——自由档允许用户自定义关系名，不许把未知名一律判错。",
+    "spelling-guard": "与任一规范名的编辑距离 ≤1 的 type 值记 warning（CA110），并把这条边**按规范名建进图**（CA401/CA501/CA504 照判）——只提示不改名，等于拼错的边从所有图规则里消失。距离在去掉连字符/下划线之后计算（`depends-onn` 与 `depends_on` 只算一处差异）。保留对真正新词的 fail-open：自由档允许用户自定义关系名，不许把未知名一律判错；距离 ≥2 的名字原样保留、不提示。",
     "deprecations": [
       {
         "relation": "depends_on",
