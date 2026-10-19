@@ -602,6 +602,24 @@ def _counts(values) -> dict:
     return {k: out[k] for k in sorted(out)}
 
 
+def _json_safe(value):
+    r"""把文件名里解不出来的字节变成可输出的文本。
+
+    文件名不是 UTF-8 时，Python 用 surrogateescape 存（`\udcff`），这种字符**编码不成
+    UTF-8**：`json.dumps(..., ensure_ascii=False).encode("utf-8")` 直接抛
+    UnicodeEncodeError，接口回 0 字节、CLI export 打 traceback。它还是世界里的一个文件，
+    不能凭空消失——所以把它还原成原始字节再转义（`\udcff` → `\xff`），路径从此可打印、
+    可 grep，并且一眼能看出「这名字本身有问题」。
+    """
+    if isinstance(value, str):
+        return value.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+    if isinstance(value, dict):
+        return {_json_safe(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 def build_export(all_entries: list[Entry], findings: list[Finding],
                  reports: list[dict], root: Path) -> dict:
     """把已算好的审计结果整理成自描述数据集。确定性：无时间戳、无绝对路径。"""
@@ -628,7 +646,7 @@ def build_export(all_entries: list[Entry], findings: list[Finding],
     stances = [a.get("stance") for d in parsed for a in d["relations"]
                if a.get("stance") is not None]
     levels = _counts(f.level for f in findings)
-    return {
+    return _json_safe({
         "protocol_version": PROTOCOL_VERSION,
         "contract_version": CONTRACT_VERSION,
         "counts": {
@@ -658,7 +676,7 @@ def build_export(all_entries: list[Entry], findings: list[Finding],
         "findings": [{"rule": f.rule, "level": f.level, "entry": f.entry,
                       "message": f.message} for f in findings],
         "reports": reports,
-    }
+    })
 
 
 def export_world(root: Path, packs=(), impact=(), extra_known=frozenset(),

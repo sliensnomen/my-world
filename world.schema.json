@@ -71,7 +71,7 @@
     },
     "names": {
       "canon_refs": {"accept": ["canon-ref", "canon_refs", "canon-refs", "canonrefs"], "attrs": [], "means": "引用：本条目的说法在文本上以目标条目为依据（「如上文所述」）。它不表示生存依赖，只表示叙事上的引用。工具据此查：目标是否存在、状态是否允许被引用（须 canon，CA402）、目标降级后是否已处置（CA405）。"},
-      "conflicts_with": {"accept": ["conflicts-with", "conflicts_with", "conflictwith"], "attrs": ["stance"], "means": "矛盾：两条设定不能同时成立（并置时读者会觉得打架）。它是标注不是错误——刻意设计的矛盾同样合法。stance 说明本方的立场；工具只查对称性（对方有没有回指，CA403）。"},
+      "conflicts_with": {"accept": ["conflicts-with", "conflicts_with", "conflictwith"], "attrs": ["stance"], "means": "矛盾：两条设定不能同时成立（并置时读者会觉得打架）。它是标注不是错误——刻意设计的矛盾同样合法。stance 说明本方的立场；工具查两件事：目标必须存在（指不到人报 CA401），以及对称性（对方有没有回指，CA403）。"},
       "depends_on": {"accept": ["depends-on", "depends_on", "dependson"], "attrs": ["kind", "critical", "note"], "means": "物质依赖：本条目的存续需要目标条目——目标断了或停产，这条就塌。kind 说明依赖的是哪一类物资（见 x-strict-vocabulary.depends_on.kind）；critical: true 说明不可或缺，false 或省略是可用但可替代。承重墙（load_bearing: true）的 depends_on 受 CA501/CA502/CA503 约束，CA504 的闭包也走这个关系。要表达「我的名分以它为依据」（曾经的 kind: legitimacy），请用 derives_legitimacy_from。"},
       "exchanges_with": {"accept": ["exchanges-with", "exchanges_with", "exchangeswith"], "attrs": ["what", "note"], "means": "交换：两条目互相提供东西（分工、互市、贸易），但各自都另有底座。它是**流通**关系，不是承重关系——因此不进 CA501/CA502/CA503 的承重判定，「互相交换」在模型里合法。要表达「互相供养、谁断了谁都塌」请用两条 depends_on（那会并且应当报 CA502）。what 说明交换的是什么。"},
       "owns": {"accept": ["owns"], "attrs": ["note"], "means": "占有：目标在法律或名义上属于本条（所有制关系）。它不等于能指挥目标——那是 controls。PE001 用它判断「被抽取者有没有基础」。"},

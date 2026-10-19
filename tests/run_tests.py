@@ -51,7 +51,8 @@ CASES: list[tuple[str, list[str]]] = [
 ]
 
 # 崩溃守卫的意图断言：(说明, 规则编号, 必须出现在同一条发现里的条目路径)
-# 这四条在 PR#0.1 之前都会以 traceback 收场（整个审计崩掉，一条发现都不出）。
+# 这三条在 PR#0.1 之前都会以 traceback 收场（整个审计崩掉，一条发现都不出）。
+# 锁的是「坏输入变成一条发现」这件事；注释里的条数以前写「四条」而列表只有三条（评审 low）。
 CRASH_INTENT: list[tuple[str, str, str]] = [
     ("非 UTF-8 文件应报 CA100 而不是崩溃", "CA100", "entries/bad-utf8.md"),
     ("type 取值非字符串应报 CA102", "CA102", "entries/list-type.md"),
@@ -138,9 +139,22 @@ def check_json_schema() -> list[str]:
         return [f"--json 顶层键应为 {sorted(want_keys)}，实际 {sorted(data)}"]
     if not isinstance(data["entries"], int):
         return ["--json 的 entries 应为整数"]
+    if not isinstance(data["protocol_version"], str):
+        return ["--json 的 protocol_version 应为字符串"]
+    if not isinstance(data["reports"], list):
+        return ["--json 的 reports 应为数组"]
     for f in data["findings"]:
         if set(f) != {"rule", "level", "entry", "message"}:
             return [f"--json 发现项的键应为 rule/level/entry/message，实际 {sorted(f)}"]
+        # 「键名与类型不能被悄悄改掉」这条锁以前只查了 entries 一个 int（评审 medium）：
+        # 把 level 改成数字、rule 改成别名，照样绿。
+        if not re.fullmatch(r"CA\d{3}", str(f["rule"])):
+            return [f"--json 发现项的 rule 应形如 CA123，实际 {f['rule']!r}"]
+        if f["level"] not in ("error", "warning", "info"):
+            return [f"--json 发现项的 level 只能是 error/warning/info，实际 {f['level']!r}"]
+        for key in ("entry", "message"):
+            if not isinstance(f[key], str):
+                return [f"--json 发现项的 {key} 应为字符串，实际 {type(f[key]).__name__}"]
     return []
 
 
@@ -218,11 +232,16 @@ def check_missing_dependency_is_clean() -> list[str]:
 
 
 def _card(entry_id: str, extra: str = "", status: str = "canon",
-          body: str | None = None, load_bearing: bool = False) -> str:
+          body: str | None = None, load_bearing: bool = False,
+          template_relations: bool = True) -> str:
+    # template_relations=False：不要那两行空的 canon_refs/conflicts_with。
+    # 要测「这两种关系的悬空引用」时必须关掉——否则同一张卡里同一个键写两遍，
+    # YAML 只留最后一个，测到的是重复键而不是被锁的那件事（评审指出过这个假通过）。
+    rels = "canon_refs: []\nconflicts_with: []\n" if template_relations else ""
     return (f"---\nid: {entry_id}\ntitle: {entry_id}\ntype: location\nauthor: t\n"
             f"date: 2026-01-01\nstatus: {status}\n"
             f"load_bearing: {'true' if load_bearing else 'false'}\n"
-            f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+            f"{rels}{extra}ai_assisted: false\n"
             f"---\n\n{body if body is not None else '正文' * 120}\n")
 
 
@@ -370,29 +389,62 @@ def check_every_relation_reference_is_checked() -> list[str]:
     生产关系（owns / controls / extracts / coerces / legitimizes / owes）的规则住在
     classlint，但「引用指向不存在的 id」是结构问题：从前这六种字段一条都不查，
     于是 `owns: [幽灵]` 在 canonlint 里完全隐形（只在 classlint 那边有 CL105）。
+
+    两处被评审抓住过的洞，这里一并堵掉：
+      · 清单不许手写——上一版手写了五个家族、漏掉 `owes`，于是「删掉 owes 的检查」
+        这个变异全绿。现在样本表的键必须**等于**契约的关系名全集，契约加一个名字
+        而这里没跟上，本锁直接红。
+      · 不许以「它有专属检查」为由把某个名字排除在覆盖之外——上一版把
+        `conflicts_with` 排除掉，注释说它有专属检查，实际它的唯一存在性检查就在
+        被锁的那个函数里，删掉它六套全绿（评审 blocker）。
     """
     problems = []
-    # 清单**从契约推导**，不手写：上一版手写了五个家族，漏掉 `owes` 就让「删掉 owes
-    # 的检查」这个变异全绿（评审 high）。有专属引用检查的关系（各自带状态语义）排除。
     contract = json.loads((ROOT / "world.schema.json").read_text(encoding="utf-8"))
     declared = set(contract["x-relation-vocabulary"]["names"])
-    # 这五种各自有专属引用检查（要求目标状态 / 形状 / 名分语义），本锁不重复覆盖。
-    own_rules = {"canon_refs", "conflicts_with", "depends_on", "exchanges_with",
-                 "derives_legitimacy_from"}
-    families = sorted(declared - own_rules)
-    # 自由档也在这条锁里：作者自定义的关系名，指向不存在的 id 同样是结构问题。
-    # 以前 canonlint 只查契约登记过的那几种，而 classlint 的 CL105 查全部——同一份数据
-    # 两个引擎两种结论，且这处差异没在任何地方登记（评审 low）。
-    for fam in families + ["mentor-of"]:
-        for style, extra in (("具名字段", f"{fam}:\n  - ghost-x\n"),
-                             ("规范形", f"relations:\n  - type: {fam}\n    target: ghost-x\n")):
-            if fam == "mentor-of" and style == "具名字段":
-                continue  # 自定义名字只能写在规范形里
-            tmp, world = _temp_world("canonlint-relref-", {"a-node": _card("a-node", extra)})
+    # 每种关系「写一条合法但悬空的边」的写法。形状必须合法，否则先报形状错、边不进图，
+    # 测到的就不是「悬空引用有没有被查」了。
+    well_formed = {
+        "canon_refs": "canon_refs:\n  - ghost-x\n",
+        "conflicts_with": "conflicts_with:\n  - id: ghost-x\n",
+        "depends_on": "depends_on:\n  - id: ghost-x\n    kind: economy\n    critical: true\n",
+        "exchanges_with": "exchanges_with:\n  - id: ghost-x\n",
+        "derives_legitimacy_from": "derives_legitimacy_from:\n  - ghost-x\n",
+        "owns": "owns:\n  - ghost-x\n",
+        "controls": "controls:\n  - ghost-x\n",
+        "extracts": "extracts:\n  - ghost-x\n",
+        "coerces": "coerces:\n  - ghost-x\n",
+        "legitimizes": "legitimizes:\n  - ghost-x\n",
+        "owes": "owes:\n  - ghost-x\n",
+    }
+    if set(well_formed) != declared:
+        return [f"本锁的样本表与契约的关系名不一致：多 {sorted(set(well_formed) - declared)}，"
+                f"少 {sorted(declared - set(well_formed))}（契约加了名字就要在这里补一条合法写法）"]
+    for fam in sorted(declared) + ["mentor-of"]:
+        if fam == "mentor-of":
+            # 自由档：作者自定义的关系名，指向不存在的 id 同样是结构问题。以前 canonlint
+            # 只查契约登记过的那几种，而 classlint 的 CL105 查全部——同一份数据两个引擎
+            # 两种结论，且这处差异没在任何地方登记（评审 low）。
+            styles = [("规范形", "relations:\n  - type: mentor-of\n    target: ghost-x\n")]
+        else:
+            styles = [("具名字段", well_formed[fam]),
+                      ("规范形", f"relations:\n  - type: {fam}\n    target: ghost-x\n"
+                                 + ("    kind: economy\n    critical: true\n"
+                                    if fam == "depends_on" else ""))]
+        for style, extra in styles:
+            # 模板里自带空的 canon_refs/conflicts_with；这两族要自己写一条，就得把
+            # 模板的同名行让开（否则同键两遍，YAML 丢掉一条，测到的是重复键）。
+            twin = {"canon_refs": "conflicts_with: []\n",
+                    "conflicts_with": "canon_refs: []\n"}.get(fam, "")
+            tmp, world = _temp_world("canonlint-relref-",
+                                     {"a-node": _card("a-node", twin + extra,
+                                                      template_relations=not twin)})
             with tmp:
                 code, out, _ = _judge(world)
-                if f"[CA401]" not in out or "ghost-x" not in out:
+                if "[CA401]" not in out or "ghost-x" not in out:
                     problems.append(f"{fam}（{style}）的悬空引用没报 CA401：{out.strip()!r}")
+                if "CA112" in out:
+                    problems.append(f"{fam}（{style}）的夹具自己写重了键，测的不是悬空引用："
+                                    f"{out.strip()!r}")
     # 反面：目标存在时不许报（别把「有这条边」本身当成错）
     tmp, world = _temp_world("canonlint-relref-ok-", {
         "a-node": _card("a-node", "owns:\n  - b-node\n"),

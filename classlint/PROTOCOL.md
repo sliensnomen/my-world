@@ -46,7 +46,7 @@ depends_on:
 
 **固定关系，实体开放。** 关系是语法，必须固定为本节的具名关系；实体是词汇，用户随便定义。
 
-本条列的是**本层要判的七种生产关系**（`own`/`controls`/`extracts`/`coerces`/`legitimizes`/
+本条列的是**本层要判的七种生产关系**（`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/
 `owes`/`depends_on`）。契约 `world.schema.json` 的 `x-relation-vocabulary` 是关系名的唯一
 真值表（含每条的 `means` 定义与可接受的拼法变体）；本层照单收下契约列过的关系名，其中
 `canon_refs`/`conflicts_with`/`exchanges_with` 属于治理与流通，本层不判——但它们进图，
@@ -89,7 +89,7 @@ depends_on:
 
 ### 2.2 与 WGP 的差异说明
 
-WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；classlint 将二者降为可选、kind 改自由词汇——八层链与 kind 分族是 WGP 治理层的建模工具，classlint 的审计只关心边的存在性与方向。这条差异是契约 `x-stricter-than-contract` 登记过的，实现在存储层的**一个开关**上（`store/model.py` 的 `Entry.depends_on_requires_annotations`，本引擎置 `False`）——不是两份建边代码：边层（`Entry.relations` / `relation_shape_errors`）与 canonlint 共用同一份，`tests/test_store.py` 的「两个引擎建同一张边图」钉住它。
+WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 五值定集（v1.1 起 `legitimacy` 已搬成独立关系名 `derives_legitimacy_from`）；classlint 将二者降为可选、kind 改自由词汇——八层链与 kind 分族是 WGP 治理层的建模工具，classlint 的审计只关心边的存在性与方向。这条差异是契约 `x-stricter-than-contract` 登记过的，实现在存储层的**一个开关**上（`store/model.py` 的 `Entry.depends_on_requires_annotations`，本引擎置 `False`）——不是两份建边代码：边层（`Entry.relations` / `relation_shape_errors`）与 canonlint 共用同一份，`tests/test_store.py` 的「两个引擎建同一张边图」钉住它。
 
 ## 3. 审计规则注册表
 
@@ -128,8 +128,9 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 六值封版；clas
 
 - **关系图**：`classlint graph <仓库> [--format dot|json]`——节点 = 条目，边 = 契约列过的全部关系（本层判的七种 + `canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`）；DOT 可直接喂 Graphviz，JSON 供任意前端消费。
 - **影响报告**：`classlint check <仓库> --impact ID...`——指定条目的 `depends_on` 反向传递闭包（"改 A 炸 B"的待复核队列），参考 WGP 的 CA504。**不含主体自身**：环会把主体带回自己的下游，而「改 A 会炸 A」是环的结论（由结构规则报），不是影响报告的结论——与 CA504 同口径。
+- **`--json` 的字段**（`classlint_version` / `entries` / `findings` / `reports` / `rules_disabled` / `judgement_complete`）以实际输出为准，逐字段说明见 `classlint/README.md` 的「`--json` 输出字段」一节。
 
-**无传递违规原则：** 只判直接边。A 抽取 B、B 的供养断裂并不使 A 连带违规；间接影响是将来影响报告（Sprint 3）的职责。
+**无传递违规原则：** 只判直接边。A 抽取 B、B 的供养断裂并不使 A 连带违规；间接影响是**影响报告**（`--impact`，§3.4）的职责——它已实现，只报直接依赖的反向闭包，不改变任何判定结论。
 
 **判定一致性要求：** 同一仓库快照、同一协议版本，任何兼容实现的确定性判定**必须**逐条一致。
 

@@ -267,7 +267,13 @@ def check_rule_guards_and_usage_errors() -> int:
             encoding="utf-8")
         index = classlint.collect(world)[1]
         reports = classlint.impact_report(index, ["a"])
-        if reports and reports[0]["downstream"]:
+        # `reports` 为空、或下游为空的写法要分开断言：原来写成
+        # `if reports and reports[0]["downstream"]`，于是 `return []` 直接跳过判断，
+        # 锁全绿（评审 high）。主体存在时，报告本身必须有。
+        if not reports:
+            print("FAIL --impact 对存在的条目没给报告")
+            failures += 1
+        elif reports[0]["downstream"]:
             print(f"FAIL --impact 把主体列进了自己的下游：{reports}")
             failures += 1
         else:

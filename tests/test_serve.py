@@ -157,11 +157,43 @@ def check_原始文件接口() -> None:
 
 
 def check_不能穿越目录() -> None:
-    for bad in ("/api/raw/../../../../etc/passwd",
-                "/api/raw/%2e%2e%2f%2e%2e%2fetc%2fpasswd",
-                "/api/raw/../canonlint.py"):
-        status, _, _ = get(server_for(WORLD) + bad)
-        assert status == 404, f"{bad} 应该 404，实际 {status}"
+    """穿越锁要证明「内容没被拿走」，不能只证明「状态码是 404」。
+
+    评审指出：这条锁原来只断言 404，于是「给 404 响应回显文件前 24 字节」这种改动
+    照样全绿——裸 socket 实际读出了 /etc/passwd 的 `root:x:0:0::`。名字说「不能穿越
+    目录」，断言说「状态码是 404」，这是两件事。所以这里在世界**上一级**放一个标记
+    文件，用裸请求打各种写法：既要 404，也要响应体里不许出现世界外的内容。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        outer = Path(td)
+        world = outer / "world"
+        (world / "entries").mkdir(parents=True)
+        (world / "entries" / "a.md").write_text(
+            "---\nid: a\ntitle: A\ntype: location\n---\n正文\n", encoding="utf-8")
+        secret = "TOP-SECRET-CANARY-9f3a"
+        (outer / "outside.md").write_text(secret + "\n", encoding="utf-8")
+        base = server_for(world)
+        attacks = [
+            "/api/raw/../outside.md",
+            "/api/raw/../../etc/passwd",
+            "/api/raw/%2e%2e%2foutside.md",
+            "/api/raw/%2E%2E%2Foutside.md",
+            "/api/raw/..%2foutside.md",
+            "/api/raw/%2e%2e/%2e%2e/etc/passwd",
+            "/api/raw/./../outside.md",
+            "/api/raw//etc/passwd",
+            "/api/raw/..%5coutside.md",
+        ]
+        for bad in attacks:
+            status, body = raw_get(base, bad)
+            text = body.decode("utf-8", "replace")
+            assert status == 404, f"{bad} 应该 404，实际 {status}"
+            assert secret not in text, f"{bad} 的响应体里带出了世界外的内容"
+            assert "root:" not in text, f"{bad} 的响应体里带出了系统文件"
+        # 正面：世界自己的文件必须取得到（别把守卫收得过紧，收成「什么都 404」）
+        status, body = raw_get(base, "/api/raw/entries/a.md")
+        assert status == 200 and "id: a" in body.decode("utf-8"), \
+            f"世界自己的文件取不到（{status}）：守卫收过头了"
 
 
 def check_隐藏文件取不到() -> None:

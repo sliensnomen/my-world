@@ -112,10 +112,10 @@ python3 tests/test_store.py       # 存储层边界（包括本文件的规矩�
 与形状校验共用一份代码。**今天没有「读不进来」的别名了**，剩下的唯一分歧是上面那个
 `depends_on` 口径开关（契约登记过）。再发现新漂移，写在这里并配一把锁。
 
-契约的 `x-relation-source.aliases` 列了九个别名，本工具目前能读三种。其余六种
-（`owns` / `controls` / `extracts` / `coerces` / `legitimizes` / `owes`）今天会被
-CA106 报成「未定义字段」——它们在世界格式里合法，只是还没接上判定器。
-**归一化与判定已经接好**（判定器读 `Entry.edges_of(...)`，旧字段与规范形 `relations`
-一视同仁）；待收口的是关系名本身的词表——那属于理论，归判定层。
-`tests/test_store.py::check_relation_alias_drift` 把这个状态钉住了：收口那天，
-那个测试会失败，提醒你把它一起改掉。
+契约的 `x-relation-source.aliases` 列的**十一个具名关系字段**（`canon_refs` / `conflicts_with` /
+`depends_on` / `exchanges_with` / `derives_legitimacy_from` / `owns` / `controls` / `extracts` /
+`coerces` / `legitimizes` / `owes`）今天**全部接线**：都能读进来，也都查悬空引用（CA401）。
+只有**契约里没定义的扩展字段**才报 CA106——写一个不带 `x-` 前缀、契约也没登记的字段名，
+那才是真错误；上面这十一个名字不会。
+`tests/test_store.py::check_relation_alias_drift` 逐个真的解析每个别名，钉住这条接线：
+以后谁把某个名字从字段表里摘掉，这个测试会变红。

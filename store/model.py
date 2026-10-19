@@ -518,7 +518,7 @@ class Entry(RawEntry):
 
     @cached_property
     def named_relations(self) -> tuple[list[Relation], list[SchemaError]]:
-        """契约 aliases 的九个具名字段 → 边，`type` 一定是规范名。
+        """契约 aliases 的十一个具名字段 → 边，`type` 一定是规范名。
 
         canon_refs/conflicts_with/depends_on 沿用各自的老解析器（错误文案更细，判定侧按
         各自规则报）；其余六个 classlint 专有字段第一次真正进统一视图，它们的形状错误

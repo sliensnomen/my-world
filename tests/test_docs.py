@@ -211,6 +211,9 @@ def check_doc_paths_exist():
         "02_Architecture.md": "classlint 早期规划里的文档名，从未进仓库",
         "03_Plan.md": "classlint 早期规划里的文档名，从未进仓库",
     }
+    # 世界仓库内部的相对路径（`codex/debtor.md` 这类）永远不以本仓库根为基准，
+    # 夹具世界也不该被要求出现在仓库根——这类引用直接放过。除此之外一律要能找到。
+    world_relative = ("codex/", "entries/", "canon/", "sandbox/", "archive/")
     pattern = re.compile(r"`([A-Za-z0-9_./\-]+\.(?:py|md|json|yml|yaml|txt))`")
     # 文档之间的互相指向主要靠 markdown 链接，所以链接目标也要一起查
     link_pattern = re.compile(r"\]\(([^)\s]+\.(?:py|md|json|yml|yaml|txt))\)")
@@ -223,6 +226,8 @@ def check_doc_paths_exist():
                 continue
             rel = target.lstrip("/")  # 文档里写成 `/world.schema.json` 指的是仓库根那个文件
             if rel in skip:
+                continue
+            if rel.startswith(world_relative) and not (ROOT / rel).exists():
                 continue
             if any((base / rel).exists() for base in (here, ROOT)):
                 continue
@@ -330,6 +335,28 @@ def check_ci_steps_match_contributing():
             f"CONTRIBUTING.md 里 {job} 跑的脚本是 {listed[job]}，CI 跑的是 {ci_scripts(job)}"
 
 
+def check_ci_covers_every_test_script():
+    """每个测试脚本都必须真的在某条 CI 命令里跑。
+
+    为什么：`check_ci_check_names_match_docs` / `check_ci_steps_match_contributing`
+    都是拿 CI 的 job 表去比文档——**把 classlint 整个 job 连同它在
+    CONTRIBUTING 里的那一行一起删掉，这两条依然全绿**（评审 2026-10-19 实测）。
+    这里反过来钉：清单从**文件系统**数出来，CI 必须一条不少地跑。
+    """
+    scripts = sorted(str(p.relative_to(ROOT)) for p in (ROOT / "tests").glob("test_*.py"))
+    scripts.append("classlint/tests/run_tests.py")
+    workflow = (ROOT / ".github/workflows/canonlint.yml").read_text(encoding="utf-8")
+    runs = "\n".join(re.findall(r"^\s*run:\s*(.+)$", workflow, re.M))
+    missing = [s for s in scripts if s not in runs]
+    assert not missing, (
+        f"这些测试脚本没有任何一条 CI 命令在跑：{missing}。"
+        f"CI 的 run: 行是：{runs}")
+    contributing = doc("CONTRIBUTING.md")
+    for s in scripts:
+        assert s in contributing, f"CONTRIBUTING.md 没有说 {s} 该怎么跑"
+    return []
+
+
 def check_hook_has_no_strict():
     """init 装的钩子不带 --strict，文档也是这么写的（工具与文档不能各说一套）。"""
     hook_lines = [ln for ln in (ROOT / "store/write.py").read_text(encoding="utf-8").splitlines()
@@ -365,6 +392,7 @@ CHECKS = (
     ("被证伪的旧说法不再出现", check_stale_claims_are_gone),
     ("CI 检查名与文档双向一致", check_ci_check_names_match_docs),
     ("CI 跑的脚本与 CONTRIBUTING 写的一致", check_ci_steps_match_contributing),
+    ("每个测试脚本都有 CI 在跑", check_ci_covers_every_test_script),
     ("init 的钩子不含 --strict（与文档一致）", check_hook_has_no_strict),
     ("文档里的协议版本号与代码一致", check_version_strings_match_code),
 )

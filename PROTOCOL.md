@@ -7,7 +7,7 @@
 >
 > 1. `world.schema.json` —— 条目格式的唯一契约；
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
-> 3. 本文档 —— 规则表（§6.3，**25 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
+> 3. 本文档 —— 规则表（§6.3，**27 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
 > 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.1"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
@@ -31,7 +31,7 @@
 14. **PE005 的消音必须是一次物质关系声明**（classlint §3.2）：来源侧边只认 `extracts`、`exchanges_with`、或带物质类别 `kind` 的 `depends_on`。以前一条任意出边即消音，`depends_on: [weather]` 一行就能让「被抽取者的再生产不可见」消失——自然条件不是生产关系，也不承担再生产，消音门槛低到等于没有门槛。相关夹具已补上 `kind`。
 15. **拆开 `depends_on`：名分依据成为独立关系名 `derives_legitimacy_from`**（§4.4/§4.5）。一个关系名曾经装两种意思——「我靠它活着」与「我的说法以它为依据」——而 CA501/CA502/CA503 的门禁恰好是 `kind`：于是副标签决定了「算不算承重」，`legitimacy` 还和物资挤在同一张类别表里，漏填或拼错 `kind` 就能合法关掉整族判定；反过来 `kind` 也不再是纯粹的类别标签。现在门禁看**关系名**，`kind` 只回答「靠哪一类物资」。旧写法 `depends_on` + `kind: legitimacy` 继续接受：存储层按契约 `deprecations` 归一成新关系名（判定与迁移后逐条相同），另记一条 CA111 warning 提示改写。`tests/test_store.py` 钉住「每个关系名必须有 `means`」与「`kind` 词表只有一份真值」，`classlint/tests/` 钉住两种写法同判。
 
-16. **每一种关系的悬空引用都报 CA401**（§6.3）：`own`/`control`/`extract`/`coerce`/`legitimize`/`owes` 六种字段的语义虽归 classlint 那一层，但从前 canonlint 一条都不查——`owns: [幽灵]` 在本层完全隐形，只有跑 classlint 才有 CL105。规则归属不改变「引用指向不存在的 id 是结构问题」，现在本层对契约列过的每一种关系都查存在性（照旧**不**给生产关系附加状态语义：依据草稿、交换对象降级都不构成违规）。`tests/run_tests.py` 钉住五种关系 × 两种写法都要报、目标存在时不报。
+16. **每一种关系的悬空引用都报 CA401**（§6.3）：`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 六种字段的语义虽归 classlint 那一层，但从前 canonlint 一条都不查——`owns: [幽灵]` 在本层完全隐形，只有跑 classlint 才有 CL105。规则归属不改变「引用指向不存在的 id 是结构问题」，现在本层对契约列过的每一种关系都查存在性（照旧**不**给生产关系附加状态语义：依据草稿、交换对象降级都不构成违规）。`tests/run_tests.py` 钉住五种关系 × 两种写法都要报、目标存在时不报。
 
 17. **`owes` 有了判语：债务必须收得回来**（classlint PE009，见 `classlint/PROTOCOL.md` §3.3）：存在 `A —owes→ B` 时，模型里必须有收账通道——债主对债务人的支配（`controls`/`coerces`/`extracts`/`legitimizes` 任一条），或债务人依赖债主（`depends_on`）。两条都没有就报 warning：那样的 `owes` 只是一句记账，模型里没有能兑现它的结构。此前 `owes` 有词表、有形状、有定义，却没有一条规则用它——契约自己写着「本版 PE 规则还没用它下判语」，这是已知缺口。编号取 **PE009** 而不是 PE006：`classlint` 规划里的 PE006–PE008 属流量层（剩余量/人口/交叉），编号即协议，不占用已规划的空位。
 
@@ -54,13 +54,13 @@
 - 目录约定明确：`entries/{type}/` 是唯一条目位置，目录纯组织、状态只认 frontmatter；`canon/`、`sandbox/`、`archive/` 仅为兼容旧仓库的扫描路径，新仓库不使用
 
 **v1.0 封版记录（三个测试世界 dogfood 完成）：**
-1. **kind 初始集封版**：六值冻结（resource/production/economy/fiscal/manpower/legitimacy）。证据：魔戒、冰与火、沙丘三个差异极大的世界中，物质五值零例外；装不下的全部落在规范族（`x-will-binding`、`x-magic-logistics`、`x-faith-engineering` 各出现一次，证据不足以升格，留档观察）
+1. **kind 初始集封版**：六值冻结（resource/production/economy/fiscal/manpower/legitimacy）。证据：魔戒、冰与火、沙丘三个差异极大的世界中，物质五值零例外；装不下的全部落在规范族（`x-will-binding`、`x-magic-logistics`、`x-faith-engineering` 各出现一次，证据不足以升格，留档观察）。**v1.1 已改写这一条**：`legitimacy` 不再是 `kind` 值，名分依据改由独立关系名 `derives_legitimacy_from` 表达（§4.5、§9 第 15 条）；旧写法仍接受，记 CA111——所以今天 `kind` 是**五值**。
 2. **`x-` 实验通道永久开放**：不作为过渡机制，作为协议的长期泄压阀（CA108 info 级收集）
-3. 一致性终审完成：规则表 27 条（CA100–CA114、CA201、CA301/302、CA401–CA405、CA501–CA505）与参考实现逐条互证（v1.1 增列 CA110、CA111、CA112、CA114，见 §6.3 与 §9 修订记录）；清除死代码（v0.4 的 CA503 旧阈值常量）
+3. 一致性终审完成：规则表 27 条（CA100–CA112、CA114、CA201、CA301/302、CA401–CA405、CA501–CA505）与参考实现逐条互证（v1.1 增列 CA110、CA111、CA112、CA114，见 §6.3 与 §9 修订记录）；清除死代码（v0.4 的 CA503 旧阈值常量）
 4. 自本版起，结构性变更走 major 版本（§9）
 
 **v0.5 修订记录（魔戒/冰火真实数据 dogfood 回流）：**
-1. **kind 分族**：物质五 kind（resource/production/economy/fiscal/manpower）受层级方向约束；legitimacy 与 `x-` 实验 kind 属**规范流**——合法性、强制力、超自然力自上而下流动，豁免 CA501。依据：洛汗誓言→封邑征召、索伦意志→魔多大军、异鬼魔法→尸鬼军团三个真实案例
+1. **kind 分族**：物质五 kind（resource/production/economy/fiscal/manpower）受层级方向约束；legitimacy 与 `x-` 实验 kind 属**规范流**——合法性、强制力、超自然力自上而下流动，豁免 CA501。依据：洛汗誓言→封邑征召、索伦意志→魔多大军、异鬼魔法→尸鬼军团三个真实案例（v1.1 起 `legitimacy` 已搬出 `kind`，见 §4.5 与 §5.4；`x-` 实验 kind 仍属规范流）
 2. CA502 环检测只在物质子图上运行（规范性互锁如"魔戒↔索伦支配"是常态不是永动机）
 3. CA503 收窄：economy/fiscal/military/political 层承重墙须有**物质类** critical 依赖；ideology 层豁免（规范节点不吃物质饭）
 4. 新增 CA505（仓库级 warning）：存在 military/political 承重墙条目但全库无 fiscal 层条目 = 财政维度缺失提示（依据：刚铎全书无财政记载，v0.4 规则未能检出）
@@ -141,12 +141,21 @@ ai_assisted: false
 | `conflicts_with` | 必须 | 列表 | 元素为 id 或对象（§4.1），可以为空列表 |
 | `exchanges_with` | 可选 | 列表 | 元素为 id 或对象（`{id, what?}`）；**流通**关系，不参与承重判定（§4.3） |
 | `derives_legitimacy_from` | 可选 | 列表 | 元素为 id 或对象（`{id, critical?, note?}`）；**名分依据**（§4.5）。与旧写法 `B legitimizes A` 同义（方向相反），判定完全一致；不进承重图，只查存在性 |
+| `owns` | 可选 | 列表 | 元素为 id 或对象（`{id, note?}`）；**占有**（A 占有 B，区别于控制：管家控制、领主占有）。判定（PE001）归 classlint 那一层；本层只建边并查目标存在性（CA401） |
+| `controls` | 可选 | 列表 | 元素为 id 或对象（`{id, note?}`）；**控制**（A 控制 B）。判定（PE001/PE002）归 classlint；本层只建边并查存在性（CA401） |
+| `extracts` | 可选 | 列表 | 元素为 id 或对象（`{id, what?, note?}`）；**抽取**（地租、税、剩余劳动…）。判定（PE001/PE004/PE005）归 classlint；本层只建边并查存在性（CA401） |
+| `coerces` | 可选 | 列表 | 元素为 id 或对象（`{id, note?}`）；**暴力/镇压**（A 对 B 施加暴力）。判定（PE001/PE002）归 classlint；本层只建边并查存在性（CA401） |
+| `legitimizes` | 可选 | 列表 | 元素为 id 或对象（`{id, note?}`）；**正当化**（A 给 B 合法性）；与 `B derives_legitimacy_from A` 同义。判定（PE003/PE009）归 classlint；本层只建边并查存在性（CA401） |
+| `owes` | 可选 | 列表 | 元素为 id 或对象（`{id, what?, note?}`）；**债务**（A 欠 B）。判定（PE009）归 classlint；本层只建边并查存在性（CA401） |
+| `relations` | 可选 | 对象列表 | **规范形**（v1.1）：元素 `{type, target, kind?, critical?, stance?, what?, note?}`，`type` 逐字取 §4.4 的规范名；与上面各具名字段判定等价（§5.4）。元素同样查目标存在性（CA401），拼写近失记 CA110 |
 | `depends_on` | 条件必填 | 对象列表 | 见 §5.3 schema；`load_bearing: true` 时必填 |
 | `layer` | 条件必填 | enum | 见 §5.2；`load_bearing: true` 时必填 |
 | `superseded_by` | 条件必填 | id 或 null | 见 §3.4；`archived` 必填，其他状态可省略或填 null |
 | `ai_assisted` | 必须 | bool | 见 §7 AI 条款 |
 
 **扩展字段：** 实现可以添加任何 `x-` 前缀的自定义字段；不带前缀的未定义字段**必须**被审计器拒绝（CA106），防止私有字段渗透进协议。
+
+上表 22 个字段与 `world.schema.json` 的 `properties` 一一对应；其中 `relations` 是规范形，`canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`/`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 是兼容别名——两种写法进同一张边表再判定（§5.4）。
 
 ### 2.3 引用语法
 
@@ -336,7 +345,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 
 仅命中附录 A 关键词但未声明 `load_bearing` 的条目，CA301 发出 **warning**（提示作者考虑声明）。"必须"只落在显式声明上，审计器不替作者做决定。
 
-### 5.4 `depends_on` 对象 schema（kind 已封版，v1.0）
+### 5.4 `depends_on` 对象 schema（kind 五值定集，v1.1）
 
 每个元素**必须**恰好包含以下三个必填字段，可以加 `x-` 扩展字段。**这条对两种写法同样成立**：旧具名字段 `depends_on:` 的元素按 `id`/`kind`/`critical`，规范形 `relations:` 里的 `depends_on` 项按 `target`/`kind`/`critical`——缺一个就报 CA107，两条路径都不跳过，否则「规范形省掉 `kind`」就能合法地关掉 CA501/CA502/CA503（见 §9 v1.1 修订记录第 2 条）。契约 `attrs` 里另有可选的 `note`（仅供人读，不参与判定）。
 
@@ -348,10 +357,9 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 
 缺字段、多字段（非 `x-`）= CA107 error；`kind` 在初始集外且无 `x-` 前缀 = CA108 error，有 `x-` 前缀 = CA108 info 级提示（计入案例收集）。
 
-**kind 分族（v0.5 起）：** 初始集六值分为两族——
+**kind 分族（v0.5 起的物质族；v1.1 收窄为单族）：** 初始集的物质族是 `resource` / `production` / `economy` / `fiscal` / `manpower`——自下而上流动，受 CA501 层级方向约束与 CA502 环检测。
 
-- **物质族** `resource` / `production` / `economy` / `fiscal` / `manpower`：自下而上流动，受 CA501 层级方向约束与 CA502 环检测；
-- **规范族** `legitimacy` 与一切 `x-` 实验 kind：自上而下流动（合法性、强制力、超自然力），豁免 CA501，不参与 CA502。
+v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：自上而下流动，豁免 CA501、不参与 CA502）。**v1.1 已把名分依据拆成独立关系名 `derives_legitimacy_from`**（§4.4/§4.5），`kind` 里**不再有** `legitimacy`：旧写法 `depends_on` + `kind: legitimacy` 仍接受，存储层归一成新关系名并记 CA111 提示改写。`x-` 实验 kind 仍是规范流——豁免 CA501、不参与 CA502。
 
 `depends_on` 只表达**供养关系**（断供即崩），**不得**用来表达"主题相关"（那用 `canon_refs` 或正文叙述）。
 
@@ -458,7 +466,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 
 ```json
 {
-  "protocol_version": "1.0",
+  "protocol_version": "1.1",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",
@@ -532,11 +540,11 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 ## 附录 B · 裁决记录与进行中的事项
 
 **已裁决（v0.3 落槌）：**
-1. ~~kind 六值封版~~ → **不封版**，六值为初始集，`x-` 前缀实验值合法（CA108 info 计入案例收集）。
+1. ~~kind 六值封版~~ → **不封版**，六值为初始集，`x-` 前缀实验值合法（CA108 info 计入案例收集）。（v1.1 起初始集收窄为五值，`legitimacy` 改由关系名 `derives_legitimacy_from` 表达，见 §5.4。）
 2. ~~条目级权限~~ → 不入协议；落地为审计中立性条款（§6.2）。
 3. ~~conflicts_with 方向性~~ → 默认对称 + 可选 `stance`（§4），CA403 放宽。
 4. ~~跨仓库引用~~ → 语法 `world:id` 保留，本版不实现，遇到必报 CA401（§2.3）。
 5. ~~恢复冷却期/次数上限~~ → 交宪章声明；默认路径 `archived → trial → canon`（§3.3）。
 
 **已封版（v1.0 落槌）：**
-- **kind 六值封版**：三个测试世界（魔戒/冰火/沙丘）案例收集完成。物质五值零例外；实验值 `x-will-binding`、`x-magic-logistics`、`x-faith-engineering` 各出现一次，证据不足以升格，留档观察。`x-` 通道永久开放。
+- **kind 六值封版**：三个测试世界（魔戒/冰火/沙丘）案例收集完成。物质五值零例外；实验值 `x-will-binding`、`x-magic-logistics`、`x-faith-engineering` 各出现一次，证据不足以升格，留档观察。`x-` 通道永久开放。（v1.1 起 `legitimacy` 已拆成关系名 `derives_legitimacy_from`，`kind` 现为五值，见 §5.4。）

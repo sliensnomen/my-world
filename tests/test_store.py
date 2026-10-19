@@ -185,7 +185,7 @@ def check_mixed_forms_are_recorded():
 # ---- 6/7. 与判定侧的常量不许漂移 ------------------------------------------
 
 def check_field_table_matches_rules():
-    # 契约 x-relation-source.aliases 的九个具名字段全部接线（旧「六种待接线」漂移已关闭）
+    # 契约 x-relation-source.aliases 的十一个具名字段全部接线（旧「六种待接线」漂移已关闭）
     assert set(store.FIELD_TABLE) == set(canonlint.REQUIRED_FIELDS) | {
         "layer", "superseded_by", store.RELATIONS_FIELD} \
         | set(store.LEGACY_RELATION_FIELDS), \
@@ -202,7 +202,7 @@ def check_type_vocabulary_matches_layout():
 # ---- 8. 关系名真值表：契约与工具不许有两种拼法 -----------------------------
 
 def check_relation_alias_drift():
-    """契约的九个具名字段必须**全部**接线，而契约声明的每一种拼法都必须认。
+    """契约的十一个具名字段必须**全部**接线，而契约声明的每一种拼法都必须认。
 
     这条测试的前身只钉「还有哪六个没接线」，于是漏掉了真正的缺陷：契约
     `x-relation-source.aliases` 把 canon_refs 的 type 写作 `canon-ref`，而工具按规范名
@@ -216,7 +216,7 @@ def check_relation_alias_drift():
     assert canonical == store.RELATIONS_FIELD, (
         f"契约的规范形叫 {canonical!r}，存储层叫 {store.RELATIONS_FIELD!r}")
 
-    # (1) 九个具名字段全部接线，一个不漏
+    # (1) 十一个具名字段全部接线，一个不漏
     unconsumed = sorted(set(aliases) - set(store.LEGACY_RELATION_FIELDS))
     assert not unconsumed, (
         f"契约列了但工具没接线的关系字段：{unconsumed}——"
@@ -695,9 +695,15 @@ def check_write_path_preserves_the_file():
         got = store.parse_entry(root / "entries/a.md", root)
         assert not got.parse_error, f"零缩进序列被插坏了：{text}"
         assert sorted(r.target for r in got.edges_of("depends_on")) == ["b", "c"], text
-        # 边真的进了图：悬空目标要能被审计看到，而不是藏在文本里
+        # 边真的进了图：悬空目标要能被审计看到，而不是藏在文本里。
+        # （这里原来写的是 `assert any(...) or True`——恒真，一条什么都没锁的锁。
+        #  评审把它点出来了：删掉被测的检查它照样绿。）
         rc, out, _ = run(["--json", str(root)])
-        assert any(e.startswith("CA401") for e in []) or True
+        data = json.loads(out)
+        # `--json` 给的是 findings，不是导出数据集；要验「边进没进图」，就看那条悬空
+        # 目标有没有被 CA401 点名——边没进图时它一个字段都不会出现在输出里。
+        assert any(f["rule"] == "CA401" and "c" in f["message"] for f in data["findings"]), \
+            f"边只写进了文本、没进图：{[f['rule'] for f in data['findings']]}"
 
     # (2) CRLF 与正文首行缩进：一个字节都不许动
     with tempfile.TemporaryDirectory() as td:

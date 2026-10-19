@@ -10,7 +10,7 @@ id 语法、frontmatter 切分、契约词表、关系名归一化都在 [`store
 只有**判定**侧的东西：规则与它自己的字段政策（`depends_on` 这里收裸字符串，canonlint 要求
 `{id, kind, critical}` 对象——这是两边协议的真实分歧，改任一边都要同时改两处文档）。
 
-**合并的代价（写在这里，免得以后有人踩）**：`classlint.py` 现在会 `import store.parse`，
+**合并的代价（写在这里，免得以后有人踩）**：`classlint/classlint.py` 现在会 `import store.parse`，
 所以它**不再是一个能单独拷走的单文件脚本**——必须和仓库一起用，而且要**从仓库根**调用
 （内部把自己所在目录的上一层塞进了 `sys.path`；拷到别处或 `pip install` 都拿不到 `store`）。
 换来的是「同一份数据同一份判定」：id 语法、frontmatter 切分、关系名归一化不会再各漂一份。
@@ -32,7 +32,22 @@ python3 classlint/classlint.py check ~/worlds/econ --json  # 机器可读输出
 python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（只读）
 ```
 
-退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误。
+退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误（含指错目录）；`3` 判定通过，但有 PE 规则被 `rules: off` 关掉——「通过」只覆盖仍开着的规则，确认是有意关闭的加 `--accept-disabled-rules` 才回到 0（见 [PROTOCOL.md](PROTOCOL.md) §4）。
+
+### `--json` 输出字段（`check --json`）
+
+一个 JSON 对象，顶层字段只有这些：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `classlint_version` | string | 本工具版本（当前 `"0.1"`）。与 WGP 的 `protocol_version` 不是一回事 |
+| `entries` | 对象列表 | 每个条目：`id`（解析不出时为 `null`）、`path`（相对世界根的路径）、`meta`（frontmatter 原样）、`body_chars`（正文字数） |
+| `findings` | 对象列表 | 每条发现：`rule`（`CL1xx` / `PE0xx`）、`level`（`error` / `warning`）、`entry`（条目文件路径；仓库级为 `null`）、`message` |
+| `reports` | 对象列表 | 报告级输出，**永不进退出码**；目前是 `--impact` 的 `{subject, downstream}` 受影响队列 |
+| `rules_disabled` | 字符串列表 | 被 `rules: off` 关掉的规则编号；空列表 = 全规则在跑 |
+| `judgement_complete` | bool | `true` = 本次判定覆盖全部规则；有规则被关时为 `false`（此时退出码 3，除非 `--accept-disabled-rules`） |
+
+`--impact ID...` 只改 `reports`：不改 `findings`，也不改退出码。
 
 ## 审计规则（协议 v0.1，见 [PROTOCOL.md](PROTOCOL.md)）
 
