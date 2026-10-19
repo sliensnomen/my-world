@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -57,6 +58,28 @@ def get(url: str, method: str = "GET"):
     except urllib.error.HTTPError as e:
         return e.code, e.read(), dict(e.headers)
 
+
+
+def raw_get(base: str, path: str) -> tuple[int, bytes]:
+    """不经 urllib 的请求：路径原样发出去。
+
+    `get()` 会 `urllib.parse.quote` 一遍，`%2e` 被二次转义成 `%252e`，于是「编码穿越」
+    这类用例其实从来没走到守卫跟前（评审 3.3）。裸 socket 才能把原始字节发出去。
+    """
+    u = urllib.parse.urlsplit(base)
+    req = f"GET {path} HTTP/1.1\r\nHost: {u.hostname}\r\nConnection: close\r\n\r\n"
+    with socket.create_connection((u.hostname, u.port), timeout=20) as sock:
+        sock.sendall(req.encode("latin-1"))
+        chunks = []
+        while True:
+            b = sock.recv(65536)
+            if not b:
+                break
+            chunks.append(b)
+    raw = b"".join(chunks)
+    head, _, body = raw.partition(b"\r\n\r\n")
+    assert head, f"{path!r}：连接被直接关掉，没有返回任何响应头"
+    return int(head.split(b" ")[1]), body
 
 def world_json(world: Path = WORLD) -> dict:
     return json.loads(get(server_for(world) + "/api/world")[1])
@@ -167,6 +190,66 @@ def check_隐藏文件取不到() -> None:
     status, _, _ = get(server_for(WORLD) + "/api/raw/entries/arrakis.md")
     assert status == 200, f"正常条目反而取不到了：{status}"
 
+
+
+def check_路径里的_NUL_字节不是断连() -> None:
+    """带 NUL 字节的请求必须给出状态码，不许把连接一关了事。
+
+    `Path.resolve()` 遇到 NUL 抛 ValueError，以前没人接：请求方拿到的是空响应，
+    分不清「没有这个文件」与「接口挂了」。它不可能是世界里的文件，按 400 回。
+    """
+    status, body = raw_get(server_for(WORLD), "/api/raw/entries/\x00arrakis.md")
+    assert status == 400, f"NUL 字节应该 400，实际 {status}"
+    assert "NUL" in json.loads(body)["error"], f"报错没说清原因：{body[:200]}"
+    # 静态路由同样
+    status, _ = raw_get(server_for(WORLD), "/web/\x00index.html")
+    assert status in (400, 404), f"/web 的 NUL 字节应该 400/404，实际 {status}"
+
+
+def check_web_静态路由不许穿越() -> None:
+    """`/web/` 只许取 web/ 里的文件（评审 L1：这道守卫从来没被锁过）。
+
+    仓库里没有 web/ 目录，所以以前根本走不到守卫。这里临时造一个，并在它**外面**
+    放一个秘密文件，从两个方向试穿越：`..` 折返、以及 `..%2f` 这类编码写法。
+    """
+    import tempfile  # noqa: PLC0415
+
+    old_web = serve.WEB_DIR
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        web = root / "web"
+        web.mkdir()
+        (web / "index.html").write_text("<!doctype html><title>ok</title>", encoding="utf-8")
+        secret = root / "secret.txt"
+        secret.write_text("TOP-SECRET", encoding="utf-8")
+        serve.WEB_DIR = web
+        try:
+            base = server_for(WORLD)
+            status, body = raw_get(base, "/web/index.html")
+            assert status == 200 and b"ok" in body, f"正常静态文件取不到：{status}"
+            for bad in ("/web/../secret.txt", "/web/..%2fsecret.txt",
+                        "/web/%2e%2e/secret.txt", "/web/....//secret.txt",
+                        "/web//etc/passwd"):
+                status, body = raw_get(base, bad)
+                assert status == 404, f"{bad} 应该 404，实际 {status}"
+                assert b"TOP-SECRET" not in body, f"{bad} 把 web/ 外面的文件端出去了"
+        finally:
+            serve.WEB_DIR = old_web
+
+
+def check_web_目录不存在时的提示() -> None:
+    """没装前端时要明确说「把前端放这里就能用」，而不是一个光秃秃的 404。"""
+    import tempfile  # noqa: PLC0415
+
+    old_web = serve.WEB_DIR
+    with tempfile.TemporaryDirectory() as td:
+        serve.WEB_DIR = Path(td) / "不存在的目录"
+        try:
+            status, body, _ = get(server_for(WORLD) + "/web/index.html")
+            assert status == 404, f"应该 404，实际 {status}"
+            assert "web/" in json.loads(body)["hint"], f"提示没说清放哪里：{body[:200]}"
+        finally:
+            serve.WEB_DIR = old_web
 
 def check_只读() -> None:
     for method in ("POST", "PUT", "DELETE", "PATCH"):
@@ -369,6 +452,9 @@ CHECKS = [
     ("原始文件只读接口", check_原始文件接口),
     ("不能穿越出世界目录", check_不能穿越目录),
     ("隐藏文件（.git 等）取不到", check_隐藏文件取不到),
+    ("路径里的 NUL 字节给状态码，不断连", check_路径里的_NUL_字节不是断连),
+    ("/web 静态路由不许穿越出 web/", check_web_静态路由不许穿越),
+    ("没装前端时 /web 说清放哪里", check_web_目录不存在时的提示),
     ("只读：写方法一律 405", check_只读),
     ("响应头（CORS / 不缓存 / JSON）", check_响应头),
     ("首页说明页与 /api/health", check_首页与存活),

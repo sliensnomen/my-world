@@ -889,17 +889,55 @@ def check_both_engines_share_one_parser():
     shared_names = {"ID_RE", "FRONTMATTER_RE", "SCHEMA_PATH", "SCHEMA_NAME",
                     "RELATION_VOCABULARY", "ALL_RELATION_NAMES", "CONTRACT_ATTESTED",
                     "RELATION_CANONICAL", "CANONICAL_RELATION_ITEMS"}
+
+    # 逐**名字节点**判，不逐语句形态判。上一版只认 `Assign` / `AnnAssign` 两种语句，
+    # 于是下面九种写法全都能再抄一份词表而锁不响（评审 2.4 逐个列出来的）：
+    # 三元组解包、海象、for 目标、AugAssign、改名函数、getattr(re,'compile')、
+    # 星号解包、with-as、以及「叫 _my_variants 的另一个函数」。
+    # 判法：收集**所有** `ast.Name`；每个禁用名的出现都必须恰好是那一处转发
+    # （`X = shared.X` 的赋值目标），其余一律算违规——解包/海象/for/with/星号的目标
+    # 在 AST 里也是 Name，绕不过去。改名函数由下面的行为锁负责（结构锁不管命名）。
+    allowed_targets: set[int] = set()
     for node in ast.walk(tree):
-        # 带注解的赋值（`X: T = ...`）是 AnnAssign，不是 Assign —— 少认一种就等于放行一种
-        if isinstance(node, ast.Assign) and not from_shared(node.value):
-            offenders += [t.id for t in node.targets
-                          if isinstance(t, ast.Name) and t.id in shared_names]
-        elif (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-              and node.target.id in shared_names and not from_shared(node.value)):
-            offenders.append(node.target.id)
-        if isinstance(node, ast.FunctionDef) and node.name in {"_shape_variants",
-                                                              "_load_relation_vocabulary"}:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if (isinstance(t, ast.Name) and t.id in shared_names
+                        and from_shared(node.value)):
+                    allowed_targets.add(id(t))
+    for node in ast.walk(tree):
+        # 只看**绑定**（Store/Del）：读取 `set(ALL_RELATION_NAMES)` 是正当用法，它读到的
+        # 就是那一处转发出来的对象；能被篡改的只有重新绑定。
+        if (isinstance(node, ast.Name) and node.id in shared_names
+                and not isinstance(node.ctx, ast.Load)
+                and id(node) not in allowed_targets):
+            offenders.append(f"{node.id}（第 {getattr(node, 'lineno', '?')} 行）")
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
+                and node.name in shared_names:
             offenders.append(f"def {node.name}")
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            offenders += [n for n in node.names if n in shared_names]
+
+    # `getattr(x, "compile")` 是绕开 `re.compile` 的正规路子；`import re` 本身就不许再有。
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id == "getattr":
+            if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) \
+                    and node.args[1].value == "compile":
+                offenders.append("getattr(..., 'compile')")
+
+    # 导入白名单：读卡需要的模块 store/parse.py 已经提供了，classlint 不该再拉解析器
+    # 依赖（`re` / `yaml` 尤其——它们正是「再抄一份」的原料）。多进来一个就得解释。
+    allowed_imports = {"__future__", "argparse", "json", "subprocess", "sys", "tempfile",
+                       "unicodedata", "dataclasses", "functools", "pathlib", "yaml", "store"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] not in allowed_imports:
+                    offenders.append(f"import {alias.name}")
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] not in allowed_imports:
+                offenders.append(f"from {node.module} import ...")
     assert not offenders, (
         "classlint 又抄了一份读卡实现（应改成从 store/parse.py 转发）：" + "、".join(sorted(set(offenders))))
 
@@ -926,13 +964,50 @@ def check_both_engines_share_one_parser():
                     (ours.rel, ours.meta, ours.body, ours.parse_error))
             assert pair[0] == pair[1], f"{name}：两个引擎读出不同的条目\n  store={pair[0]}\n  classlint={pair[1]}"
 
-    # 行为锁：每一种拼法在两边归一成同一个规范名
-    variants = {v for accepts in store.RELATION_VOCABULARY.values() for v in accepts}
-    variants |= {"canon-ref", "canonrefs", "Owes", "depends-on", "deriveslegitimacyfrom"}
+    # 行为锁：**全集**，不是抽样。样本集不写死，而是从契约与拼法生成器现推：
+    # 每个规范名 + 它的每一种登记拼法 + 每种机械变体（大小写/下划线/连字符/去分隔符/
+    # 丢一个字母/多一个字母/换成别的分隔符）+ 契约认证的全部 accept 项 + 认不出来的
+    # 自定义名与 x- 名。少一个样本就等于给「另一份实现」留一个没被比对的角落。
+    variants: set[str] = set(store.RELATION_VOCABULARY)
+    for name in store.RELATION_VOCABULARY:
+        variants.add(name)
+        variants |= set(store.parse.shape_variants(name))
+    variants |= set(store.parse.ALL_RELATION_NAMES)
+    variants |= {"Owes", "OWES", "depends-on", "depends_on", "dependsOn",
+                 "canon-ref", "canonrefs", "canon_ref", "deriveslegitimacyfrom",
+                 "derives-legitimacy-from", "derives_legitimacy_from",
+                 "extract", "extractss", "extract_", "control", "controlls",
+                 "depends-onn", "depend_on", "controlss", "canon_ref", "extractss",
+                 "legitimacy_from", "legitimacyfrom", "legitimate_from",
+                 "zzz-not-a-relation", "x-mine", "owns2", "onws", "wons", ""}
+    for name in store.RELATION_VOCABULARY:
+        for drop in range(len(name)):
+            variants.add(name[:drop] + name[drop + 1:])
     for v in sorted(variants):
         assert engine.canonical_rel(v) == store.canonical_relation_name(v), (
             f"拼法 {v!r} 在两个引擎里归一成了不同的名字："
             f"{engine.canonical_rel(v)!r} vs {store.canonical_relation_name(v)!r}")
+
+    # 行为锁：每一���拼法建出来的边，两个引擎也必须逐字相同（归一化对了但建边分叉时，
+    # 上面那条比的是名字、比不到边——评审 2.4 里那个「另抄一份把 legitimacy_from 悄悄
+    # 归一成 derives_legitimacy_from」的变体正是从这条缝钻过去的）。
+    def edge_view(meta, cls):
+        raw = store.model.RawEntry(Path("s.md"), "s.md", meta, "", None)
+        return [(e.type, e.target, tuple(sorted(e.attrs.items())))
+                for e in raw.as_entry(cls).relations]
+
+    for v in sorted(variants):
+        item = {"type": v, "target": "a-node"}
+        # depends_on 是契约登记的那一处口径差（canonlint 要求注解给全、classlint 不要求）。
+        # 这里要锁的是**归一化与建边是否分叉**，不是口径差本身，所以把注解给全，
+        # 让两边都建这条边；口径差由下面那条图锁单独管。
+        if store.parse.judged_relation_name(v) == "depends_on":
+            item |= {"kind": "fiscal", "critical": True}
+        meta = {"relations": [item]}
+        edges_c = edge_view(meta, store.model.Entry)
+        edges_l = edge_view(meta, engine.Entry)
+        assert edges_c == edges_l, (
+            f"拼法 {v!r} 两边建出的边不同：canonlint={edges_c} classlint={edges_l}")
 
 
 def check_both_engines_build_the_same_graph():
@@ -1092,7 +1167,6 @@ CHECKS = (
     ("写入自检不过就退回重排（插错的边不许写盘）", check_write_path_verifies_before_trusting_itself),
     ("new 写的是 YAML 不是字符串拼接（标题里的 # 与冒号）", check_new_writes_yaml_not_string_splicing),
     ("坏 YAML 是发现不是 traceback（深嵌套 / 重复键）", check_broken_yaml_is_a_finding_not_a_traceback),
-    ("两个引擎共用同一份读卡代码（store/parse.py）", check_both_engines_share_one_parser),
 )
 
 

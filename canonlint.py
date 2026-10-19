@@ -706,7 +706,7 @@ def _apply_packs(packs, index: dict, findings: list[Finding]) -> None:
 def run(root: Path, dup_threshold: float, impact_ids: list[str],
         extra_known: frozenset[str] = frozenset()):
     all_entries, index, issues = store.collect(root)
-    # 存储层报的形状问题（今天只有 id 重复 CA105）升级成报告项
+    # 存储层报的形状问题（今天只有 id 重复 CA114）升级成报告项
     findings = [Finding(i.rule, "error", i.rel, i.message) for i in issues]
     known = KNOWN_FIELDS | extra_known
 

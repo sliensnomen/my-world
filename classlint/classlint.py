@@ -233,10 +233,20 @@ class World:
     def __init__(self, entries: list[Entry], index: dict[str, Entry]):
         self.entries = entries
         self.index = index
-        self.edges: list[tuple[str, Edge]] = []  # (src_id, edge)
-        for e in index.values():
+        # id → 该 id 在索引里的那一条（撞 id 时按路径序首个赢，与 canonlint 的 CA105 同口径）。
+        # 规则要用「来源的路径」时一律走 `rel_of`，别再自己去翻 `index[...].rel`——
+        # 被遮蔽的条目不在 index 里，直接下标会 KeyError，而它在图里是有的。
+        self.rel_of: dict[str, str] = {e.id: e.rel for e in entries if e.id is not None}
+        self.edges: list[tuple[str, Edge, str]] = []  # (src_id, edge, 写下这条边的文件)
+        # 遍历的是**全部条目**，不是 `index.values()`：两张卡撞同一个 id 时，被遮蔽的那一张
+        # 不进索引（依路径序首个赢），但它写下的出边照旧要判——canonlint 侧早就这么做
+        # （CA105 那一行写着「被遮蔽那一份自己的出边照旧检查」），classlint 只在索引上兜圈，
+        # 于是同一个世界两个引擎的结论不同：无撞 id 报 2 条 CL105，有撞 id 只剩 1 条 CL102。
+        for e in entries:
+            if e.id is None:
+                continue
             for edge in e.edges[0]:
-                self.edges.append((e.id, edge))
+                self.edges.append((e.id, edge, e.rel))
                 # 「名分依据」与「正当化」是同一断言的两个方向：A derives_legitimacy_from B
                 # 就是 B legitimizes A。这里把反向边物化出来，PE003（找自我正当化的闭环）
                 # 因此不必关心作者把边写在哪一端——两个引擎对同一份数据必须同判。
@@ -244,16 +254,16 @@ class World:
                 if edge.rel == "derives_legitimacy_from" and edge.target in index:
                     self.edges.append(
                         (edge.target, Edge("legitimizes", e.id,
-                                           {"note": edge.attrs.get("note", "")})))
+                                           {"note": edge.attrs.get("note", "")}), e.rel))
 
-    def edges_of(self, rel: str) -> list[tuple[str, Edge]]:
+    def edges_of(self, rel: str) -> list[tuple[str, Edge, str]]:
         """按关系名取边。入参允许任意历史拼法（canon-ref / canon_refs / canon_refs），
         与存储层 `Entry.edges_of` 同一语义：查的是规范名。"""
         want = canonical_rel(rel)
-        return [(s, e) for s, e in self.edges if e.rel == want]
+        return [(s, e, rel_) for s, e, rel_ in self.edges if e.rel == want]
 
     def find_edge(self, src: str, rels: set[str], dst: str) -> Edge | None:
-        for s, e in self.edges:
+        for s, e, _rel in self.edges:
             if s == src and e.rel in rels and e.target == dst:
                 return e
         return None
@@ -316,28 +326,28 @@ def rule(rid: str, level: str, doc: str):
 
 @rule("PE001", "error", "抽取必须有基础（controls/coerces/owns）")
 def pe001(world: World, emit) -> None:
-    for src, e in world.edges_of("extracts"):
+    for src, e, src_rel in world.edges_of("extracts"):
         if e.target not in world.index:
             # 目标不存在时「对不存在的目标论证它没有基础」是空话，且 CL105 已经报过。
             # 同族规则（PE003/PE005/PE009）都自己守卫悬空目标，只 PE001 以前漏了这一道。
             continue
         if world.find_edge(src, {"controls", "coerces", "owns"}, e.target) is None:
-            emit(None, world.index[src].rel,
+            emit(None, src_rel,
                  f"extracts → `{e.target}` 无基础：对该目标没有任何 controls/coerces/owns 边")
 
 
 @rule("PE002", "error", "不能镇压自己的供养者")
 def pe002(world: World, emit) -> None:
-    for src, e in world.edges_of("coerces"):
+    for src, e, src_rel in world.edges_of("coerces"):
         dep = world.find_edge(src, {"depends_on"}, e.target)
         if dep is None:
             continue
         if dep.attrs.get("critical") is True:
-            emit("error", world.index[src].rel,
+            emit("error", src_rel,
                  f"一边 coerces → `{e.target}`，一边对其 critical 依赖（断供即崩）"
                  "——镇压自己的供养者")
         else:
-            emit("warning", world.index[src].rel,
+            emit("warning", src_rel,
                  f"一边 coerces → `{e.target}`，一边对其 depends_on（非 critical）"
                  "——镇压与供养重叠，请确认")
 
@@ -346,7 +356,7 @@ def pe002(world: World, emit) -> None:
 def pe003(world: World, emit) -> None:
     """legitimizes 子图的环状 SCC：无分量外输入边 = 无锚闭环。有锚互锁合法（WGP v0.5 魔戒案例）。"""
     adj: dict[str, set[str]] = {}
-    for src, e in world.edges_of("legitimizes"):
+    for src, e, src_rel in world.edges_of("legitimizes"):
         if e.target in world.index:  # 悬空目标已由 CL105 报告
             adj.setdefault(src, set()).add(e.target)
             adj.setdefault(e.target, set())
@@ -358,7 +368,7 @@ def pe003(world: World, emit) -> None:
             continue
         rep = min(members)
         loop = " ↔ ".join(sorted(members)) if len(members) > 1 else f"{members[0]}（自环）"
-        emit(None, world.index[rep].rel,
+        emit(None, world.rel_of[rep],
              f"legitimizes 闭环无外部锚点: {loop}——合法性不能凭空互证")
 
 
@@ -367,7 +377,7 @@ def pe004(world: World, emit) -> None:
     """定性版：环状 extracts SCC = 剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。
     定量判定（抽取量 vs 剩余量）待流量层数据就位后回填。"""
     adj: dict[str, set[str]] = {}
-    for src, e in world.edges_of("extracts"):
+    for src, e, src_rel in world.edges_of("extracts"):
         if e.target in world.index:
             adj.setdefault(src, set()).add(e.target)
             adj.setdefault(e.target, set())
@@ -375,7 +385,7 @@ def pe004(world: World, emit) -> None:
     for members in _cyclic_sccs(adj):
         rep = min(members)
         loop = " ↔ ".join(sorted(members)) if len(members) > 1 else f"{members[0]}（自环）"
-        emit(None, world.index[rep].rel,
+        emit(None, world.rel_of[rep],
              f"extracts 存在环: {loop}——剩余在循环中不落地于生产（黑洞）")
 
 
@@ -393,7 +403,7 @@ def pe005(world: World, emit) -> None:
     必须是一次**物质关系的声明**：作者得说清 B 靠的是什么类别的东西活着。
     """
     def has_material_source(src: str) -> bool:
-        for owner, e in world.edges:
+        for owner, e, _rel in world.edges:
             if owner != src:
                 continue
             if e.rel in ("extracts", "exchanges_with"):
@@ -402,7 +412,7 @@ def pe005(world: World, emit) -> None:
                 return True
         return False
 
-    for src, e in world.edges_of("extracts"):
+    for src, e, src_rel in world.edges_of("extracts"):
         if e.target not in world.index:
             continue  # CL105 已报
         if not has_material_source(e.target):
@@ -420,7 +430,9 @@ def pe009(world: World, emit) -> None:
 
     - B 对 A 有 `controls` / `coerces` / `extracts` / `legitimizes` 任一条：债主能指挥、
       能强制、能从债务人身上抽取偿付，或能撤回给债务人的正当性；
-    - 或 A 对 B 有 `depends_on`：债务人靠债主活着（断供即崩），债主捏着续借的开关。
+    - 或 A 对 B 有**承重**的 `depends_on`（`critical: true`，或 `kind` 在物质族内）：
+      债务人靠债主活着（断供即崩），债主捏着续借的开关。裸 `depends_on: [B]` 不算——
+      与 PE005 对同一条裸依赖的口径一致。
 
     都没有 = 这笔债在模型里无法兑现，只是一句记账。债务不是「写一个 owes 就成立」的
     关系：它要能收回来，收回来的途径必须写在模型里。反面提醒：`owes` 与 `depends_on`
@@ -429,16 +441,22 @@ def pe009(world: World, emit) -> None:
 
     报在债务人侧（欠债的那张卡）。
     """
-    for src, e in world.edges_of("owes"):
+    for src, e, src_rel in world.edges_of("owes"):
         if e.target not in world.index:  # 悬空目标已由 CL105 报告
             continue
         claim = world.find_edge(e.target, {"controls", "coerces", "extracts",
                                            "legitimizes"}, src)
         if claim is not None:
             continue
-        if world.find_edge(src, {"depends_on"}, e.target) is not None:
+        dep = world.find_edge(src, {"depends_on"}, e.target)
+        if dep is not None and (dep.attrs.get("critical") is True
+                                or dep.attrs.get("kind") in MATERIAL_KINDS):
+            # 只有**承重**的依赖才算收得回来的通道：断供即崩（critical）或明确挂在某类
+            # 物质上（kind 属物质族）。裸 `depends_on: [债主]` 不算——PE005 早就对同一条
+            # 裸依赖明确拒绝（自然条件不承担再生产），一条「我依赖他」的重叠不足以上升
+            # 成「他能收得回这笔债」。
             continue
-        emit(None, world.index[src].rel,
+        emit(None, src_rel,
              f"欠 `{e.target}` 债务，但看不到任何收得回来的途径：`{e.target}` 不指挥、不强制、"
              f"不抽取、也不为这条提供正当性，这条自己也不依赖 `{e.target}`"
              "——债权关系要有能兑现它的结构，否则只是记账")
@@ -480,9 +498,9 @@ def run_checks(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]
     world = World(entries, index)
 
     # CL105: 关系目标存在性
-    for src, e in world.edges:
+    for src, e, src_rel in world.edges:
         if e.target not in index:
-            findings.append(Finding("CL105", "error", index[src].rel,
+            findings.append(Finding("CL105", "error", src_rel,
                                     f"{e.rel} 目标 `{e.target}` 不存在"))
 
     for rid in sorted(RULES):

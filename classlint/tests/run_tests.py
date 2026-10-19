@@ -175,8 +175,15 @@ def check_pe009_requires_a_collection_channel() -> int:
         ("债主 legitimizes 债务人", "", "legitimizes: [debtor]\n", False),
         ("债务人 depends_on 债主（断供即崩）",
          "depends_on:\n  - id: creditor\n    critical: true\n", "", False),
-        ("债务人非 critical 依赖债主",
-         "depends_on:\n  - id: creditor\n", "", False),
+        # 裸依赖不算通道（与 PE005 同口径）：只说「我依赖他」，不足以上升成「他能收得回」
+        ("债务人裸依赖债主（无 critical、无物质 kind）",
+         "depends_on:\n  - id: creditor\n", "", True),
+        ("债务人靠物质类别依赖债主（kind: fiscal）",
+         "depends_on:\n  - id: creditor\n    kind: fiscal\n", "", False),
+        ("债务人非 critical 但有物质 kind（economy）",
+         "depends_on:\n  - id: creditor\n    kind: economy\n", "", False),
+        ("债务人靠 x- 实验类别依赖债主（不算物质族）",
+         "depends_on:\n  - id: creditor\n    kind: x-mine-weather\n", "", True),
     ]
     for label, d_extra, c_extra, should_report in cases:
         got = probe(d_extra, c_extra)
@@ -186,7 +193,44 @@ def check_pe009_requires_a_collection_channel() -> int:
                   f"{'报了' if got else '没报'}")
             failures += 1
     if not failures:
-        print("PASS 债务必须收得回来（四条支配通道 + 债务人依赖，各自都能消音）")
+        print("PASS 债务必须收得回来（四条支配通道 + 承重的债务人依赖，各自都能消音）")
+    return failures
+
+
+def check_shadowed_entries_are_still_judged() -> int:
+    """两张卡撞同一个 id 时，被遮蔽那一张写下的边照样要判（CL105 不许消失）。
+
+    以前 `World.__init__` 只遍历 `index.values()`，撞 id 的那一份整个掉出判定图：
+    世界里明明躺着一条指向不存在条目的边，输出却只剩一条 CL102。canonlint 侧对同一个
+    世界报 CA114 + 悬空引用，两个引擎结论不同——而「同一份数据同一份判定」是这套东西
+    的全部意义。这里钉住：撞 id 时，被遮蔽那一份的悬空边照样报 CL105。
+    """
+    failures = 0
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td)
+        (world / "codex").mkdir()
+        (world / "classlint.yaml").write_text("name: shadow\nclasslint: \"0.1\"\n",
+                                              encoding="utf-8")
+        # 按路径序 a.md 先入索引，b.md 被遮蔽；悬空边写在被遮蔽的 b.md 里。
+        (world / "codex" / "a.md").write_text(
+            "---\nid: dup\ntitle: 先来的\ntype: faction\n---\n。\n", encoding="utf-8")
+        (world / "codex" / "b.md").write_text(
+            "---\nid: dup\ntitle: 被遮蔽的\ntype: faction\n"
+            "extracts: [ghost-nowhere]\n---\n。\n", encoding="utf-8")
+        _, _, findings, _ = classlint.run_checks(world)
+        rules = {f.rule for f in findings}
+        hits = [f for f in findings if f.rule == "CL105" and "ghost-nowhere" in f.message]
+        if "CL102" not in rules:
+            print(f"FAIL 撞 id 没报 CL102（实际 {sorted(rules)}）")
+            failures += 1
+        elif not hits:
+            print(f"FAIL 被遮蔽条目的悬空边没报 CL105（实际 {sorted(rules)}）")
+            failures += 1
+        elif hits[0].entry != "codex/b.md":
+            print(f"FAIL CL105 报在了 {hits[0].entry}，应当报在写下那条边的 codex/b.md")
+            failures += 1
+    if not failures:
+        print("PASS 被遮蔽条目的边照样进图（CL102 + 它自己的 CL105，且报对文件）")
     return failures
 
 
@@ -396,6 +440,7 @@ def main() -> int:
     failures += check_pe005_requires_material_source()
     failures += check_pe009_requires_a_collection_channel()
     failures += check_rule_guards_and_usage_errors()
+    failures += check_shadowed_entries_are_still_judged()
     failures += check_disabled_rules_change_exit_code()
     failures += check_legitimacy_forms_are_indistinguishable()
     extra = set(EXPECTED) - set(worlds)

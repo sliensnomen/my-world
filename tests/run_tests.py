@@ -485,7 +485,8 @@ def check_shadowed_entries_still_get_their_refs_checked() -> list[str]:
 
     以前只查索引里的条目，于是「世界上摆着一条指向不存在条目的边」可以一直没人报；
     CA105 的文案甚至把这当成既定事实写出来了（「其引用不被检查」）。这里钉住：
-    遮蔽者会被 CA105 报出来，被遮蔽者那条悬空引用照样报 CA401。
+    遮蔽者会被 **CA114** 报出来（重复 id 的专用编号；CA105 只管 id 语法），
+    被遮蔽者那条悬空引用照样报 CA401。
     """
     problems = []
     tmp, world = _temp_world("canonlint-shadow-", {
@@ -498,12 +499,36 @@ def check_shadowed_entries_still_get_their_refs_checked() -> list[str]:
             problems.append(f"重复 id + 悬空引用应当报错（exit 1），实际 exit {code}")
         rules = sorted({line.split("]")[0][1:] for line in out.splitlines()
                         if line.startswith("[CA")})
-        if "CA105" not in rules:
-            problems.append(f"重复 id 没报 CA105（实际报出 {rules}）")
+        if "CA114" not in rules:
+            problems.append(f"重复 id 没报 CA114（实际报出 {rules}）")
         if "CA401" not in rules:
             problems.append(f"被遮蔽条目里的悬空引用没报 CA401（实际报出 {rules}）")
         if "ghost-nowhere" not in out:
             problems.append("报告里没点名那条悬空引用指向谁")
+    return problems
+
+
+def check_bad_id_syntax_reports_ca105() -> list[str]:
+    """`id: Bad_ID` 必须报 CA105——这条以前**没有锁**（评审 N3）。
+
+    老锁只断言过「输出里有 CA105」，而 CA105 当时还兼着「id 重复」的意思，两条卡撞 id
+    就能让它通过；把语法守卫改成 `if False` 之后五套照样全绿。现在重复 id 归 CA114，
+    这条断言才真的钉在语法上。
+    """
+    problems = []
+    tmp, world = _temp_world("canonlint-bad-id-", {"solo": _card("Bad_ID")})
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA105" not in out:
+            problems.append(f"非法的 id 语法没报 CA105：\n{out.strip()}")
+        if "Bad_ID" not in out:
+            problems.append("CA105 的文案没点名那个非法 id")
+    # 反面：合法 id 一条都不许报
+    tmp, world = _temp_world("canonlint-good-id-", {"solo": _card("good-id-2")})
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA105" in out:
+            problems.append(f"合法的 id 不该报 CA105：\n{out.strip()}")
     return problems
 
 
@@ -855,6 +880,7 @@ def main() -> int:
         ("缺 pyyaml 时干净退出（提示 + 退出码 2）", check_missing_dependency_is_clean),
         ("降级承接对不算重复（CA201 豁免）", check_supersede_pairs_are_not_duplicates),
     ("被遮蔽条目的引用照样检查", check_shadowed_entries_still_get_their_refs_checked),
+    ("非法 id 语法报 CA105（重复 id 已拆成 CA114）", check_bad_id_syntax_reports_ca105),
     ("指错目录给用法错误，而不是硬审", check_non_world_directory_is_a_usage_error),
     ("有 entries/ 时根目录的卡片不蒸发", check_root_cards_survive_an_entries_dir),
     ("每一种关系的悬空引用都报 CA401", check_every_relation_reference_is_checked),

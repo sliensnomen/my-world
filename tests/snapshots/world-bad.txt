@@ -2,12 +2,12 @@ exit=1
 [CA101] error   entries/old-tax.md: archived 条目缺少 `superseded_by`（无承接者时填 null）
 [CA102] error   entries/bad-fields.md: stance='rebellious' 非法，须为 ['heretic', 'official', 'unknown']
 [CA103] error   entries/bad-fields.md: date='昨天' 不是合法日期（须为 YYYY-MM-DD）
-[CA105] error   entries/dup-id.md: id `dup-entry` 重复：entries/dup-id-2.md 与 entries/dup-id.md（后者不入索引，别人引用这个 id 时指的是前者；它自己的引用照旧检查）
 [CA106] error   entries/bad-fields.md: 未定义字段 `secret_level`（扩展字段须 x- 前缀）
 [CA109] error   entries/bad-ref-elem.md: canon_refs[0] 必须是 id 字符串，得到 {'id': 'grain-belt'}
 [CA109] error   entries/type-errors.md: load_bearing='true' 必须是 bool（true/false）
 [CA109] error   entries/type-errors.md: ai_assisted='no' 必须是 bool（true/false）
 [CA109] error   entries/type-errors.md: canon_refs 必须是列表
+[CA114] error   entries/dup-id.md: id `dup-entry` 重复：entries/dup-id-2.md 与 entries/dup-id.md（后者不入索引，别人引用这个 id 时指的是前者；它自己的引用照旧检查）
 [CA401] error   entries/bad-refs.md: canon_refs 引用指向不存在的 id `ghost-entry`
 [CA401] error   entries/bad-refs.md: canon_refs 引用 'otherworld:shared-lore' 为 world:id 形式，本版协议不支持
 [CA401] error   entries/dup-id-2.md: canon_refs 引用指向不存在的 id `ghost-nowhere`

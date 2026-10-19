@@ -95,7 +95,7 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[ShapeIssue]
             continue
         if e.id in index:
             issues.append(ShapeIssue(
-                "CA105", e.rel,
+                "CA114", e.rel,
                 f"id `{e.id}` 重复：{index[e.id].rel} 与 {e.rel}"
                 "（后者不入索引，别人引用这个 id 时指的是前者；它自己的引用照旧检查）"))
         else:

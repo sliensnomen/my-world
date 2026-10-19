@@ -141,6 +141,11 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _raw(self, rel: str) -> None:
+        if "\x00" in rel:
+            # NUL 字节会让 `Path.resolve()` 抛 ValueError，而那是未捕获的异常：连接被直接
+            # 关掉，客户端拿不到任何状态码（也就分不清「没有这个文件」与「接口挂了」）。
+            # 它反正不可能是世界里的文件，当「没有这个文件」回。
+            return self._json(400, {"error": "路径里不能有 NUL 字节"})
         target = (self.server.wgp_root / rel.lstrip("/")).resolve()
         if not _inside(target, self.server.wgp_root) or not target.is_file():
             return self._json(404, {"error": f"世界目录里没有这个文件: {rel}"})
@@ -158,6 +163,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _static(self, path: str) -> None:
         rel = path[len("/web/"):] if path.startswith("/web/") else ""
+        if "\x00" in rel:
+            return self._json(400, {"error": "路径里不能有 NUL 字节"})
         target = (WEB_DIR / (rel or "index.html")).resolve()
         if not WEB_DIR.is_dir() or not _inside(target, WEB_DIR) or not target.is_file():
             return self._json(404, {
