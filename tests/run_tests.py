@@ -1005,6 +1005,11 @@ def check_experimental_kinds_are_still_exempt() -> list[str]:
         # 边仍然存在：不许因为 kind 不是物资就当作者没声明依赖
         if "CA302" in out:
             problems.append("x- 实验 kind 的边被当成了「没声明依赖」：\n" + out)
+        # 但 CA503 不能被一起豁免掉：docstring 说「只写实验 kind 就是没写物质来源」，
+        # 以前这条只断言了豁免，没断言义务还在——把 CA503 也 skip 掉照样绿（评审 low）。
+        if "CA503" not in out:
+            problems.append(
+                "x- 实验 kind 不该豁免 CA503（承重墙仍要有一条物质族 critical 依赖）：\n" + out)
     return problems
 
 
