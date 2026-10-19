@@ -2,19 +2,19 @@ exit=1
 [CA101] error   entries/old-tax.md: archived 条目缺少 `superseded_by`（无承接者时填 null）
 [CA102] error   entries/bad-fields.md: stance='rebellious' 非法，须为 ['heretic', 'official', 'unknown']
 [CA103] error   entries/bad-fields.md: date='昨天' 不是合法日期（须为 YYYY-MM-DD）
-[CA105] error   entries/dup-id.md: id `dup-entry` 重复：entries/dup-id-2.md 与 entries/dup-id.md（后者不入索引，别人引用这个 id 时指的是前者；它自己的引用照旧检查）
 [CA106] error   entries/bad-fields.md: 未定义字段 `secret_level`（扩展字段须 x- 前缀）
 [CA109] error   entries/bad-ref-elem.md: canon_refs[0] 必须是 id 字符串，得到 {'id': 'grain-belt'}
 [CA109] error   entries/type-errors.md: load_bearing='true' 必须是 bool（true/false）
 [CA109] error   entries/type-errors.md: ai_assisted='no' 必须是 bool（true/false）
 [CA109] error   entries/type-errors.md: canon_refs 必须是列表
+[CA114] error   entries/dup-id.md: id `dup-entry` 重复：entries/dup-id-2.md 与 entries/dup-id.md（后者不入索引，别人引用这个 id 时指的是前者；它自己的引用照旧检查）
 [CA401] error   entries/bad-refs.md: canon_refs 引用指向不存在的 id `ghost-entry`
 [CA401] error   entries/bad-refs.md: canon_refs 引用 'otherworld:shared-lore' 为 world:id 形式，本版协议不支持
 [CA401] error   entries/dup-id-2.md: canon_refs 引用指向不存在的 id `ghost-nowhere`
 [CA401] error   entries/old-tax2.md: superseded_by 引用指向不存在的 id `nowhere-entry`
-[CA402] error   entries/law-hist.md: canon_refs 目标 `old-law` 已 archived，请迁移至其 superseded_by 承接条目 `gh-customs`
+[CA402] error   entries/law-hist.md: canon_refs 目标 `old-law` 已 archived，请迁移至其承接条目 `gh-customs`
 [CA404] error   entries/harbor-watch.md: canon 条目的 depends_on 目标 `gh-memo` 状态为 trial，须为 canon
-[CA405] error   entries/old-tax.md: archived 条目仍被 canon_refs 引用，但未填 `superseded_by`——降级处置不完整
+[CA405] error   entries/old-tax.md: archived 条目仍被 canon_refs 引用，但未填 `superseded_by`（没有可迁移的承接条目）——降级处置不完整
 [CA501] error   entries/coup-ledger.md: depends_on 目标 `council` 层级 political（序号 6）高于本条目 military（序号 5）
 [CA502] error   entries/ring-b.md: depends_on 存在环（物质族）: ring-a → ring-b → ring-a
 [CA104] warning entries/council.md: 正文 21 字，canon 档建议 ≥200 字

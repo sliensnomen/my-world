@@ -24,7 +24,7 @@ import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -56,6 +56,21 @@ def _inside(target: Path, base: Path) -> bool:
     return target == base or base in target.parents
 
 
+def _header_value(value: str, *, as_path: bool = False) -> str:
+    """把要放进响应头的字符串变回 ASCII。
+
+    HTTP 头字段是 latin-1（RFC 9110 的 field-value 更窄：不许裸 CR/LF）。文件名是
+    UTF-8 的，直接塞进去 `send_header` 会抛 UnicodeEncodeError —— 异常发生在已经写了
+    状态行之后，于是客户端收到 **0 字节**，看起来像「接口挂了」。带 CR/LF 的文件名
+    更糟：那是响应头注入。所以：路径类按百分号编码（可逆，前端 decodeURIComponent
+    就能还原），其它值一律剔除 CR/LF 与控制字符。
+    """
+    if as_path:
+        return quote(value, safe="/")
+    return "".join(ch for ch in value
+                   if ch >= " " and ch != "\x7f" and ord(ch) < 0x100)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "wgp-serve/" + canonlint.PROTOCOL_VERSION
     protocol_version = "HTTP/1.1"
@@ -68,18 +83,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send(self, code: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
         self.send_response(code)
+        if code == 405:
+            self.send_header("Allow", "GET, HEAD, OPTIONS")
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
         for k, v in (extra or {}).items():
-            self.send_header(k, v)
+            self.send_header(k, v if k != "X-WGP-Path" else _header_value(v, as_path=True))
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
     def _json(self, code: int, obj) -> None:
-        body = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
+        # backslashreplace 是最后一道保险：任何漏出去的代理字符都变成 `\udcff` 字面量，
+        # 而不是让整个响应变成 0 字节（`export_world` 已经清洗过一层）。
+        body = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8", "backslashreplace")
         self._send(code, body, "application/json; charset=utf-8")
 
     def _export(self) -> dict:
@@ -115,7 +134,20 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET()
 
     def _readonly(self):  # 写操作一律拒绝
-        self._json(405, {"error": "只读接口：只能用 GET/HEAD", "routes": ROUTES})
+        self._json(405, {"code": "read_only", "error": "只读接口：只能用 GET/HEAD",
+                         "allow": "GET, HEAD, OPTIONS", "routes": ROUTES})
+
+    def do_OPTIONS(self):  # noqa: N802
+        # 浏览器的 CORS 预检打的就是 OPTIONS。以前没有这个方法 → 501 + HTML 错误页，
+        # 预检失败，前端连 GET 都发不出去。
+        self.send_response(204)
+        self.send_header("Allow", "GET, HEAD, OPTIONS")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     do_POST = do_PUT = do_DELETE = do_PATCH = _readonly
 
@@ -141,6 +173,11 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _raw(self, rel: str) -> None:
+        if "\x00" in rel:
+            # NUL 字节会让 `Path.resolve()` 抛 ValueError，而那是未捕获的异常：连接被直接
+            # 关掉，客户端拿不到任何状态码（也就分不清「没有这个文件」与「接口挂了」）。
+            # 它反正不可能是世界里的文件，当「没有这个文件」回。
+            return self._json(400, {"error": "路径里不能有 NUL 字节"})
         target = (self.server.wgp_root / rel.lstrip("/")).resolve()
         if not _inside(target, self.server.wgp_root) or not target.is_file():
             return self._json(404, {"error": f"世界目录里没有这个文件: {rel}"})
@@ -158,11 +195,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def _static(self, path: str) -> None:
         rel = path[len("/web/"):] if path.startswith("/web/") else ""
+        if "\x00" in rel:
+            return self._json(400, {"error": "路径里不能有 NUL 字节"})
         target = (WEB_DIR / (rel or "index.html")).resolve()
+        hidden = any(part.startswith(".") for part in target.relative_to(WEB_DIR).parts) \
+            if WEB_DIR.is_dir() and _inside(target, WEB_DIR) else False
+        if hidden:
+            # 与 /api/raw 同一条规矩：隐藏文件是工具的东西（.env 里可能有密钥），
+            # 不属于世界内容。这条检查以前只装在 /api/raw 上，/web 直接 200。
+            return self._json(404, {"error": f"web/ 里没有这个文件: {rel}",
+                                    "hint": "隐藏文件不对外提供"})
         if not WEB_DIR.is_dir() or not _inside(target, WEB_DIR) or not target.is_file():
             return self._json(404, {
                 "error": f"web/ 里没有这个文件: {rel or 'index.html'}",
-                "hint": "把前端文件放进 canonlint/web/ 就能用同源地址打开：/web/index.html",
+                "hint": "把前端文件放进仓库根的 web/（与 serve.py 同级）就能用同源地址打开：/web/index.html",
             })
         return self._send(200, target.read_bytes(),
                           _CTYPES.get(target.suffix.lower(), "application/octet-stream"))
@@ -178,12 +224,12 @@ class Handler(BaseHTTPRequestHandler):
 <style>body{{font:15px/1.6 system-ui,sans-serif;max-width:44rem;margin:3rem auto;padding:0 1rem}}
 code{{background:#f2f2f2;padding:.1em .3em;border-radius:3px}}td{{padding:.2rem 0}}</style>
 <h1>WGP 只读接口</h1>
-<p>世界：<code>{self.server.wgp_root}</code></p>
+<p>世界：<code>{self.server.wgp_root.name}</code>（目录本身不对外显示）</p>
 <p>{c['entries']} 个条目（{c['unparsed']} 个读不出来）｜{c['relations']} 条边（{c['dangling']} 条指不到人）｜
 {c['errors']} 错误 / {c['warnings']} 警告</p>
 <p>协议 <code>{data['protocol_version']}</code>，数据合同 <code>{data['contract_version']}</code></p>
 <table>{rows}</table>
-<p>这不是界面 —— 界面由前端写。前端文件放进 <code>canonlint/web/</code>，然后用
+<p>这不是界面 —— 界面由前端写。前端文件放进仓库根的 <code>web/</code>（与 <code>serve.py</code> 同级），然后用
 <code>/web/index.html</code> 打开，和接口同源。</p>
 </html>
 """.encode("utf-8")
@@ -206,8 +252,12 @@ def serve(root: Path, host: str, port: int, packs=(), extra_known=frozenset(),
           quiet: bool = False) -> None:
     httpd = make_server(root, host, port, packs, extra_known, quiet)
     real_port = httpd.server_address[1]
-    print(f"WGP 只读接口就绪：http://{host}:{real_port}/api/world")
-    print(f"世界目录：{httpd.wgp_root}（改了 Markdown 刷新页面就是新数据）")
+    shown = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    # flush=True：`--port 0` 常被管道/子进程用来读端口，缓冲着就等于没打印
+    print(f"WGP 只读接口就绪：http://{shown}:{real_port}/api/world", flush=True)
+    print(f"监听：{host}:{real_port}"
+          + ("（所有网卡）" if shown != host else ""), flush=True)
+    print(f"世界目录：{httpd.wgp_root}（改了 Markdown 刷新页面就是新数据）", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

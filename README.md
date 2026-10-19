@@ -10,7 +10,7 @@
 | | 负责 | 现在有什么 |
 |---|---|---|
 | **存** | 条目格式、id、目录布局、关系、写入命令 | `store/` · `world.schema.json`（格式契约） |
-| **判** | 结构规则 + 政治经济学规则 | 25 条 CA 规则（`canonlint.py`）· 6 条 CL + 6 条 PE 规则（`classlint/`：PE001–PE005 与 PE009） |
+| **判** | 结构规则 + 政治经济学规则 | 27 条 CA 规则（`canonlint.py`）· 8 条 CL + 6 条 PE 规则（`classlint/`：CL100–CL107，PE001–PE005 与 PE009） |
 
 **两者之间有一条线**：`store/` 里不许出现政治经济学词汇。改存储的人不该被迫先学会八层链和 PE003——
 政治经济学只住在规则、`classlint/` 和文档里。这条线由 `tests/test_store.py` 用 AST 检查守着（越线即红）。
@@ -47,7 +47,10 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 # 前端读 /api/world 或 world.json；wgp-client.js 负责补默认值、给出思维导图要的形状
 ```
 
-退出码：`0` 通过 · `1` 有 error（`--strict` 时 warning 也算）· `2` 用法/环境错误（例如没装 pyyaml）。
+`serve.py` 另有 `--quiet`（不打每行请求日志）与 `--pack econ`（让 CA6xx 一起进 JSON，与 canonlint 侧同一面旗）。
+
+退出码：canonlint `0` 通过 · `1` 有 error（`--strict` 时 warning 也算）· `2` 用法/环境错误（例如没装 pyyaml，或 `--dup-threshold` 不在 `(0, 1]` 内）。classlint 另有 `3`：PE 规则被 `rules: off` 关掉时，判定不是「全规则通过」，退出码 3；确认是有意关闭的，加 `--accept-disabled-rules` 才回到 0（见 `classlint/PROTOCOL.md` §4）。
+三个开关的边界都钉在 `tests/run_tests.py` 里：`--strict` **只改退出码不改判定**（同一份数据两种模式的 findings 逐字相同）；`--dup-threshold` 越界是用法错误、且它真的是旋钮（放宽到 0.99 会消音 CA201）；`--impact` 给悬空主体出空下游、主体不进自己的下游、报告不影响退出码。
 `report` 级别的发现（CA504 影响报告、`graph`）**永不进退出码**。
 
 > 两层现在读的目录不同：canonlint 读 `entries/`，classlint 读 `codex/`。
@@ -60,22 +63,22 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 1. **`world.schema.json`** —— 条目格式的唯一契约。自定义与外来字段一律住 `x-` 前缀（例 `x-st-entry`）；
    不许另开 `extensions` 键——它不在字段表里，会被 CA106 当成未定义字段。
 2. **代码 + 测试** —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；测试绿就是真相。
-3. **`PROTOCOL.md`** —— 2026-09 冻结时写下的规范散文：规则表（§6.3，25 条）与代码逐条互证，
+3. **`PROTOCOL.md`** —— 2026-09 冻结时写下的规范散文：规则表（§6.3，27 条）与代码逐条互证，
    其余叙述是当时的意图。与代码不一致时**以代码为准**。
 4. **`项目文书.md` / `classlint/项目文书.md`** —— 定位与路线图，属于「想法」，不是契约。
 
-`tests/test_docs.py` 把文档里的数字（规则条数、层数、测试世界数量、PE 编号）钉在代码上：
-改了代码不改文档，CI 会红。
+`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与项数（27 条 CA、8 条 CL、6 条 PE、五套检查的 36 + 12 + 23 + 20 + 14、18 个 classlint 夹具），以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
+它**不**是全文校验：层数、字段数、示例世界的条目数、退出码说明这些没被钉住，改代码时请顺手 `grep` 一遍文档。
 
 ## 现状（不吹）
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
-- ✅ **能判**：25 条 CA 规则（结构 / 引用 / 承重链条 / 重复 / 影响报告）+ CL1xx + PE001–PE005 + PE009
-- ✅ **有回归网**：`tests/` 五套（29 + 12 + 19 + 17 + 13 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
+- ✅ **能判**：27 条 CA 规则（结构 / 引用 / 承重链条 / 重复 / 影响报告）+ CL1xx + PE001–PE005 + PE009
+- ✅ **有回归网**：`tests/` 五套（36 + 12 + 23 + 20 + 14 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ⬜ **没有界面** —— 前端最后做：没有判定，就没有值得渲染的东西；渲染器是别人能写的东西
 - ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）
-- ⬜ **classlint 还没按「存 / 判」拆** —— 读卡那一半**已经合并**：id 语法、frontmatter 切分、契约词表与关系名归一化只剩 `store/parse.py` 一份，`classlint` 只转发（`tests/test_store.py` 的结构锁 + 行为锁守着，抄回去就红）。剩下没动的是**判定**那一半：classlint 仍是一个独立可执行文件，不是可插拔的规则包；且它自己的字段政策与 canonlint 有一处真实分歧（`depends_on` 收裸字符串，canonlint 要求 `{id, kind, critical}`）
+- ⬜ **classlint 还没按「存 / 判」拆** —— 读卡那一半**已经合并**：id 语法、frontmatter 切分、契约词表与关系名归一化只剩 `store/parse.py` 一份，`classlint` 只转发（`tests/test_store.py` 的结构锁 + 行为锁守着，抄回去就红）。剩下没动的是**判定**那一半：classlint 仍是一个独立可执行文件，不是可插拔的规则包；而且它现在 `import store.parse`，**必须和仓库一起用、从仓库根调用**——不能单独拷走 `classlint/classlint.py`（`classlint/README.md` 的「用法」写的就是这个）；且它自己的字段政策与 canonlint 有一处真实分歧（`depends_on` 收裸字符串，canonlint 要求 `{id, kind, critical}`）
 - ⚠️ 三个真实世界（魔戒 / 冰火 / 沙丘）是**演示**不是证据：它们的 warning 几乎全是 CA104（正文不到
   200 字）这类篇幅噪声，不是工具 bug，也不是世界观有毛病；拿它们当「全绿基准」是误会
 - ✅ **唯一的全绿基准是 `tests/world-clean`**：默认与 `--strict` 两种模式下都是 `0 错误 | 0 警告`、

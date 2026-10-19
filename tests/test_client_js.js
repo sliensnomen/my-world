@@ -57,11 +57,19 @@ check("byId 取得到条目、entry() 给 id 和 path 都能取", function () {
 });
 
 check("neighbors 两个方向都给", function () {
-  const arrakis = world.neighbors("arrakis");
-  assert(arrakis.length > 0, "arrakis 一条关系都没有？");
+  // 选一个**确实两个方向都有边**的条目：arrakis 在这个世界里只有进边，
+  // 拿它测出边等于测空气。
+  const arrakis = world.neighbors("kynes-terraform-plan");
+  assert(arrakis.length > 0, "kynes-terraform-plan 一条关系都没有？");
+  // 两个方向都要有：只断言「有进边」时，把出边整个删掉也照样绿（评审 medium）
   assert(arrakis.some(function (n) { return n.direction === "in"; }), "没有进边");
+  assert(arrakis.some(function (n) { return n.direction === "out"; }), "没有出边");
+  const inCount = arrakis.filter(function (n) { return n.direction === "in"; }).length;
+  const outCount = arrakis.filter(function (n) { return n.direction === "out"; }).length;
+  assert(inCount + outCount === arrakis.length, "有条目的方向既不是 in 也不是 out");
   arrakis.forEach(function (n) {
     assert(n.type && n.other, "关系缺 type/other");
+    assert(n.other !== "kynes-terraform-plan", "邻接表里出现了自己");
   });
 });
 
@@ -81,9 +89,22 @@ check("mindmap 对不存在的 id 返回 null（不抛）", function () {
 
 check("relationTypes 与 vocabularies 一致", function () {
   const names = world.relationTypes();
+  // 只比「名字集合 ⊆ vocabularies」是同义反复：两边都从同一份数据算出来，
+  // 把关系名砍到只剩 1 种也照样一致（评审 medium）。这里钉住两边**相等**，
+  // 再钉几个世界里一定有的关系名。
+  const fromVocab = Object.keys(world.vocabularies.relation_types);
   assert(names.length > 0, "关系名为空");
+  assert(names.length === fromVocab.length,
+    "relationTypes 与 vocabularies.relation_types 的条数不同：" + names.length + " vs " + fromVocab.length);
   names.forEach(function (n) {
     assert(world.vocabularies.relation_types[n] > 0, n + " 计数为 0");
+  });
+  // 关系名集合必须等于导出的 vocabularies.relation_types 的键集合（不是硬编码清单：
+  // 夹具世界换了，这里跟着数据走）。
+  assert(names.join(",") === fromVocab.sort().join(","),
+    "relationTypes 与 vocabularies 的键不一致：" + names.join(",") + " vs " + fromVocab.join(","));
+  ["depends_on", "conflicts_with"].forEach(function (n) {
+    assert(names.indexOf(n) >= 0, "世界里确实有 " + n + " 边，relationTypes 却没有");
   });
 });
 
@@ -93,9 +114,23 @@ check("search 找得到（大小写不敏感、能给空结果）", function () 
 });
 
 check("两次解析结果一致（没有随机/时间戳）", function () {
-  const a = JSON.stringify(load(arrakisFile).mindmap("bene-gesserit"));
-  const b = JSON.stringify(load(arrakisFile).mindmap("bene-gesserit"));
-  assert(a === b, "两次结果不一样");
+  // 只比 mindmap 太窄（评审 low）：这里比**整份解析结果**——所有条目的字段、
+  // 所有边、悬空清单、计数与词表，两次解析必须逐字节一致。
+  const w1 = load(arrakisFile);
+  const w2 = load(arrakisFile);
+  const snap = function (w) {
+    return JSON.stringify({
+      entries: w.entries,
+      relations: w.relations,
+      dangling: w.dangling,
+      counts: w.counts,
+      vocabularies: w.vocabularies,
+      mindmap: w.mindmap("bene-gesserit"),
+      neighbors: w.neighbors("kynes-terraform-plan"),
+      search: w.search("香料")
+    });
+  };
+  assert(snap(w1) === snap(w2), "两次解析结果不一样");
 });
 
 check("数据不是对象时直接报错", function () {

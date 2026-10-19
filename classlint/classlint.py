@@ -31,6 +31,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from store import model as shared_model  # noqa: E402
 from store import parse as shared  # noqa: E402
 
 VERSION = "0.1"
@@ -40,19 +41,6 @@ VERSION = "0.1"
 # 实体 ID 规范：小写字母/数字/连字符，全库唯一，一旦发布永不更改、永不复用。
 # 实现在 store/parse.py（与 canonlint 共用一份）。
 ID_RE = shared.ID_RE
-
-# 七种生产关系（协议 §2，固定语法）：relation → 允许的 optional 属性键。
-# 这是本引擎**必须懂**的结构性子集，用来建图跑 PE 规则；它不是关系名的真值表。
-RELATION_ATTRS: dict[str, set[str]] = {
-    "owns": {"note"},
-    "controls": {"note"},
-    "extracts": {"what", "note"},
-    "coerces": {"note"},
-    "legitimizes": {"note"},
-    "owes": {"what", "note"},
-    "depends_on": {"critical", "kind", "note"},
-}
-ATTR_TYPES = {"what": str, "note": str, "kind": str, "critical": bool}
 
 # ---- 关系名词表：唯一真值在契约 world.schema.json ------------------------------
 # 契约 `x-relation-vocabulary` 是唯一真值。读取与归一化（「同一关系的所有历史拼法」
@@ -91,9 +79,6 @@ REQUIRED_FIELDS = ["id", "title", "type"]
 
 # 物资类别表（契约 x-strict-vocabulary.depends_on.kind）。PE005 用它判断「来源侧边算不算数」。
 MATERIAL_KINDS: frozenset[str] = _load_material_kinds()
-
-# 兼容旧名（本文件与测试夹具用过 RELATIONS）——同一对象，避免悄悄分叉
-RELATIONS = RELATION_ATTRS
 
 ENTRY_ROOT = "codex"   # 条目唯一位置；目录纯组织，身份只认 frontmatter
 SKIP_DIRS = {".git"}
@@ -145,114 +130,36 @@ class Finding:
 
 
 @dataclass
-class Entry(shared.RawEntry):
+class Entry(shared_model.Entry):
     """一个条目 = 一个带 YAML frontmatter 的 Markdown 文件。
 
-    文件层字段（path/rel/meta/body/parse_error/id）继承自 `shared.RawEntry`——两个引擎的
-    条目对象从同一个文件层结果长出来，本类只挂政治经济学判定需要的关系视图。
+    文件层字段（path/rel/meta/body/parse_error/id）与**边层**（关系视图、形状校验、
+    旧写法搬家）都继承自 `store/model.py`——两个引擎从同一份结果长出来。本类只剩
+    「形状问题要说成本引擎的编号」和「depends_on 按本引擎的口径」这两件事。
     """
+
+    # 契约 `x-stricter-than-contract` 第一条登记的口径差：本引擎的协议 §2.2 明确把
+    # `kind`/`critical` 降为可选（八层链与 kind 分族是 WGP 治理层的建模工具，审计只关心
+    # 边的存在性与方向）。所以这里把开关关掉——**不是**另写一份建边代码。
+    depends_on_requires_annotations = False
 
     @cached_property
     def edges(self) -> tuple[list[Edge], list[Finding]]:
-        """全部边 = 九个具名字段 + 规范形 `relations`，结果缓存。
+        """全部边 = 存储层的统一视图（契约是唯一真值表），结果缓存。
 
-        契约 `world.schema.json` 是关系的唯一真值表：具名字段照单全收（契约列过的
-        九个，含连字符/下划线变体），`relations:` 里的 `type` 走同一张归一化表。
-        这样「同一条边写在哪、报的都一样」才成立（协议 §1 等价性承诺）。
+        本引擎**不再自己建边**。以前它自带一套约 90 行的建边与形状校验，于是同一份
+        frontmatter 两个引擎给出两种结果：契约声明合法的 `conflicts_with: [{id, stance}]`
+        与 `exchanges_with: [{id, what}]` 被本引擎当成「未定义的属性」，**整条边消失**；
+        `depends_on` 的裸字符串与缺 `critical` 在 canonlint 报错、在本引擎却是边；
+        `depends_on + kind: legitimacy` 的搬家只在 canonlint 侧执行，PE002/PE003 因此
+        对同一份数据判得不一样（评审 blocker）。
+
+        形状问题一律映射成 CL104：本引擎只有这一个形状编号，存储层用的是 canonlint 的
+        CA107/CA109（契约 x-stricter-than-contract 记着这条；文案两个引擎逐字相同）。
         """
-        out: list[Edge] = []
-        errs: list[Finding] = []
-        # 1) 具名字段（契约 x-relation-source.aliases）
-        field_names = tuple(RELATION_ATTRS) + tuple(
-            sorted(set(ALL_RELATION_NAMES) - set(RELATION_ATTRS)))
-        for field in field_names:
-            raw = self.meta.get(field)
-            if raw is None:
-                continue
-            name = canonical_rel(field)
-            allowed = RELATION_ATTRS.get(name, set())
-            if not isinstance(raw, list):
-                errs.append(Finding("CL104", "error", self.rel, f"{field} 必须是列表"))
-                continue
-            for i, item in enumerate(raw):
-                where = f"{field}[{i}]"
-                if isinstance(item, str):
-                    out.append(Edge(name, item, {}))
-                    continue
-                if not isinstance(item, dict):
-                    errs.append(Finding("CL104", "error", self.rel,
-                                        f"{where} 必须是 id 字符串或对象"))
-                    continue
-                tid = item.get("id")
-                if not isinstance(tid, str):
-                    errs.append(Finding("CL104", "error", self.rel,
-                                        f"{where} 缺 id 或 id 不是字符串"))
-                    continue
-                bad = False
-                for k, v in item.items():
-                    if k == "id" or str(k).startswith("x-"):
-                        continue
-                    if k not in allowed:
-                        errs.append(Finding("CL104", "error", self.rel,
-                                            f"{where} 含 {field} 未定义的属性 `{k}`"))
-                        bad = True
-                    elif not isinstance(v, ATTR_TYPES.get(k, object)):
-                        errs.append(Finding("CL104", "error", self.rel,
-                                            f"{where}.{k}={v!r} 类型错误"
-                                            f"（须为 {ATTR_TYPES.get(k, object).__name__}）"))
-                        bad = True
-                if not bad:
-                    out.append(Edge(name, tid,
-                                    {k: v for k, v in item.items() if k != "id"}))
-        # 2) 规范形 relations（契约新写法；修复前它对本引擎完全隐形）
-        out.extend(self.canonical_edges[0])
-        errs.extend(self.canonical_edges[1])
-        return out, errs
-
-    @cached_property
-    def canonical_edges(self) -> tuple[list[Edge], list[Finding]]:
-        """解析规范形 `relations:`：项键 `type`/`target`（**不是** `id`）。"""
-        raw = self.meta.get("relations")
-        if raw is None:
-            return [], []
-        if not isinstance(raw, list):
-            return [], [Finding("CL104", "error", self.rel, "relations 必须是列表")]
-        out: list[Edge] = []
-        errs: list[Finding] = []
-        for i, item in enumerate(raw):
-            where = f"relations[{i}]"
-            if not isinstance(item, dict):
-                errs.append(Finding("CL104", "error", self.rel, f"{where} 必须是对象"))
-                continue
-            missing = [k for k in ("type", "target") if k not in item]
-            for m in missing:
-                errs.append(Finding("CL104", "error", self.rel, f"{where} 缺字段 `{m}`"))
-            extra = [k for k in item if k not in CANONICAL_RELATION_ITEMS
-                     and not str(k).startswith("x-")]
-            for x in extra:
-                errs.append(Finding("CL104", "error", self.rel,
-                                    f"{where} 含未定义字段 `{x}`（扩展须 x- 前缀）"))
-            if missing or extra:
-                continue
-            bad = False
-            for key in ("type", "target"):
-                if not isinstance(item[key], str) or not item[key]:
-                    errs.append(Finding("CL104", "error", self.rel,
-                                        f"{where}.{key} 必须是字符串"))
-                    bad = True
-            for key, want in (("kind", str), ("stance", str), ("note", str),
-                              ("what", str), ("critical", bool)):
-                if key in item and not isinstance(item[key], want):
-                    errs.append(Finding("CL104", "error", self.rel,
-                                        f"{where}.{key} 类型错误（须为 {want.__name__}）"))
-                    bad = True
-            if bad:
-                continue
-            # 未知名原样保留、不下判语（契约 x-profiles 自由档；见 store/model.py 同名 note）
-            name = canonical_rel(item["type"])
-            out.append(Edge(name, item["target"],
-                            {k: v for k, v in item.items() if k not in ("type", "target")}))
-        return out, errs
+        errs = [Finding("CL104", "error", self.rel, e.msg)
+                for e in self.relation_shape_errors]
+        return list(self.relations), errs
 
 
 def parse_entry(path: Path, root: Path) -> Entry:
@@ -287,6 +194,16 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
             if k not in KNOWN_FIELDS and not str(k).startswith("x-"):
                 findings.append(Finding("CL103", "error", e.rel,
                                         f"未定义字段 `{k}`（扩展字段须 x- 前缀）"))
+        # CL107：关系名拼写近失。存储层已经把这条边**按规范名建好**（所以 PE 族判得到
+        # 它），但作者写下的那个词与判定用的名字不同，必须说出来——否则「我明明写的是
+        # extractss，工具却判 extracts」是一句无法追溯的结论。
+        for raw_name in e.raw_relation_names:
+            near = shared.nearest_relation_name(raw_name)
+            if near is not None:
+                findings.append(Finding(
+                    "CL107", "warning", e.rel,
+                    f"关系名 `{raw_name}` 与规范名 `{near}` 只差一个字符，疑似拼写错误，"
+                    f"已按 `{near}` 判定；确是新关系请改用其它名字或加 `x-` 前缀"))
         if e.id is not None and not ID_RE.match(e.id):
             findings.append(Finding("CL102", "error", e.rel,
                                     f"id={e.id!r} 非法（仅允许小写字母/数字/连字符）"))
@@ -297,6 +214,13 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
             else:
                 index[e.id] = e
         findings.extend(e.edges[1])
+    # CL106: 拆分前的写法（`depends_on` + `kind=legitimacy`）。存储层已经把它归一成
+    # 关系名 derives_legitimacy_from 并按那条关系判定，这里只提示作者改写法——canonlint
+    # 的 CA111 是同一件事。搬家如果完全静默，就等于留了一条只有工具知道的新关系名，
+    # 而且本引擎的 PE002/PE003 会因此和作者以为的写法对不上（评审 blocker 3）。
+    for e in entries:
+        for err in e.relation_migrations:
+            findings.append(Finding("CL106", "warning", e.rel, err.msg))
     return entries, index, findings
 
 
@@ -309,10 +233,20 @@ class World:
     def __init__(self, entries: list[Entry], index: dict[str, Entry]):
         self.entries = entries
         self.index = index
-        self.edges: list[tuple[str, Edge]] = []  # (src_id, edge)
-        for e in index.values():
+        # id → 该 id 在索引里的那一条（撞 id 时按路径序首个赢，与 canonlint 的 CA105 同口径）。
+        # 规则要用「来源的路径」时一律走 `rel_of`，别再自己去翻 `index[...].rel`——
+        # 被遮蔽的条目不在 index 里，直接下标会 KeyError，而它在图里是有的。
+        self.rel_of: dict[str, str] = {e.id: e.rel for e in entries if e.id is not None}
+        self.edges: list[tuple[str, Edge, str]] = []  # (src_id, edge, 写下这条边的文件)
+        # 遍历的是**全部条目**，不是 `index.values()`：两张卡撞同一个 id 时，被遮蔽的那一张
+        # 不进索引（依路径序首个赢），但它写下的出边照旧要判——canonlint 侧早就这么做
+        # （CA105 那一行写着「被遮蔽那一份自己的出边照旧检查」），classlint 只在索引上兜圈，
+        # 于是同一个世界两个引擎的结论不同：无撞 id 报 2 条 CL105，有撞 id 只剩 1 条 CL102。
+        for e in entries:
+            if e.id is None:
+                continue
             for edge in e.edges[0]:
-                self.edges.append((e.id, edge))
+                self.edges.append((e.id, edge, e.rel))
                 # 「名分依据」与「正当化」是同一断言的两个方向：A derives_legitimacy_from B
                 # 就是 B legitimizes A。这里把反向边物化出来，PE003（找自我正当化的闭环）
                 # 因此不必关心作者把边写在哪一端——两个引擎对同一份数据必须同判。
@@ -320,16 +254,16 @@ class World:
                 if edge.rel == "derives_legitimacy_from" and edge.target in index:
                     self.edges.append(
                         (edge.target, Edge("legitimizes", e.id,
-                                           {"note": edge.attrs.get("note", "")})))
+                                           {"note": edge.attrs.get("note", "")}), e.rel))
 
-    def edges_of(self, rel: str) -> list[tuple[str, Edge]]:
+    def edges_of(self, rel: str) -> list[tuple[str, Edge, str]]:
         """按关系名取边。入参允许任意历史拼法（canon-ref / canon_refs / canon_refs），
         与存储层 `Entry.edges_of` 同一语义：查的是规范名。"""
         want = canonical_rel(rel)
-        return [(s, e) for s, e in self.edges if e.rel == want]
+        return [(s, e, rel_) for s, e, rel_ in self.edges if e.rel == want]
 
     def find_edge(self, src: str, rels: set[str], dst: str) -> Edge | None:
-        for s, e in self.edges:
+        for s, e, _rel in self.edges:
             if s == src and e.rel in rels and e.target == dst:
                 return e
         return None
@@ -392,24 +326,28 @@ def rule(rid: str, level: str, doc: str):
 
 @rule("PE001", "error", "抽取必须有基础（controls/coerces/owns）")
 def pe001(world: World, emit) -> None:
-    for src, e in world.edges_of("extracts"):
+    for src, e, src_rel in world.edges_of("extracts"):
+        if e.target not in world.index:
+            # 目标不存在时「对不存在的目标论证它没有基础」是空话，且 CL105 已经报过。
+            # 同族规则（PE003/PE005/PE009）都自己守卫悬空目标，只 PE001 以前漏了这一道。
+            continue
         if world.find_edge(src, {"controls", "coerces", "owns"}, e.target) is None:
-            emit(None, world.index[src].rel,
+            emit(None, src_rel,
                  f"extracts → `{e.target}` 无基础：对该目标没有任何 controls/coerces/owns 边")
 
 
 @rule("PE002", "error", "不能镇压自己的供养者")
 def pe002(world: World, emit) -> None:
-    for src, e in world.edges_of("coerces"):
+    for src, e, src_rel in world.edges_of("coerces"):
         dep = world.find_edge(src, {"depends_on"}, e.target)
         if dep is None:
             continue
         if dep.attrs.get("critical") is True:
-            emit("error", world.index[src].rel,
+            emit("error", src_rel,
                  f"一边 coerces → `{e.target}`，一边对其 critical 依赖（断供即崩）"
                  "——镇压自己的供养者")
         else:
-            emit("warning", world.index[src].rel,
+            emit("warning", src_rel,
                  f"一边 coerces → `{e.target}`，一边对其 depends_on（非 critical）"
                  "——镇压与供养重叠，请确认")
 
@@ -418,7 +356,7 @@ def pe002(world: World, emit) -> None:
 def pe003(world: World, emit) -> None:
     """legitimizes 子图的环状 SCC：无分量外输入边 = 无锚闭环。有锚互锁合法（WGP v0.5 魔戒案例）。"""
     adj: dict[str, set[str]] = {}
-    for src, e in world.edges_of("legitimizes"):
+    for src, e, src_rel in world.edges_of("legitimizes"):
         if e.target in world.index:  # 悬空目标已由 CL105 报告
             adj.setdefault(src, set()).add(e.target)
             adj.setdefault(e.target, set())
@@ -430,7 +368,7 @@ def pe003(world: World, emit) -> None:
             continue
         rep = min(members)
         loop = " ↔ ".join(sorted(members)) if len(members) > 1 else f"{members[0]}（自环）"
-        emit(None, world.index[rep].rel,
+        emit(None, world.rel_of[rep],
              f"legitimizes 闭环无外部锚点: {loop}——合法性不能凭空互证")
 
 
@@ -439,7 +377,7 @@ def pe004(world: World, emit) -> None:
     """定性版：环状 extracts SCC = 剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。
     定量判定（抽取量 vs 剩余量）待流量层数据就位后回填。"""
     adj: dict[str, set[str]] = {}
-    for src, e in world.edges_of("extracts"):
+    for src, e, src_rel in world.edges_of("extracts"):
         if e.target in world.index:
             adj.setdefault(src, set()).add(e.target)
             adj.setdefault(e.target, set())
@@ -447,7 +385,7 @@ def pe004(world: World, emit) -> None:
     for members in _cyclic_sccs(adj):
         rep = min(members)
         loop = " ↔ ".join(sorted(members)) if len(members) > 1 else f"{members[0]}（自环）"
-        emit(None, world.index[rep].rel,
+        emit(None, world.rel_of[rep],
              f"extracts 存在环: {loop}——剩余在循环中不落地于生产（黑洞）")
 
 
@@ -465,7 +403,7 @@ def pe005(world: World, emit) -> None:
     必须是一次**物质关系的声明**：作者得说清 B 靠的是什么类别的东西活着。
     """
     def has_material_source(src: str) -> bool:
-        for owner, e in world.edges:
+        for owner, e, _rel in world.edges:
             if owner != src:
                 continue
             if e.rel in ("extracts", "exchanges_with"):
@@ -474,7 +412,7 @@ def pe005(world: World, emit) -> None:
                 return True
         return False
 
-    for src, e in world.edges_of("extracts"):
+    for src, e, src_rel in world.edges_of("extracts"):
         if e.target not in world.index:
             continue  # CL105 已报
         if not has_material_source(e.target):
@@ -487,12 +425,14 @@ def pe005(world: World, emit) -> None:
 class ConfigError(Exception):
     pass
 @rule("PE009", "warning", "债务必须收得回来：债权关系要有能兑现它的结构")
-def pe006(world: World, emit) -> None:
+def pe009(world: World, emit) -> None:
     """A —owes→ B（A 欠 B）时，模型里必须至少有一条**收得回来**的通道：
 
     - B 对 A 有 `controls` / `coerces` / `extracts` / `legitimizes` 任一条：债主能指挥、
       能强制、能从债务人身上抽取偿付，或能撤回给债务人的正当性；
-    - 或 A 对 B 有 `depends_on`：债务人靠债主活着（断供即崩），债主捏着续借的开关。
+    - 或 A 对 B 有**承重**的 `depends_on`（`critical: true`，或 `kind` 在物质族内）：
+      债务人靠债主活着（断供即崩），债主捏着续借的开关。裸 `depends_on: [B]` 不算——
+      与 PE005 对同一条裸依赖的口径一致。
 
     都没有 = 这笔债在模型里无法兑现，只是一句记账。债务不是「写一个 owes 就成立」的
     关系：它要能收回来，收回来的途径必须写在模型里。反面提醒：`owes` 与 `depends_on`
@@ -501,16 +441,22 @@ def pe006(world: World, emit) -> None:
 
     报在债务人侧（欠债的那张卡）。
     """
-    for src, e in world.edges_of("owes"):
+    for src, e, src_rel in world.edges_of("owes"):
         if e.target not in world.index:  # 悬空目标已由 CL105 报告
             continue
         claim = world.find_edge(e.target, {"controls", "coerces", "extracts",
                                            "legitimizes"}, src)
         if claim is not None:
             continue
-        if world.find_edge(src, {"depends_on"}, e.target) is not None:
+        dep = world.find_edge(src, {"depends_on"}, e.target)
+        if dep is not None and (dep.attrs.get("critical") is True
+                                or dep.attrs.get("kind") in MATERIAL_KINDS):
+            # 只有**承重**的依赖才算收得回来的通道：断供即崩（critical）或明确挂在某类
+            # 物质上（kind 属物质族）。裸 `depends_on: [债主]` 不算——PE005 早就对同一条
+            # 裸依赖明确拒绝（自然条件不承担再生产），一条「我依赖他」的重叠不足以上升
+            # 成「他能收得回这笔债」。
             continue
-        emit(None, world.index[src].rel,
+        emit(None, src_rel,
              f"欠 `{e.target}` 债务，但看不到任何收得回来的途径：`{e.target}` 不指挥、不强制、"
              f"不抽取、也不为这条提供正当性，这条自己也不依赖 `{e.target}`"
              "——债权关系要有能兑现它的结构，否则只是记账")
@@ -552,9 +498,9 @@ def run_checks(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]
     world = World(entries, index)
 
     # CL105: 关系目标存在性
-    for src, e in world.edges:
+    for src, e, src_rel in world.edges:
         if e.target not in index:
-            findings.append(Finding("CL105", "error", index[src].rel,
+            findings.append(Finding("CL105", "error", src_rel,
                                     f"{e.rel} 目标 `{e.target}` 不存在"))
 
     for rid in sorted(RULES):
@@ -583,7 +529,10 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
 
     reports = []
     for subj in subjects:
-        seen, order = set(), []
+        # `seen` 预置主体：环（ra ↔ rb，或自环）会把主体带回下游，而"改 A 会炸 A"
+        # 是环的结论（CA502/CL50x 报），不是影响报告的结论。canonlint 的 CA504 早就是
+        # 这么做的（PROTOCOL.md「不含主体自身」），classlint 以前没跟上。
+        seen, order = {subj}, []
         queue = [subj]
         while queue:
             cur = queue.pop(0)
@@ -674,6 +623,13 @@ def cmd_check(root: Path, as_json: bool, impact_ids: list[str],
     if not (root / "classlint.yaml").is_file():
         print(f"error: {root} 不是 classlint 世界仓库（缺 classlint.yaml）",
               file=sys.stderr)
+        return 2
+    # 指错目录必须当用法错误处理：`codex/` 不在时 collect 收 0 条，会给出
+    # 「0 个条目 | 0 错误」的全绿报告——那是「整批条目看起来在被审，实际一张都没审」。
+    # 与 canonlint 的「不像一个世界仓库……（指错目录了？）」对齐成同一个退出码 2。
+    if not (root / ENTRY_ROOT).is_dir():
+        print(f"error: {root} 不像一个 classlint 世界仓库：没有 {ENTRY_ROOT}/ 目录"
+              f"（指错目录了？classlint 只审 {ENTRY_ROOT}/ 下的卡片）", file=sys.stderr)
         return 2
     try:
         entries, index, findings, disabled = run_checks(root)

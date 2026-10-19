@@ -49,14 +49,16 @@ pip install pyyaml
 git clone https://github.com/sliensnomen/my-world && cd my-world
 git switch -c fix/your-topic
 
-# ① 建立基线：四条命令都该绿
+# ① 建立基线：六条命令都该绿
 python3 tests/run_tests.py
 python3 tests/test_schema.py
 python3 tests/test_store.py
+python3 tests/test_serve.py
+python3 tests/test_docs.py
 python3 classlint/tests/run_tests.py
 ```
 
-② 挑改动（菜谱见下）→ ③ 改 → ④ 重跑那四条 → ⑤ 提交 → ⑥ 开 PR（见 §5）。
+② 挑改动（菜谱见下）→ ③ 改 → ④ 重跑那六条 → ⑤ 提交 → ⑥ 开 PR（见 §5）。
 
 ### 菜谱 A：加一个字段
 
@@ -67,13 +69,15 @@ python3 classlint/tests/run_tests.py
 
 同样的位置：`store/model.py` 的 `LEGACY_RELATION_FIELDS` + `FIELD_TABLE` + `Entry.relations` 归一化。
 注意**这一步是行为变更**（CA106 不再报这个词），要在 PR 里解释。
-六个别名今天正是被刻意留着的收口点，见 `store/README.md` 末尾的「已知漂移」。
+十一个具名关系字段今天**全部已接线**：都能读、都查悬空引用（CA401）。只有契约没定义、
+又不带 `x-` 前缀的字段才报 CA106——所以这道菜谱现在只在契约新增关系名时才用得着。
+剩下的唯一分歧是 `store/README.md` 末尾「已知漂移」里写的 `depends_on` 口径开关。
 
 ### 菜谱 C：改一条规则（加规则 / 改判定 / 改文案）
 
 1. `canonlint.py` 的 `check_structure` / `check_content` / `check_refs` / `check_chain` / `check_duplicates`
    里改判定；
-2. **同步 `PROTOCOL.md` §6.3 的规则表**（那是 25 条规则的清单，`tests/test_docs.py` 要求两边条数与编号一致）；
+2. **同步 `PROTOCOL.md` §6.3 的规则表**（那是 27 条规则的清单，`tests/test_docs.py` 要求两边条数与编号一致）；
 3. **加一个夹具**：在 `tests/world-*` 里造出会/不会触发它的条目，跑 `python3 tests/run_tests.py --update`
    更新快照，然后 **`git diff tests/snapshots/` 逐行看**——快照的 diff 就是这次行为变更的说明书；
 4. 如果是新规则编号，记得在 `PROTOCOL.md` §6.1 的编号段里给它一个位置。
@@ -98,7 +102,7 @@ python3 classlint/tests/run_tests.py
 ## 4. 验证命令（改完必须跑）
 
 ```bash
-python3 tests/run_tests.py            # 10 个世界夹具 + 29 项检查，逐字节比对快照
+python3 tests/run_tests.py            # 10 个世界夹具 + 36 项检查，逐字节比对快照（7 个 tests/world-* 目录、10 种跑法）
 python3 tests/test_schema.py          # 契约 ↔ 代码常量
 python3 tests/test_store.py           # 存储层边界与写入路径
 python3 tests/test_serve.py           # 接口（serve.py）与解析器（wgp-client.js）

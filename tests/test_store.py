@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -184,7 +185,7 @@ def check_mixed_forms_are_recorded():
 # ---- 6/7. 与判定侧的常量不许漂移 ------------------------------------------
 
 def check_field_table_matches_rules():
-    # 契约 x-relation-source.aliases 的九个具名字段全部接线（旧「六种待接线」漂移已关闭）
+    # 契约 x-relation-source.aliases 的十一个具名字段全部接线（旧「六种待接线」漂移已关闭）
     assert set(store.FIELD_TABLE) == set(canonlint.REQUIRED_FIELDS) | {
         "layer", "superseded_by", store.RELATIONS_FIELD} \
         | set(store.LEGACY_RELATION_FIELDS), \
@@ -201,7 +202,7 @@ def check_type_vocabulary_matches_layout():
 # ---- 8. 关系名真值表：契约与工具不许有两种拼法 -----------------------------
 
 def check_relation_alias_drift():
-    """契约的九个具名字段必须**全部**接线，而契约声明的每一种拼法都必须认。
+    """契约的十一个具名字段必须**全部**接线，而契约声明的每一种拼法都必须认。
 
     这条测试的前身只钉「还有哪六个没接线」，于是漏掉了真正的缺陷：契约
     `x-relation-source.aliases` 把 canon_refs 的 type 写作 `canon-ref`，而工具按规范名
@@ -215,7 +216,7 @@ def check_relation_alias_drift():
     assert canonical == store.RELATIONS_FIELD, (
         f"契约的规范形叫 {canonical!r}，存储层叫 {store.RELATIONS_FIELD!r}")
 
-    # (1) 九个具名字段全部接线，一个不漏
+    # (1) 十一个具名字段全部接线，一个不漏
     unconsumed = sorted(set(aliases) - set(store.LEGACY_RELATION_FIELDS))
     assert not unconsumed, (
         f"契约列了但工具没接线的关系字段：{unconsumed}——"
@@ -487,16 +488,23 @@ def check_relation_forms_are_indistinguishable():
     403 静默失效），而 `depends_on` 恰好两边同拼法而正常体检——同一份契约三个族两种
     下场。修复后每个族都必须给出**同一个**答案，拼法变体（连字符/下划线）也算同族。
     """
+    def _defaults(extra: str) -> str:
+        # 模板里的空字段不能与 extra 里同名字段并存：YAML 重复键是 last-wins，
+        # 那样夹具自己就在写一张 CA112 的卡（重复键现在会被报出来）。
+        written = set(re.findall(r"^([a-z_]+):", extra, re.M))
+        lines = [f"{k}: []" for k in ("canon_refs", "conflicts_with") if k not in written]
+        return "".join(line + "\n" for line in lines)
+
     def card(extra: str) -> str:
         return (f"---\nid: a-node\ntitle: a-node\ntype: faction\nauthor: t\n"
                 f"date: 2026-01-01\nstatus: canon\nload_bearing: true\nlayer: political\n"
-                f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+                f"{_defaults(extra)}{extra}ai_assisted: false\n"
                 f"---\n\n{BODY}\n")
 
     def target(extra: str = "") -> str:
         return (f"---\nid: b-node\ntitle: b-node\ntype: faction\nauthor: t\n"
                 f"date: 2026-01-01\nstatus: canon\nload_bearing: false\nlayer: ideology\n"
-                f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+                f"{_defaults(extra)}{extra}ai_assisted: false\n"
                 f"---\n\n{BODY}\n")
 
     def judge(left: str, right: str = ""):
@@ -585,10 +593,20 @@ def check_superseded_by_null_is_not_a_successor():
     for label, extra, want in [
         ("字段缺", "", "CA405"),
         ("显式 null", "superseded_by: null\n", "CA405"),
+        # 承接者必须**真的在库里**：一个指向不存在条目的 superseded_by 不是承接者
+        # （它自己已经撞上 CA401/CA405），不能拿它把 CA402 的迁移指引变成指向幽灵。
         ("真有承接者", "superseded_by: c-node\n", "CA402"),
+        # 坏值不是承接者：判据是「承接者真的存在、且不是自己」，不是「字段非 null」。
+        # 以前只有前三个用例，「`sb is not None` 就放行」这个变异照样全绿。
+        ("坏值（数字）", "superseded_by: 42\n", "CA405"),
+        ("指向不存在的条目", "superseded_by: ghost-node\n", "CA405"),
+        ("指向自己", "superseded_by: b-node\n", "CA405"),
     ]:
         with tempfile.TemporaryDirectory() as td:
-            root = make_world(Path(td), {"a-node": referrer(), "b-node": archived(extra)})
+            world = {"a-node": referrer(), "b-node": archived(extra)}
+            if "c-node" in extra:
+                world["c-node"] = entry_text("c-node", "")
+            root = make_world(Path(td), world)
             rc, out, err = run([root])
             assert not err, f"{label} 把 traceback 写到了 stderr：{err!r}"
             assert want in out, f"{label}：期望 {want}\n{out}"
@@ -641,6 +659,209 @@ def check_write_path_refuses_to_clobber():
         assert text.count("kind: fiscal") == 1, f"同一条边被插了两次：\n{text}"
 
 
+def check_write_path_preserves_the_file():
+    """`link` 只许改「这一条边」——其它字节一律原样（评审 blocker 1.1 / high 2.2 / 3.1-3.3）。
+
+    旧版是正则往 frontmatter 里插三行，于是：零缩进的块序列、`depends_on:` 写成 null、
+    多行标量里出现 `depends_on:` 字样、重复键、CRLF、只读文件、符号链接、正文首行缩进，
+    八种输入里有三种直接把卡写坏或把边写丢，**同时打印「已连线」**。
+    """
+    import os as _os
+    import stat as _stat
+
+    def card(extra: str = "depends_on: []\n", body: str = "\n    code block\nmore\n") -> str:
+        return ("---\nid: a\ntitle: A\ntype: location\nauthor: t\ndate: 2026-01-01\n"
+                "status: canon\nload_bearing: false\ncanon_refs: []\nconflicts_with: []\n"
+                f"{extra}ai_assisted: false\n---\n{body}")
+
+    def world(td: Path, text: str, *, raw: bytes | None = None) -> Path:
+        root = td / "w"
+        (root / "entries").mkdir(parents=True)
+        target = root / "entries" / "a.md"
+        if raw is not None:
+            target.write_bytes(raw)
+        else:
+            target.write_text(text, encoding="utf-8")
+        (root / "entries" / "b.md").write_text(card().replace("id: a", "id: b"),
+                                               encoding="utf-8")
+        return root
+
+    # (1) 零缩进的块序列：插进去的必须是同一层级的合法 YAML
+    with tempfile.TemporaryDirectory() as td:
+        root = world(Path(td), card("depends_on:\n- id: c\n  kind: fiscal\n  critical: true\n"))
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 0, f"{out} {err}"
+        text = (root / "entries/a.md").read_text(encoding="utf-8")
+        got = store.parse_entry(root / "entries/a.md", root)
+        assert not got.parse_error, f"零缩进序列被插坏了：{text}"
+        assert sorted(r.target for r in got.edges_of("depends_on")) == ["b", "c"], text
+        # 边真的进了图：悬空目标要能被审计看到，而不是藏在文本里。
+        # （这里原来写的是 `assert any(...) or True`——恒真，一条什么都没锁的锁。
+        #  评审把它点出来了：删掉被测的检查它照样绿。）
+        rc, out, _ = run(["--json", str(root)])
+        data = json.loads(out)
+        # `--json` 给的是 findings，不是导出数据集；要验「边进没进图」，就看那条悬空
+        # 目标有没有被 CA401 点名——边没进图时它一个字段都不会出现在输出里。
+        assert any(f["rule"] == "CA401" and "c" in f["message"] for f in data["findings"]), \
+            f"边只写进了文本、没进图：{[f['rule'] for f in data['findings']]}"
+
+    # (2) CRLF 与正文首行缩进：一个字节都不许动
+    with tempfile.TemporaryDirectory() as td:
+        raw = card().replace("\n", "\r\n").encode("utf-8")
+        root = world(Path(td), "", raw=raw)
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 0, f"{out} {err}"
+        after = (root / "entries/a.md").read_bytes()
+        assert b"\r\n" in after, "行尾被改成了 LF"
+        assert after.count(b"\n") == after.count(b"\r\n"), "混进了裸 LF"
+        assert b"    code block" in after, "正文首行的四空格缩进被吞掉了（markdown 代码块没了）"
+        assert b"kind: fiscal" in after
+
+    # (3) 重复键：拒绝写，不挑最后一个悄悄改坏
+    with tempfile.TemporaryDirectory() as td:
+        dup = card("depends_on: []\nz-x1: 1\ndepends_on: []\n")
+        root = world(Path(td), dup)
+        before = (root / "entries/a.md").read_text(encoding="utf-8")
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 2 and "重复字段" in err, f"rc={rc} err={err!r}"
+        assert (root / "entries/a.md").read_text(encoding="utf-8") == before, "拒绝了但还是改了文件"
+
+    # (4) 只读文件：拒绝改写，并保持只读
+    with tempfile.TemporaryDirectory() as td:
+        root = world(Path(td), card())
+        target = root / "entries/a.md"
+        _os.chmod(target, 0o444)
+        try:
+            rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+            assert rc == 2 and "只读" in err, f"rc={rc} err={err!r}"
+            assert _stat.S_IMODE(target.stat().st_mode) == 0o444, "只读位被改掉了"
+        finally:
+            _os.chmod(target, 0o644)
+
+    # (5) 符号链接：写穿到真文件，链接本身不能被换成普通文件
+    with tempfile.TemporaryDirectory() as td:
+        outside = Path(td) / "real.md"
+        outside.write_text(card(), encoding="utf-8")
+        root = world(Path(td), card())
+        link = root / "entries" / "a.md"
+        link.unlink()
+        link.symlink_to(outside)
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 0, f"{out} {err}"
+        assert link.is_symlink(), "符号链接被替换成了普通文件（世界外的那份成了孤儿）"
+        assert "kind: fiscal" in outside.read_text(encoding="utf-8"), "边没写进真文件"
+
+    # (6) 文件模式：0644 不能被一次 link 变成 0600
+    with tempfile.TemporaryDirectory() as td:
+        root = world(Path(td), card())
+        target = root / "entries/a.md"
+        _os.chmod(target, 0o644)
+        run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert _stat.S_IMODE(target.stat().st_mode) == 0o644, "文件模式被 mkstemp 的 0600 顶掉了"
+
+    # (7) 行内非空列表：文本手术做不了就整块重排，但必须说出来
+    with tempfile.TemporaryDirectory() as td:
+        root = world(Path(td), card("depends_on: []\n").replace("depends_on: []",
+                                                                "depends_on: [ghost]"))
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 0, f"{out} {err}"
+        assert "整块重排" in out, f"重排了却没说：{out!r}"
+        got = store.parse_entry(root / "entries/a.md", root)
+        # 已有的 `[ghost]` 是裸字符串：canonlint 口径下它本身就是 CA107（不建边），
+        # 重排只负责**不丢数据**——所以断言看结构化字段，不看建出来的边。
+        assert [d["id"] if isinstance(d, dict) else d
+                for d in got.meta["depends_on"]] == ["ghost", "b"], \
+            f"重排把已有的边弄丢了：{got.meta.get('depends_on')!r}"
+
+    # (8) 只有规范形、完全没有 depends_on 字段：追加，不动别的写法
+    with tempfile.TemporaryDirectory() as td:
+        root = world(Path(td), card("").replace("depends_on: []\n", ""))
+        rc, out, err = run(["link", "a", "b", "--kind", "fiscal", "--root", str(root)])
+        assert rc == 0, f"{out} {err}"
+        got = store.parse_entry(root / "entries/a.md", root)
+        assert [r.target for r in got.edges_of("depends_on")] == ["b"]
+
+
+def check_write_path_verifies_before_trusting_itself():
+    """写完自检不是装饰：插入结果与预期不一致时，必须退回重排或拒绝，**不许**写盘。
+
+    这条锁防的是「守卫存在但没有锁」——把 `_verify` 改成恒真，其它写入测试全绿，因为
+    它们构造的都是正常插入。这里让最小插入路径故意插错一条边（把 target 换成别人），
+    正确实现会发现自检不过、退回整块重排（结构一定对）；没有自检的实现会把错的边写下去。
+    """
+    import store.write as write_mod
+    original = write_mod._insert_dep
+
+    def saboteur(fm_text, dep, nl):
+        wrong = dict(dep, id="b-node" if dep["id"] != "b-node" else "c-node")
+        out = original(fm_text, wrong, nl)
+        return out
+
+    with tempfile.TemporaryDirectory() as td:
+        root = make_world(Path(td), {"a-node": entry_text("a-node"),
+                                     "b-node": entry_text("b-node"),
+                                     "c-node": entry_text("c-node")})
+        write_mod._insert_dep = saboteur
+        try:
+            rc, out, err = run(["link", "a-node", "b-node", "--kind", "fiscal",
+                                "--root", str(root)])
+        finally:
+            write_mod._insert_dep = original
+        assert rc == 0, f"自检不过应当退回重排而不是失败：rc={rc} {out} {err}"
+        got = store.parse_entry(root / "entries/a-node.md", root)
+        targets = [r.target for r in got.edges_of("depends_on")]
+        assert targets == ["b-node"], f"插错的边被写下去了：{targets}（应当发现自检不过）"
+    return
+
+
+def check_new_writes_yaml_not_string_splicing():
+    """`new` 把标题拼进 YAML 时必须转义：`#`、`:`、`[]` 都不能让卡变坏（评审 blocker 1.2）。"""
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        assert store.cmd_init(world, exe="canonlint") == 0
+        for eid, title in (("t-hash", "灰港 # 北门"), ("t-colon", "名字: 有冒号"),
+                           ("t-flow", "a [b] {c}"), ("t-quote", "他说\"走\"")):
+            rc, out, err = run(["new", "location", title, "--id", eid, "--root", str(world)])
+            assert rc == 0, f"{title!r}: {out} {err}"
+            got = store.parse_entry(world / "entries/locations" / f"{eid}.md", world)
+            assert not got.parse_error, f"{title!r} 产出了一张坏卡：{got.parse_error}"
+            assert got.meta["title"] == title, f"{title!r} 被静默截断成 {got.meta['title']!r}"
+
+
+def check_broken_yaml_is_a_finding_not_a_traceback():
+    """坏 YAML 必须变成一条发现，而不是 traceback（评审 high 2.1 / blocker：重复键）。
+
+    深嵌套让 PyYAML 递归爆栈（`RecursionError` 不是 `YAMLError`），一张卡就能把整场审计
+    打成 traceback。重复键则是**反向**的静默：PyYAML last-wins 且不报，写在前面的那一族
+    边等于没写，所有规则都看不见。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        deep = "---\nid: deep\ntitle: D\ntype: location\nfigures: " + "[" * 500 + "]" * 500 + \
+               "\n---\n\n正文\n"
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        (world / "entries/deep.md").write_text(deep, encoding="utf-8")
+        rc, out, err = run(["--json", str(world)])
+        assert "Traceback" not in err, f"深嵌套把审计打成 traceback：\n{err}"
+        assert rc == 1, f"坏卡应当让审计失败（rc=1），实际 rc={rc}"
+        assert "CA100" in out and "嵌套过深" in out, out
+        # new / link 也要能给出一句话的结论，而不是崩掉（它们都要先扫全库）
+        assert store.cmd_new(world, "location", "新卡", "new-card", None,
+                             layer_choices=canonlint.LAYERS) in (0, 1, 2)
+
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        (world / "entries/dup.md").write_text(
+            entry_text("dup") .replace("canon_refs: []\n",
+                                       "canon_refs: []\ndepends_on: []\nz-x: 1\n"
+                                       "depends_on:\n  - id: nope\n    kind: fiscal\n"
+                                       "    critical: true\n"), encoding="utf-8")
+        rc, out, err = run(["--json", str(world)])
+        assert "CA112" in out, f"重复键没被报出来：{out}"
+        assert rc == 1, f"重复键是 error，应当 rc=1，实际 {rc}"
+
+
 def check_both_engines_share_one_parser():
     """两个引擎的读卡代码**只有一份**：`store/parse.py`。
 
@@ -674,17 +895,55 @@ def check_both_engines_share_one_parser():
     shared_names = {"ID_RE", "FRONTMATTER_RE", "SCHEMA_PATH", "SCHEMA_NAME",
                     "RELATION_VOCABULARY", "ALL_RELATION_NAMES", "CONTRACT_ATTESTED",
                     "RELATION_CANONICAL", "CANONICAL_RELATION_ITEMS"}
+
+    # 逐**名字节点**判，不逐语句形态判。上一版只认 `Assign` / `AnnAssign` 两种语句，
+    # 于是下面九种写法全都能再抄一份词表而锁不响（评审 2.4 逐个列出来的）：
+    # 三元组解包、海象、for 目标、AugAssign、改名函数、getattr(re,'compile')、
+    # 星号解包、with-as、以及「叫 _my_variants 的另一个函数」。
+    # 判法：收集**所有** `ast.Name`；每个禁用名的出现都必须恰好是那一处转发
+    # （`X = shared.X` 的赋值目标），其余一律算违规——解包/海象/for/with/星号的目标
+    # 在 AST 里也是 Name，绕不过去。改名函数由下面的行为锁负责（结构锁不管命名）。
+    allowed_targets: set[int] = set()
     for node in ast.walk(tree):
-        # 带注解的赋值（`X: T = ...`）是 AnnAssign，不是 Assign —— 少认一种就等于放行一种
-        if isinstance(node, ast.Assign) and not from_shared(node.value):
-            offenders += [t.id for t in node.targets
-                          if isinstance(t, ast.Name) and t.id in shared_names]
-        elif (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-              and node.target.id in shared_names and not from_shared(node.value)):
-            offenders.append(node.target.id)
-        if isinstance(node, ast.FunctionDef) and node.name in {"_shape_variants",
-                                                              "_load_relation_vocabulary"}:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if (isinstance(t, ast.Name) and t.id in shared_names
+                        and from_shared(node.value)):
+                    allowed_targets.add(id(t))
+    for node in ast.walk(tree):
+        # 只看**绑定**（Store/Del）：读取 `set(ALL_RELATION_NAMES)` 是正当用法，它读到的
+        # 就是那一处转发出来的对象；能被篡改的只有重新绑定。
+        if (isinstance(node, ast.Name) and node.id in shared_names
+                and not isinstance(node.ctx, ast.Load)
+                and id(node) not in allowed_targets):
+            offenders.append(f"{node.id}（第 {getattr(node, 'lineno', '?')} 行）")
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
+                and node.name in shared_names:
             offenders.append(f"def {node.name}")
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            offenders += [n for n in node.names if n in shared_names]
+
+    # `getattr(x, "compile")` 是绕开 `re.compile` 的正规路子；`import re` 本身就不许再有。
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id == "getattr":
+            if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) \
+                    and node.args[1].value == "compile":
+                offenders.append("getattr(..., 'compile')")
+
+    # 导入白名单：读卡需要的模块 store/parse.py 已经提供了，classlint 不该再拉解析器
+    # 依赖（`re` / `yaml` 尤其——它们正是「再抄一份」的原料）。多进来一个就得解释。
+    allowed_imports = {"__future__", "argparse", "json", "subprocess", "sys", "tempfile",
+                       "unicodedata", "dataclasses", "functools", "pathlib", "yaml", "store"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] not in allowed_imports:
+                    offenders.append(f"import {alias.name}")
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] not in allowed_imports:
+                offenders.append(f"from {node.module} import ...")
     assert not offenders, (
         "classlint 又抄了一份读卡实现（应改成从 store/parse.py 转发）：" + "、".join(sorted(set(offenders))))
 
@@ -711,13 +970,183 @@ def check_both_engines_share_one_parser():
                     (ours.rel, ours.meta, ours.body, ours.parse_error))
             assert pair[0] == pair[1], f"{name}：两个引擎读出不同的条目\n  store={pair[0]}\n  classlint={pair[1]}"
 
-    # 行为锁：每一种拼法在两边归一成同一个规范名
-    variants = {v for accepts in store.RELATION_VOCABULARY.values() for v in accepts}
-    variants |= {"canon-ref", "canonrefs", "Owes", "depends-on", "deriveslegitimacyfrom"}
+    # 行为锁：**全集**，不是抽样。样本集不写死，而是从契约与拼法生成器现推：
+    # 每个规范名 + 它的每一种登记拼法 + 每种机械变体（大小写/下划线/连字符/去分隔符/
+    # 丢一个字母/多一个字母/换成别的分隔符）+ 契约认证的全部 accept 项 + 认不出来的
+    # 自定义名与 x- 名。少一个样本就等于给「另一份实现」留一个没被比对的角落。
+    variants: set[str] = set(store.RELATION_VOCABULARY)
+    for name in store.RELATION_VOCABULARY:
+        variants.add(name)
+        variants |= set(store.parse.shape_variants(name))
+    variants |= set(store.parse.ALL_RELATION_NAMES)
+    variants |= {"Owes", "OWES", "depends-on", "depends_on", "dependsOn",
+                 "canon-ref", "canonrefs", "canon_ref", "deriveslegitimacyfrom",
+                 "derives-legitimacy-from", "derives_legitimacy_from",
+                 "extract", "extractss", "extract_", "control", "controlls",
+                 "depends-onn", "depend_on", "controlss", "canon_ref", "extractss",
+                 "legitimacy_from", "legitimacyfrom", "legitimate_from",
+                 "zzz-not-a-relation", "x-mine", "owns2", "onws", "wons", ""}
+    for name in store.RELATION_VOCABULARY:
+        for drop in range(len(name)):
+            variants.add(name[:drop] + name[drop + 1:])
     for v in sorted(variants):
         assert engine.canonical_rel(v) == store.canonical_relation_name(v), (
             f"拼法 {v!r} 在两个引擎里归一成了不同的名字："
             f"{engine.canonical_rel(v)!r} vs {store.canonical_relation_name(v)!r}")
+
+    # 行为锁：每一���拼法建出来的边，两个引擎也必须逐字相同（归一化对了但建边分叉时，
+    # 上面那条比的是名字、比不到边——评审 2.4 里那个「另抄一份把 legitimacy_from 悄悄
+    # 归一成 derives_legitimacy_from」的变体正是从这条缝钻过去的）。
+    def edge_view(meta, cls):
+        raw = store.model.RawEntry(Path("s.md"), "s.md", meta, "", None)
+        return [(e.type, e.target, tuple(sorted(e.attrs.items())))
+                for e in raw.as_entry(cls).relations]
+
+    for v in sorted(variants):
+        item = {"type": v, "target": "a-node"}
+        # depends_on 是契约登记的那一处口径差（canonlint 要求注解给全、classlint 不要求）。
+        # 这里要锁的是**归一化与建边是否分叉**，不是口径差本身，所以把注解给全，
+        # 让两边都建这条边；口径差由下面那条图锁单独管。
+        if store.parse.judged_relation_name(v) == "depends_on":
+            item |= {"kind": "fiscal", "critical": True}
+        meta = {"relations": [item]}
+        edges_c = edge_view(meta, store.model.Entry)
+        edges_l = edge_view(meta, engine.Entry)
+        assert edges_c == edges_l, (
+            f"拼法 {v!r} 两边建出的边不同：canonlint={edges_c} classlint={edges_l}")
+
+
+def check_both_engines_build_the_same_graph():
+    """同一份 frontmatter，两个引擎必须建出**同一张边图**、报出**同一批形状问题**。
+
+    这是 CONTRIBUTING §7「同一份数据同一份判定」的机器版本：读卡合并之后，剩下的分歧只
+    允许有一处，而且必须是契约 `x-stricter-than-contract` 第一条自己登记的那处——
+    `depends_on` 的项 canonlint 要求对象式且 `kind`/`critical` 给全（CA107），classlint
+    的协议 §2.2 把二者降为可选。例外**只许长这样**：多出来的报错必须是 `depends_on[i]`
+    的「必须是对象」或「缺字段 kind/critical」，多出来的边必须正好是那几个目标。
+
+    以前这条缝两边各有一份建边代码（约 90 行），于是契约声明合法的 `stance`/`what` 在
+    classlint 里变成硬错误、整条边消失，`depends_on + kind: legitimacy` 的搬家只在一边
+    执行。这份表就是这么攒出来的：每一种拼法、每一种坏形状都两边跑一遍。
+    """
+    import importlib.util  # noqa: PLC0415
+    from collections import Counter  # noqa: PLC0415
+
+    spec = importlib.util.spec_from_file_location(
+        "classlint_engine_for_graph_check", ROOT / "classlint" / "classlint.py")
+    engine = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = engine
+    spec.loader.exec_module(engine)
+
+    def build(meta, cls):
+        raw = store.model.RawEntry(Path("synthetic.md"), "synthetic.md", meta, BODY, None)
+        entry = raw.as_entry(cls)
+        # 取值可能是 list（例如坏掉的 stance）：repr 之后才能进 Counter
+        edges = [(e.type, e.target, tuple(sorted((k, repr(v)) for k, v in e.attrs.items())))
+                 for e in entry.relations]
+        return edges, Counter(e.msg for e in entry.relation_shape_errors)
+
+    # 契约登记的那处口径差：允许 canonlint 多报的，只有这些词
+    # 措辞在两种写法里不同（具名字段「缺字段 kind」/ 规范形「缺必填字段 kind（§5.4）」），
+    # 所以只钉「说的是 depends_on + 这两件事之一」。
+    DECLARED = ("必须是对象", "`kind`", "`critical`")
+
+    def annotation_free_targets(meta):
+        """这份 frontmatter 里「canonlint 建不出边、classlint 建得出」的 depends_on 目标。"""
+        raw = meta.get("depends_on")
+        out = set()
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str):
+                    out.add(item)
+                elif isinstance(item, dict) and isinstance(item.get("id"), str) \
+                        and not {"kind", "critical"} <= set(item):
+                    out.add(item["id"])
+        for item in meta.get("relations") or []:
+            if (isinstance(item, dict)
+                    and store.canonical_relation_name(str(item.get("type") or "")) == "depends_on"
+                    and isinstance(item.get("target"), str)
+                    and not {"kind", "critical"} <= set(item)):
+                out.add(item["target"])
+        return out
+
+    shapes = {
+        "契约声明的注解（stance/what/note）":
+            {"conflicts_with": [{"id": "a-node", "stance": "heretic"}],
+             "exchanges_with": [{"id": "a-node", "what": "谷物"}],
+             "extracts": [{"id": "a-node", "what": "利息"}]},
+        "三种老字段的简式字符串": {"canon_refs": ["a-node"],
+                                  "conflicts_with": ["a-node"],
+                                  "depends_on": [{"id": "a-node", "kind": "fiscal",
+                                                  "critical": True}]},
+        "契约自己声明的每一种拼法":
+            {"canon-ref": ["a-node"], "conflicts-with": ["a-node"],
+             "exchanges-with": [{"id": "a-node", "what": "谷物"}]},
+        "规范形的每一种关系":
+            {"relations": [{"type": "canon_refs", "target": "a-node"},
+                           {"type": "conflicts_with", "target": "a-node",
+                            "stance": "official"},
+                           {"type": "exchanges_with", "target": "a-node", "what": "谷物"},
+                           {"type": "depends_on", "target": "a-node", "kind": "fiscal",
+                            "critical": True, "note": "注解"}]},
+        "两处口径差：缺 kind、裸字符串":
+            {"depends_on": [{"id": "a-node", "critical": True}, "b-node"]},
+        "口径差在规范形里":
+            {"relations": [{"type": "depends_on", "target": "a-node"}]},
+        "口径差 + 另一条边（边集差只许是那一条）":
+            {"depends_on": [{"id": "a-node", "critical": False}],
+             "owes": ["b-node"]},
+        "旧写法的搬家（kind: legitimacy）":
+            {"depends_on": [{"id": "a-node", "kind": "legitimacy", "critical": True}]},
+        "搬家的规范形写法":
+            {"relations": [{"type": "depends_on", "target": "a-node",
+                            "kind": "legitimacy", "critical": True}]},
+        "坏 id 的对象式": {"owns": [{"id": "Bad Id"}]},
+        "未声明的注解（具名字段与规范形）":
+            {"controls": [{"id": "a-node", "zzz": 1}],
+             "relations": [{"type": "coerces", "target": "a-node", "zzz": 1}]},
+        "取值坏掉（stance 写成列表）":
+            {"conflicts_with": [{"id": "a-node", "stance": ["official"]}]},
+        "未知关系名原样保留":
+            {"relations": [{"type": "zzz-not-a-relation", "target": "a-node"}]},
+        "缺 type / 缺 target":
+            {"relations": [{"target": "a-node"}, {"type": "owes"}]},
+        "重复边":
+            {"relations": [{"type": "owes", "target": "a-node"},
+                           {"type": "owes", "target": "a-node"}]},
+        "坏容器": {"depends_on": "a-node", "canon_refs": {"a": 1}},
+        "x- 泄压阀两边都放行":
+            {"controls": [{"id": "a-node", "x-note": "扩展"}],
+             "relations": [{"type": "coerces", "target": "a-node", "x-note": "扩展"}]},
+    }
+
+    for label, raw_meta in shapes.items():
+        meta = {k: v for k, v in raw_meta.items() if v is not None}
+        edges_c, msgs_c = build(meta, store.model.Entry)
+        edges_l, msgs_l = build(meta, engine.Entry)
+
+        extra_msgs = msgs_c - msgs_l
+        missing_msgs = msgs_l - msgs_c
+        assert not missing_msgs, (
+            f"{label}：classlint 报了 canonlint 不报的形状问题——"
+            f"这不在契约登记的口径差里：{dict(missing_msgs)}")
+        for msg, count in extra_msgs.items():
+            assert "depends_on" in msg and any(d in msg for d in DECLARED), (
+                f"{label}：canonlint 多报了一条不在契约登记口径差里的问题（{count} 条）：{msg!r}")
+
+        allowed = annotation_free_targets(meta)
+        if not allowed:
+            assert edges_c == edges_l, (
+                f"{label}：这份 frontmatter 不涉及 depends_on 口径差，两个引擎的边图必须"
+                f"逐条（含顺序）相同\n  canonlint={edges_c}\n  classlint={edges_l}")
+            continue
+        only_c = Counter(edges_c) - Counter(edges_l)
+        only_l = Counter(edges_l) - Counter(edges_c)
+        assert not only_c, f"{label}：canonlint 建了 classlint 建不出的边：{dict(only_c)}"
+        for (type_, target, _attrs), count in only_l.items():
+            assert type_ == "depends_on" and target in allowed, (
+                f"{label}：classlint 多建了不在口径差里的边（{count} 条）："
+                f"{type_} → {target}（口径差目标：{sorted(allowed)}）")
 
 
 CHECKS = (
@@ -740,6 +1169,10 @@ CHECKS = (
     ("关系写法不可区分（规范形/旧写法/拼法变体同判）", check_relation_forms_are_indistinguishable),
     ("superseded_by: null 不是承接者（CA405 不能被关掉）", check_superseded_by_null_is_not_a_successor),
     ("两个引擎共用同一份读卡代码（store/parse.py）", check_both_engines_share_one_parser),
+    ("写入路径只改这一条边（CRLF/缩进/符号链接/只读/模式八种输入）", check_write_path_preserves_the_file),
+    ("写入自检不过就退回重排（插错的边不许写盘）", check_write_path_verifies_before_trusting_itself),
+    ("new 写的是 YAML 不是字符串拼接（标题里的 # 与冒号）", check_new_writes_yaml_not_string_splicing),
+    ("坏 YAML 是发现不是 traceback（深嵌套 / 重复键）", check_broken_yaml_is_a_finding_not_a_traceback),
 )
 
 

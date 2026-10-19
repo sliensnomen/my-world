@@ -51,7 +51,8 @@ CASES: list[tuple[str, list[str]]] = [
 ]
 
 # 崩溃守卫的意图断言：(说明, 规则编号, 必须出现在同一条发现里的条目路径)
-# 这四条在 PR#0.1 之前都会以 traceback 收场（整个审计崩掉，一条发现都不出）。
+# 这三条在 PR#0.1 之前都会以 traceback 收场（整个审计崩掉，一条发现都不出）。
+# 锁的是「坏输入变成一条发现」这件事；注释里的条数以前写「四条」而列表只有三条（评审 low）。
 CRASH_INTENT: list[tuple[str, str, str]] = [
     ("非 UTF-8 文件应报 CA100 而不是崩溃", "CA100", "entries/bad-utf8.md"),
     ("type 取值非字符串应报 CA102", "CA102", "entries/list-type.md"),
@@ -138,9 +139,22 @@ def check_json_schema() -> list[str]:
         return [f"--json 顶层键应为 {sorted(want_keys)}，实际 {sorted(data)}"]
     if not isinstance(data["entries"], int):
         return ["--json 的 entries 应为整数"]
+    if not isinstance(data["protocol_version"], str):
+        return ["--json 的 protocol_version 应为字符串"]
+    if not isinstance(data["reports"], list):
+        return ["--json 的 reports 应为数组"]
     for f in data["findings"]:
         if set(f) != {"rule", "level", "entry", "message"}:
             return [f"--json 发现项的键应为 rule/level/entry/message，实际 {sorted(f)}"]
+        # 「键名与类型不能被悄悄改掉」这条锁以前只查了 entries 一个 int（评审 medium）：
+        # 把 level 改成数字、rule 改成别名，照样绿。
+        if not re.fullmatch(r"CA\d{3}", str(f["rule"])):
+            return [f"--json 发现项的 rule 应形如 CA123，实际 {f['rule']!r}"]
+        if f["level"] not in ("error", "warning", "info"):
+            return [f"--json 发现项的 level 只能是 error/warning/info，实际 {f['level']!r}"]
+        for key in ("entry", "message"):
+            if not isinstance(f[key], str):
+                return [f"--json 发现项的 {key} 应为字符串，实际 {type(f[key]).__name__}"]
     return []
 
 
@@ -218,11 +232,16 @@ def check_missing_dependency_is_clean() -> list[str]:
 
 
 def _card(entry_id: str, extra: str = "", status: str = "canon",
-          body: str | None = None, load_bearing: bool = False) -> str:
+          body: str | None = None, load_bearing: bool = False,
+          template_relations: bool = True) -> str:
+    # template_relations=False：不要那两行空的 canon_refs/conflicts_with。
+    # 要测「这两种关系的悬空引用」时必须关掉——否则同一张卡里同一个键写两遍，
+    # YAML 只留最后一个，测到的是重复键而不是被锁的那件事（评审指出过这个假通过）。
+    rels = "canon_refs: []\nconflicts_with: []\n" if template_relations else ""
     return (f"---\nid: {entry_id}\ntitle: {entry_id}\ntype: location\nauthor: t\n"
             f"date: 2026-01-01\nstatus: {status}\n"
             f"load_bearing: {'true' if load_bearing else 'false'}\n"
-            f"canon_refs: []\nconflicts_with: []\n{extra}ai_assisted: false\n"
+            f"{rels}{extra}ai_assisted: false\n"
             f"---\n\n{body if body is not None else '正文' * 120}\n")
 
 
@@ -241,23 +260,191 @@ def _judge(world: Path, *args: str) -> tuple[int, str, str]:
     return p.returncode, p.stdout, p.stderr
 
 
+def check_strict_only_changes_the_exit_code() -> list[str]:
+    """`--strict` 只许改退出码，不许改判定。
+
+    它是 pre-commit 的门禁开关：同一份数据、同一批 findings，`--strict` 只是把
+    「有警告」也算失败。如果它顺手改了判定（比如让 CA301/CA104 对草稿也发），
+    审计器就替作者做了决定——评审 F8 就是这条。这里钉住三件事：
+    无错只有警告时 0 → 1；findings 的 JSON 逐字相同；有 error 时两者都 1。
+    """
+    problems = []
+    # 只有警告的世界：trial 档 + 正文不足 200 字 → CA104 warning
+    tmp, world = _temp_world("canonlint-strict-", {
+        "thin": _card("thin", status="trial", body="短正文。"),
+    })
+    with tmp:
+        code_plain, out_plain, _ = _judge(world, "--json")
+        code_strict, out_strict, _ = _judge(world, "--strict", "--json")
+        if code_plain != 0:
+            problems.append(f"只有警告时默认应当通过（exit 0），实际 {code_plain}")
+        if code_strict != 1:
+            problems.append(f"--strict 下警告应当算失败（exit 1），实际 {code_strict}")
+        a = json.loads(out_plain)["findings"]
+        b = json.loads(out_strict)["findings"]
+        if a != b:
+            problems.append(f"--strict 改了判定：\n  {a}\n  {b}")
+        if not any(f["rule"] == "CA104" for f in a):
+            problems.append(f"这个夹具本该触发 CA104 警告，实际 {a}")
+
+    # 有 error 的世界：两者都必须 1
+    tmp, world = _temp_world("canonlint-strict-err-", {
+        "ref": _card("ref", extra="canon_refs: [ghost-nowhere]\n"),
+    })
+    with tmp:
+        for extra in ((), ("--strict",)):
+            code, _, _ = _judge(world, *extra)
+            if code != 1:
+                problems.append(f"有 error 时 {' '.join(extra) or '默认'} 应当 exit 1，实际 {code}")
+    return problems
+
+
+def check_dup_threshold_is_a_bounded_knob() -> list[str]:
+    """`--dup-threshold` 的边界与效果都要钉住（评审 §9：三个开关没做守卫审计）。
+
+    边界：必须在 (0, 1] 内，越界是**用法错误**（exit 2），不能静默取默认值。
+    效果：它是真旋钮——同一对相似卡片，阈值放宽到 0.99 会消音，默认 0.85 会报。
+    """
+    problems = []
+    base = "铁王座在君临，龙石岛在海上，北境有长城。" * 12
+    near = base[:-40] + "最后一句不一样，再补一点点东西。"
+    tmp, world = _temp_world("canonlint-dup-", {
+        "one": _card("one", body=base),
+        "two": _card("two", body=near),
+    })
+    with tmp:
+        code, out, _ = _judge(world)
+        if "CA201" not in out:
+            problems.append(f"相似正文没报 CA201：\n{out.strip()}")
+        code, out, _ = _judge(world, "--dup-threshold", "0.99")
+        if "CA201" in out:
+            problems.append("阈值放宽到 0.99 之后仍在报 CA201（旋钮没接上）")
+        if code != 0:
+            problems.append(f"提高阈值后应当通过（exit 0），实际 {code}")
+        for bad in ("0", "-0.1", "1.5", "nan"):
+            code, _, err = _judge(world, "--dup-threshold", bad)
+            if code != 2:
+                problems.append(f"--dup-threshold {bad} 应当 exit 2（用法错误），实际 {code}")
+            if "dup-threshold" not in err:
+                problems.append(f"--dup-threshold {bad} 的报错没点名参数：{err.strip()[:120]}")
+        # 边界值 1.0 是合法的（只有完全一样才报）
+        code, _, err = _judge(world, "--dup-threshold", "1")
+        if code == 2:
+            problems.append(f"--dup-threshold 1 是合法边界，不该当用法错误：{err.strip()[:120]}")
+    return problems
+
+
+def check_impact_reports_are_well_formed() -> list[str]:
+    """`--impact` 的输出要说实话（评审 §9：CA504 没有守卫审计）。
+
+    - 悬空的主体：不崩，下游为空；
+    - 主体不在自己的下游（环里也不行——环由 CA502 单独报）；
+    - 两跳闭包要跨得过去，且按层序降序；
+    - 报告不影响退出码（它是报告，不是判定）。
+    """
+    problems = []
+    tmp, world = _temp_world("canonlint-impact-", {
+        "a": _card("a", extra="layer: core\n"),
+        "b": _card("b", extra="layer: detail\ndepends_on: [{id: a, kind: fiscal, critical: true}]\n"),
+        "c": _card("c", extra="layer: flavor\ndepends_on: [{id: b, kind: fiscal, critical: true}]\n"),
+        "loop1": _card("loop1", extra="depends_on: [{id: loop2, kind: fiscal, critical: true}]\n"),
+        "loop2": _card("loop2", extra="depends_on: [{id: loop1, kind: fiscal, critical: true}]\n"),
+    })
+    with tmp:
+        code, out, _ = _judge(world, "--impact", "a", "--json")
+        data = json.loads(out)
+        reports = {r["subject"]: r for r in data["reports"]}
+        if "a" not in reports:
+            problems.append(f"--impact a 没给出报告：{data.get('reports')}")
+        else:
+            got = reports["a"]["downstream"]
+            if set(got) != {"b", "c"}:
+                problems.append(f"两跳闭包不对：{got}")
+            if got != ["b", "c"]:
+                problems.append(f"下游没按层序降序（core 在前）：{got}")
+        code_without, _, _ = _judge(world, "--json")
+        if code != code_without:
+            problems.append(f"报告本身不该影响退出码：带 --impact 是 {code}，不带是 {code_without}")
+
+        code, out, _ = _judge(world, "--impact", "loop1", "--json")
+        reports = {r["subject"]: r for r in json.loads(out)["reports"]}
+        if "loop1" in reports and "loop1" in reports["loop1"]["downstream"]:
+            problems.append(f"环里把主体列进了自己的下游：{reports['loop1']['downstream']}")
+
+        code, out, _ = _judge(world, "--impact", "根本没有这个条目", "--json")
+        reports = {r["subject"]: r for r in json.loads(out)["reports"]}
+        r = reports.get("根本没有这个条目")
+        if r is None:
+            problems.append("悬空主体没有报告（应当给一份空下游，不是崩）")
+        elif r["downstream"]:
+            problems.append(f"悬空主体的下游应当是空的，实际 {r['downstream']}")
+        if code != code_without:
+            problems.append(f"悬空主体不该影响退出码：带 --impact 是 {code}，不带是 {code_without}")
+    return problems
+
+
 def check_every_relation_reference_is_checked() -> list[str]:
     """契约列过的每一种关系，悬空引用都要报 CA401——不管语义归哪一层管。
 
     生产关系（owns / controls / extracts / coerces / legitimizes / owes）的规则住在
     classlint，但「引用指向不存在的 id」是结构问题：从前这六种字段一条都不查，
     于是 `owns: [幽灵]` 在 canonlint 里完全隐形（只在 classlint 那边有 CL105）。
+
+    两处被评审抓住过的洞，这里一并堵掉：
+      · 清单不许手写——上一版手写了五个家族、漏掉 `owes`，于是「删掉 owes 的检查」
+        这个变异全绿。现在样本表的键必须**等于**契约的关系名全集，契约加一个名字
+        而这里没跟上，本锁直接红。
+      · 不许以「它有专属检查」为由把某个名字排除在覆盖之外——上一版把
+        `conflicts_with` 排除掉，注释说它有专属检查，实际它的唯一存在性检查就在
+        被锁的那个函数里，删掉它六套全绿（评审 blocker）。
     """
     problems = []
-    families = ["owns", "controls", "extracts", "coerces", "legitimizes"]
-    for fam in families:
-        for style, extra in (("具名字段", f"{fam}:\n  - ghost-x\n"),
-                             ("规范形", f"relations:\n  - type: {fam}\n    target: ghost-x\n")):
-            tmp, world = _temp_world("canonlint-relref-", {"a-node": _card("a-node", extra)})
+    contract = json.loads((ROOT / "world.schema.json").read_text(encoding="utf-8"))
+    declared = set(contract["x-relation-vocabulary"]["names"])
+    # 每种关系「写一条合法但悬空的边」的写法。形状必须合法，否则先报形状错、边不进图，
+    # 测到的就不是「悬空引用有没有被查」了。
+    well_formed = {
+        "canon_refs": "canon_refs:\n  - ghost-x\n",
+        "conflicts_with": "conflicts_with:\n  - id: ghost-x\n",
+        "depends_on": "depends_on:\n  - id: ghost-x\n    kind: economy\n    critical: true\n",
+        "exchanges_with": "exchanges_with:\n  - id: ghost-x\n",
+        "derives_legitimacy_from": "derives_legitimacy_from:\n  - ghost-x\n",
+        "owns": "owns:\n  - ghost-x\n",
+        "controls": "controls:\n  - ghost-x\n",
+        "extracts": "extracts:\n  - ghost-x\n",
+        "coerces": "coerces:\n  - ghost-x\n",
+        "legitimizes": "legitimizes:\n  - ghost-x\n",
+        "owes": "owes:\n  - ghost-x\n",
+    }
+    if set(well_formed) != declared:
+        return [f"本锁的样本表与契约的关系名不一致：多 {sorted(set(well_formed) - declared)}，"
+                f"少 {sorted(declared - set(well_formed))}（契约加了名字就要在这里补一条合法写法）"]
+    for fam in sorted(declared) + ["mentor-of"]:
+        if fam == "mentor-of":
+            # 自由档：作者自定义的关系名，指向不存在的 id 同样是结构问题。以前 canonlint
+            # 只查契约登记过的那几种，而 classlint 的 CL105 查全部——同一份数据两个引擎
+            # 两种结论，且这处差异没在任何地方登记（评审 low）。
+            styles = [("规范形", "relations:\n  - type: mentor-of\n    target: ghost-x\n")]
+        else:
+            styles = [("具名字段", well_formed[fam]),
+                      ("规范形", f"relations:\n  - type: {fam}\n    target: ghost-x\n"
+                                 + ("    kind: economy\n    critical: true\n"
+                                    if fam == "depends_on" else ""))]
+        for style, extra in styles:
+            # 模板里自带空的 canon_refs/conflicts_with；这两族要自己写一条，就得把
+            # 模板的同名行让开（否则同键两遍，YAML 丢掉一条，测到的是重复键）。
+            twin = {"canon_refs": "conflicts_with: []\n",
+                    "conflicts_with": "canon_refs: []\n"}.get(fam, "")
+            tmp, world = _temp_world("canonlint-relref-",
+                                     {"a-node": _card("a-node", twin + extra,
+                                                      template_relations=not twin)})
             with tmp:
                 code, out, _ = _judge(world)
-                if f"[CA401]" not in out or "ghost-x" not in out:
+                if "[CA401]" not in out or "ghost-x" not in out:
                     problems.append(f"{fam}（{style}）的悬空引用没报 CA401：{out.strip()!r}")
+                if "CA112" in out:
+                    problems.append(f"{fam}（{style}）的夹具自己写重了键，测的不是悬空引用："
+                                    f"{out.strip()!r}")
     # 反面：目标存在时不许报（别把「有这条边」本身当成错）
     tmp, world = _temp_world("canonlint-relref-ok-", {
         "a-node": _card("a-node", "owns:\n  - b-node\n"),
@@ -267,6 +454,134 @@ def check_every_relation_reference_is_checked() -> list[str]:
         code, out, _ = _judge(world)
         if "CA401" in out:
             problems.append(f"目标存在时不该报 CA401：{out.strip()!r}")
+    return problems
+
+
+def check_near_miss_names_are_judged_under_the_canonical_name() -> list[str]:
+    """拼错一个字符的关系名，边要**真的按规范名进图**，而不是只发一句提示。
+
+    评审 blocker：CA110 的文案说「已按归一化后的规范名判定该边」，实现里这条边却以
+    拼错的名字留在图里，于是谁都不判它——漏判 CA401/CA501/CA504、冤报 CA302/CA503。
+    另有第二处缝：契约 `x-relation-vocabulary.value.accept` 登记的历史拼法（`canon-ref:`）
+    写成字段名时被报 CA106「未定义字段」，同一张卡在两个引擎里一个硬错误、一个整族规则
+    静默失效。
+    """
+    problems = []
+    cases = [
+        # (说明, 卡片里写的关系, 期望出现, 期望不出现)
+        ("近失：depend_on", "relations:\n  - type: depend_on\n    target: ghost-x\n"
+                            "    kind: fiscal\n    critical: true\n",
+         ["CA110", "CA401"], []),
+        ("近失：分隔符风格不同（depends-onn）",
+         "relations:\n  - type: depends-onn\n    target: ghost-x\n"
+         "    kind: fiscal\n    critical: true\n", ["CA110", "CA401"], []),
+        ("近失：extractss", "relations:\n  - type: extractss\n    target: ghost-x\n",
+         ["CA110", "CA401"], []),
+        # 真正的新词必须继续 fail-open：不提示、不换名、原样保留
+        ("自由档：mentor-of", "relations:\n  - type: mentor-of\n    target: b-node\n",
+         [], ["CA110"]),
+        # 契约登记的拼法：认下，不冤报 CA106
+        ("登记拼法：canon-ref:", "canon-ref:\n  - b-node\n", [], ["CA106"]),
+        ("登记拼法：depends-on:", "depends-on:\n  - id: b-node\n    kind: fiscal\n"
+                                   "    critical: true\n", [], ["CA106"]),
+    ]
+    for label, extra, must, must_not in cases:
+        tmp, world = _temp_world("canonlint-nearmiss-", {
+            "a-node": _card("a-node", extra), "b-node": _card("b-node")})
+        with tmp:
+            _, out, _ = _judge(world)
+            for token in must:
+                if token not in out:
+                    problems.append(f"{label}：应当出现 {token}\n{out.strip()}")
+            for token in must_not:
+                if token in out:
+                    problems.append(f"{label}：不该出现 {token}\n{out.strip()}")
+    # 换名必须真的影响**判定**，不能只影响一条提示。两个只有换名才会正确的结论：
+    #   (a) 承重墙的 depends_on 义务：near-miss 的边也算数（否则 CA302 冤报「缺 depends_on」）
+    #   (b) 层级方向：near-miss 的边照样要过 CA501（否则漏判）
+    tmp, world = _temp_world("canonlint-nearmiss-ca302-", {
+        "a-node": _card("a-node", "relations:\n  - type: depend_on\n    target: b-node\n"
+                                   "    kind: fiscal\n    critical: true\n",
+                        load_bearing=True).replace("load_bearing: true\n",
+                                                   "load_bearing: true\nlayer: political\n"),
+        "b-node": _card("b-node"),
+    })
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA302" in out:
+            problems.append(f"near-miss 的 depends_on 没算数（CA302 冤报缺 depends_on）：\n{out.strip()}")
+    tmp, world = _temp_world("canonlint-nearmiss-ca501-", {
+        "a-node": _card("a-node", "relations:\n  - type: depend_on\n    target: b-node\n"
+                                   "    kind: fiscal\n    critical: true\n",
+                        load_bearing=True).replace("load_bearing: true\n",
+                                                   "load_bearing: true\nlayer: military\n"),
+        "b-node": _card("b-node").replace("layer: ", "").replace(
+            "type: location", "type: location\nlayer: political"),
+    })
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA501" not in out:
+            problems.append(f"near-miss 的 depends_on 漏判层级方向（该报 CA501）：\n{out.strip()}")
+    # 契约认证的字段名拼法：不只是「不报 CA106」，边必须**真的建出来**（悬空才看得见）
+    # 注意不能走 `_card(extra)`：它自带 `canon_refs: []`，而字段名拼法的查找是
+    # 「文档序里第一个对应的键」，先出现的空列表会赢。这里替换掉那一行。
+    tmp, world = _temp_world("canonlint-attested-", {
+        "a-node": _card("a-node").replace("canon_refs: []", "canon-ref:\n  - ghost-x"),
+        "b-node": _card("b-node")})
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA401" not in out:
+            problems.append(f"`canon-ref:` 字段名认下了，边却没建（漏掉 CA401）：\n{out.strip()}")
+    # CA103：文案说「须为 YYYY-MM-DD」，那 ISO 基本格式与周历格式就不能放行
+    for bad in ('"20261015"', '"2026-W42-6"', '"2026-02-30"', '"2026-1-5"'):
+        tmp, world = _temp_world("canonlint-date-", {"a-node": _card("a-node")})
+        with tmp:
+            card = world / "entries" / "a-node.md"
+            card.write_text(card.read_text(encoding="utf-8").replace(
+                "date: 2026-01-01", f"date: {bad}"), encoding="utf-8")
+            _, out, _ = _judge(world)
+            if "CA103" not in out:
+                problems.append(f"date={bad} 应当报 CA103（契约 pattern 是 ^\\d{{4}}-\\d{{2}}-\\d{{2}}$）")
+    # CA103 反面：YAML 原生日期与规范字符串都合法
+    for good in ("date: 2026-01-01", "date: '2026-01-01'"):
+        tmp, world = _temp_world("canonlint-dateok-", {"a-node": _card("a-node")})
+        with tmp:
+            card = world / "entries" / "a-node.md"
+            card.write_text(card.read_text(encoding="utf-8").replace(
+                "date: 2026-01-01", good), encoding="utf-8")
+            _, out, _ = _judge(world)
+            if "CA103" in out:
+                problems.append(f"{good} 不该报 CA103：{out.strip()}")
+    return problems
+
+
+def check_econ_figures_are_shape_checked() -> list[str]:
+    """econ 扩展包的 CA601 必须有**意图断言**（评审：`figures` 非映射 / `unit` 非字符串两条守卫没锁）。
+
+    `tests/world-econ` 只覆盖了「缺 unit」与「value 非数字」，把 `.git` 之外的两条分支删掉
+    照样全绿。这里直接构造那两种形态。
+    """
+    problems = []
+    cases = [
+        ("figures 不是映射", "figures: 12\n", "figures 必须是映射"),
+        ("unit 不是字符串", "figures:\n  grain:\n    value: 100\n    unit: 123\n",
+         "必须是非空字符串"),
+        ("unit 是 bool", "figures:\n  grain:\n    value: 100\n    unit: true\n",
+         "必须是非空字符串"),
+    ]
+    for label, extra, want in cases:
+        tmp, world = _temp_world("canonlint-econ-", {"a-node": _card("a-node", extra)})
+        with tmp:
+            _, out, _ = _judge(world, "--pack", "econ")
+            if "CA601" not in out or want not in out:
+                problems.append(f"{label}：应当报 CA601（含「{want}」）\n{out.strip()}")
+    # 反面：合法 figures 一条都不许报
+    tmp, world = _temp_world("canonlint-econ-ok-", {
+        "a-node": _card("a-node", "figures:\n  grain:\n    value: 100\n    unit: 石/亩\n")})
+    with tmp:
+        _, out, _ = _judge(world, "--pack", "econ")
+        if "CA601" in out:
+            problems.append(f"合法的 figures 不该报 CA601：{out.strip()}")
     return problems
 
 
@@ -287,12 +602,56 @@ def check_non_world_directory_is_a_usage_error() -> list[str]:
             problems.append("它还是把文档当条目审了（应当直接说指错目录）")
         if "不像一个世界" not in err:
             problems.append(f"stderr 没说清为什么（实际：{err.strip()!r}）")
-    # 反面：根目录里真有一篇条目卡的扁平世界照旧能审
-    tmp2, flat = _temp_world("canonlint-flat-", {"solo": _card("solo")})
+    # 反面：根目录里真有一篇条目卡的扁平世界照旧能审。
+    # （手工铺：`_temp_world` 会先建出 `entries/`，拿它测扁平世界测的不是扁平。）
+    tmp2 = tempfile.TemporaryDirectory(prefix="canonlint-flat-")
     with tmp2:
+        flat = Path(tmp2.name)
+        (flat / "solo.md").write_text(_card("solo"), encoding="utf-8")
         code, out, _ = _judge(flat)
         if code != 0:
             problems.append(f"扁平世界（根目录直接放条目）反而被拒了：exit {code}")
+    return problems
+
+
+def check_root_cards_survive_an_entries_dir() -> list[str]:
+    """有 `entries/` 时，根目录级的卡片照样要进审计（评审 blocker：整批静默蒸发）。
+
+    判据用「这张卡有没有留下痕迹」，不用退出码——一张卡被丢掉时退出码仍是 0，
+    所以让它带一条必然的发现（悬空引用），蒸发才看得见。
+    """
+    problems = []
+    tmp = tempfile.TemporaryDirectory(prefix="canonlint-rootcard-")
+    with tmp:
+        root = Path(tmp.name)
+        (root / "entries").mkdir()
+        (root / "entries" / "resident.md").write_text(_card("resident"), encoding="utf-8")
+        # 根目录级的卡片，带一条悬空引用：它收没被收进来，由这条 CA401 证明
+        (root / "gray-harbor.md").write_text(
+            _card("gray-harbor", "canon_refs: [ghost-nowhere]\n"), encoding="utf-8")
+        # 散文文档不是卡片，不许被当成坏条目
+        (root / "README.md").write_text("# 这是世界说明\n\n没有 frontmatter。\n",
+                                        encoding="utf-8")
+        code, out, _ = _judge(root)
+        if "gray-harbor.md" not in out:
+            problems.append(
+                f"有 entries/ 时根目录的卡片整个消失了（退出码 {code}）：{out.strip()!r}")
+        if "ghost-nowhere" not in out:
+            problems.append("根目录卡片上的悬空引用没被报出来")
+        if "README.md" in out:
+            problems.append(f"根目录的散文文档被当成条目审了：{out.strip()!r}")
+    # 坏掉的根级卡片必须被看见——不能拿「解析成功」当收不收的判据
+    tmp2 = tempfile.TemporaryDirectory(prefix="canonlint-rootcardbad-")
+    with tmp2:
+        root = Path(tmp2.name)
+        (root / "entries").mkdir()
+        (root / "entries" / "resident.md").write_text(_card("resident"), encoding="utf-8")
+        (root / "broken.md").write_text("---\ntitle: 没有 id\n---\n\n正文\n", encoding="utf-8")
+        code, out, _ = _judge(root)
+        if "broken.md" not in out:
+            problems.append(f"frontmatter 坏的根级卡片被静默跳过了：{out.strip()!r}")
+        if code == 0:
+            problems.append("根级坏卡片在，退出码不该是 0")
     return problems
 
 
@@ -301,7 +660,8 @@ def check_shadowed_entries_still_get_their_refs_checked() -> list[str]:
 
     以前只查索引里的条目，于是「世界上摆着一条指向不存在条目的边」可以一直没人报；
     CA105 的文案甚至把这当成既定事实写出来了（「其引用不被检查」）。这里钉住：
-    遮蔽者会被 CA105 报出来，被遮蔽者那条悬空引用照样报 CA401。
+    遮蔽者会被 **CA114** 报出来（重复 id 的专用编号；CA105 只管 id 语法），
+    被遮蔽者那条悬空引用照样报 CA401。
     """
     problems = []
     tmp, world = _temp_world("canonlint-shadow-", {
@@ -314,12 +674,36 @@ def check_shadowed_entries_still_get_their_refs_checked() -> list[str]:
             problems.append(f"重复 id + 悬空引用应当报错（exit 1），实际 exit {code}")
         rules = sorted({line.split("]")[0][1:] for line in out.splitlines()
                         if line.startswith("[CA")})
-        if "CA105" not in rules:
-            problems.append(f"重复 id 没报 CA105（实际报出 {rules}）")
+        if "CA114" not in rules:
+            problems.append(f"重复 id 没报 CA114（实际报出 {rules}）")
         if "CA401" not in rules:
             problems.append(f"被遮蔽条目里的悬空引用没报 CA401（实际报出 {rules}）")
         if "ghost-nowhere" not in out:
             problems.append("报告里没点名那条悬空引用指向谁")
+    return problems
+
+
+def check_bad_id_syntax_reports_ca105() -> list[str]:
+    """`id: Bad_ID` 必须报 CA105——这条以前**没有锁**（评审 N3）。
+
+    老锁只断言过「输出里有 CA105」，而 CA105 当时还兼着「id 重复」的意思，两条卡撞 id
+    就能让它通过；把语法守卫改成 `if False` 之后五套照样全绿。现在重复 id 归 CA114，
+    这条断言才真的钉在语法上。
+    """
+    problems = []
+    tmp, world = _temp_world("canonlint-bad-id-", {"solo": _card("Bad_ID")})
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA105" not in out:
+            problems.append(f"非法的 id 语法没报 CA105：\n{out.strip()}")
+        if "Bad_ID" not in out:
+            problems.append("CA105 的文案没点名那个非法 id")
+    # 反面：合法 id 一条都不许报
+    tmp, world = _temp_world("canonlint-good-id-", {"solo": _card("good-id-2")})
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA105" in out:
+            problems.append(f"合法的 id 不该报 CA105：\n{out.strip()}")
     return problems
 
 
@@ -621,6 +1005,11 @@ def check_experimental_kinds_are_still_exempt() -> list[str]:
         # 边仍然存在：不许因为 kind 不是物资就当作者没声明依赖
         if "CA302" in out:
             problems.append("x- 实验 kind 的边被当成了「没声明依赖」：\n" + out)
+        # 但 CA503 不能被一起豁免掉：docstring 说「只写实验 kind 就是没写物质来源」，
+        # 以前这条只断言了豁免，没断言义务还在——把 CA503 也 skip 掉照样绿（评审 low）。
+        if "CA503" not in out:
+            problems.append(
+                "x- 实验 kind 不该豁免 CA503（承重墙仍要有一条物质族 critical 依赖）：\n" + out)
     return problems
 
 
@@ -671,8 +1060,16 @@ def main() -> int:
         ("缺 pyyaml 时干净退出（提示 + 退出码 2）", check_missing_dependency_is_clean),
         ("降级承接对不算重复（CA201 豁免）", check_supersede_pairs_are_not_duplicates),
     ("被遮蔽条目的引用照样检查", check_shadowed_entries_still_get_their_refs_checked),
+    ("非法 id 语法报 CA105（重复 id 已拆成 CA114）", check_bad_id_syntax_reports_ca105),
+    ("--strict 只改退出码，不改判定", check_strict_only_changes_the_exit_code),
+    ("--dup-threshold 的边界与效果", check_dup_threshold_is_a_bounded_knob),
+    ("--impact 的报告说得实话（悬空/环/两跳/退出码）", check_impact_reports_are_well_formed),
     ("指错目录给用法错误，而不是硬审", check_non_world_directory_is_a_usage_error),
+    ("有 entries/ 时根目录的卡片不蒸发", check_root_cards_survive_an_entries_dir),
     ("每一种关系的悬空引用都报 CA401", check_every_relation_reference_is_checked),
+    ("拼错一个字符的关系名按规范名判定（自定义名仍 fail-open）",
+     check_near_miss_names_are_judged_under_the_canonical_name),
+    ("econ 的 figures 形状（非映射 / unit 非字符串）都报 CA601", check_econ_figures_are_shape_checked),
         ("--dup-threshold 越界是用法错误（不退化成静默关规则）", check_dup_threshold_range_is_usage_error),
         ("--impact 从不把主体列进自己的下游", check_impact_never_lists_the_subject),
         ("提示性规则不阻断 draft（CA301 只对定档条目报）", check_advisory_rules_do_not_gate_drafts),
