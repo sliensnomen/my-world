@@ -35,7 +35,7 @@ import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 
 PROTOCOL_VERSION = "1.1"   # 1.1：type 允许 x- 前缀实验类型（放宽，按 §9.1 升 minor）
-CONTRACT_VERSION = "0.2"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
+CONTRACT_VERSION = "0.3"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
 

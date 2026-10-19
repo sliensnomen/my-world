@@ -13,6 +13,7 @@
 对外接口（canonlint.py 只用这些）：
   Entry / Relation / Dep / ConflictRef / SchemaError / ShapeIssue / parse_entry
   FIELD_TABLE / CORE_REQUIRED_FIELDS / ID_RE / LEGACY_RELATION_FIELDS / RELATIONS_FIELD
+  EVENT_FIELDS（事件流水六字段，协议 1.2）
   collect / iter_entry_paths / looks_like_world / ENTRY_DIRS / SKIP_DIRS / TYPE_DIRS
   cmd_init / cmd_new / cmd_link / slugify / CONSTITUTION_SKELETON
 
@@ -20,17 +21,18 @@
 """
 from .layout import (ENTRY_DIRS, SKIP_DIRS, TYPE_DIRS, collect, iter_entry_paths,
                      looks_like_world)
-from .model import (CANONICAL_RELATION_ITEMS, CORE_REQUIRED_FIELDS, FIELD_TABLE, ID_RE,
-                    LEGACY_RELATION_FIELDS, NAMED_RELATION_ATTRS, RELATIONS_FIELD,
-                    RELATION_TYPE_NAMES, RELATION_VOCABULARY, ConflictRef, Dep, Entry,
-                    Relation, SchemaError, ShapeIssue, canonical_relation_name,
-                    nearest_relation_name, parse_entry)
+from .model import (CANONICAL_RELATION_ITEMS, CORE_REQUIRED_FIELDS, EVENT_FIELDS,
+                    FIELD_TABLE, ID_RE, LEGACY_RELATION_FIELDS, NAMED_RELATION_ATTRS,
+                    RELATIONS_FIELD, RELATION_TYPE_NAMES, RELATION_VOCABULARY,
+                    ConflictRef, Dep, Entry, Relation, SchemaError, ShapeIssue,
+                    canonical_relation_name, nearest_relation_name, parse_entry)
 from .write import CONSTITUTION_SKELETON, cmd_init, cmd_link, cmd_new, slugify
 
 __all__ = [
     "ENTRY_DIRS", "SKIP_DIRS", "TYPE_DIRS", "collect", "iter_entry_paths",
     "looks_like_world",
-    "CANONICAL_RELATION_ITEMS", "CORE_REQUIRED_FIELDS", "FIELD_TABLE", "ID_RE",
+    "CANONICAL_RELATION_ITEMS", "CORE_REQUIRED_FIELDS", "EVENT_FIELDS", "FIELD_TABLE",
+    "ID_RE",
     "LEGACY_RELATION_FIELDS", "NAMED_RELATION_ATTRS", "RELATIONS_FIELD",
     "RELATION_TYPE_NAMES", "RELATION_VOCABULARY", "ConflictRef", "Dep", "Entry",
     "Relation", "SchemaError", "ShapeIssue", "canonical_relation_name",

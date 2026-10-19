@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import yaml  # noqa: E402
 import canonlint  # noqa: E402
 import econ  # noqa: E402
+import ledger  # noqa: E402
 import json_schema_subset as js  # noqa: E402
 
 SCHEMA_PATH = ROOT / "world.schema.json"
@@ -143,7 +144,8 @@ def strict_problems(meta: dict) -> list[str]:
     sv = SCHEMA["x-strict-vocabulary"]
     for field, values, x_ok in (("type", sv["type"], True),
                                 ("status", sv["status"], False),
-                                ("layer", sv["layer"], False)):
+                                ("layer", sv["layer"], False),
+                                ("event_kind", sv["event_kind"], True)):
         val = meta.get(field)
         if val is None:
             continue
@@ -260,6 +262,8 @@ def check_vocabulary_matches_code(problems):
         ("x-strict-vocabulary.layer", sv["layer"], canonlint.LAYERS, False),
         ("x-strict-vocabulary.depends_on.kind", sv["depends_on.kind"],
          canonlint.KIND_INITIAL_SET, True),
+        ("x-strict-vocabulary.event_kind", sv["event_kind"],
+         ledger.EVENT_KINDS, True),
         ("x-strict-required", SCHEMA["x-strict-required"],
          canonlint.REQUIRED_FIELDS, False),
         ("x-packs.econ.fields", sorted(SCHEMA["x-packs"]["econ"]["fields"]),

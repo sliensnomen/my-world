@@ -1,10 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/sliensnomen/my-world/main/world.schema.json",
-  "title": "世界文件契约 v0.2",
+  "title": "世界文件契约 v0.3",
   "description": "一个「世界」由若干条目文件组成（当前原生位置是 entries/<type>/<id>.md，classlint 用 codex/<id>.md）。每个条目 = YAML frontmatter + 正文；本文件只约束 frontmatter。契约只描述形状（存得下什么），不描述判断（什么算对）——type 的五值表、layer 的八层链、kind 的初始集都是「严格判定器」的判据，不是存储的门槛。散文会撒谎，这个文件不会：tests/test_schema.py 拿真实语料验证它，并把故意写坏的样本判红。",
 
-  "x-contract-version": "0.2",
+  "x-contract-version": "0.3",
   "x-extension": {
     "prefix": "x-",
     "syntax": "x-<命名空间>-<键名>",
@@ -23,13 +23,16 @@
     "layer": ["geo", "resource", "production", "economy", "fiscal", "military", "political", "ideology"],
     "depends_on.kind": ["resource", "production", "economy", "fiscal", "manpower"],
     "depends_on.kind-exception": "以 x- 开头的实验值合法（CA108 记 info）。它对 CA501/502/503 同样是豁免：实验值不进承重链条判定。",
+    "event_kind": ["birth", "create", "custody", "death", "destroy", "grant", "move", "transfer"],
+    "event_kind-exception": "以 x- 开头的实验值合法（CA102 记 info），与 type/kind 同一套泄压阀（协议 1.2）。实验值的腿表未知，不进 CA702–CA705 判定。",
     "type-exception": "以 x-<命名空间>-<名称> 开头的实验类型合法（CA102 记 info，协议 1.1）。确定普适的类型进入 type 词表是收紧词表的协议变更（§9.1），不能在这里悄悄做。"
   },
   "x-stricter-than-contract": [
     "depends_on 的项：本契约只要求 id；canonlint 额外要求 kind 与 critical 一并给全（CA107），classlint 只要求 id。",
     "type/status/layer：本契约只要求是字符串；严格判定器再查词表（CA102）。",
     "id 非法在 canonlint 里报 CA105，在 classlint 里报 CL104。",
-    "depends_on 项多写未声明的键：canonlint 报 CA107，classlint 报 CL104；conflicts_with 多写未声明的键两边都报（CA107 / CL104），但 stance 的**取值**只有判定层查（CA102），classlint 不看。"
+    "depends_on 项多写未声明的键：canonlint 报 CA107，classlint 报 CL104；conflicts_with 多写未声明的键两边都报（CA107 / CL104），但 stance 的**取值**只有判定层查（CA102），classlint 不看。",
+    "事件字段（when/when_sort/event_kind/by/to/object）：本契约只约束形状；event_kind 词表、必填腿、时序与账平是判定层的事（CA102/CA109/CA401/CA701–CA706），classlint 不判事件。"
   ],
 
   "x-relation-source": {
@@ -105,6 +108,13 @@
     "load_bearing": {"type": "boolean"},
     "ai_assisted": {"type": "boolean"},
     "superseded_by": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/id"}]},
+
+    "when": {"type": "string"},
+    "when_sort": {"type": "number"},
+    "event_kind": {"type": "string"},
+    "by": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+    "to": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+    "object": {"type": "array", "items": {"$ref": "#/$defs/id"}},
 
     "relations": {"type": "array", "items": {"$ref": "#/$defs/relation"}},
 

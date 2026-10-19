@@ -84,6 +84,9 @@ CORE_REQUIRED_FIELDS = ("id", "title", "type", "author", "date", "status",
 ANNOTATION_FIELDS = ("layer", "depends_on", "superseded_by")
 RELATIONS_FIELD = "relations"
 
+# 事件流水字段（协议 1.2）：存储层只认「有这些键」，词表与腿表是判定层的事
+EVENT_FIELDS = ("when", "when_sort", "event_kind", "by", "to", "object")
+
 # 能读的旧具名字段（`Entry.relations` 把它们归一化到同一视图）。
 # 契约 x-relation-source.aliases 列了十一个，这里读全十一个——收口完成（旧「已知漂移」关闭）。
 LEGACY_RELATION_FIELDS = ("depends_on", "conflicts_with", "canon_refs", "exchanges_with",
@@ -95,7 +98,8 @@ LEGACY_RELATION_FIELDS = ("depends_on", "conflicts_with", "canon_refs", "exchang
 CLASSIC_RELATION_FIELDS = ("canon_refs", "conflicts_with", "depends_on")
 
 FIELD_TABLE = (frozenset(CORE_REQUIRED_FIELDS) | frozenset(ANNOTATION_FIELDS)
-               | frozenset(LEGACY_RELATION_FIELDS) | {RELATIONS_FIELD})
+               | frozenset(LEGACY_RELATION_FIELDS) | {RELATIONS_FIELD}
+               | frozenset(EVENT_FIELDS))
 
 # 规范形边允许的键（契约 $defs/relation；`x-` 前缀的键永远是允许的）
 CANONICAL_RELATION_ITEMS = ("type", "target", "kind", "critical", "stance", "note", "what")

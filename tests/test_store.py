@@ -188,7 +188,7 @@ def check_field_table_matches_rules():
     # 契约 x-relation-source.aliases 的十一个具名字段全部接线（旧「六种待接线」漂移已关闭）
     assert set(store.FIELD_TABLE) == set(canonlint.REQUIRED_FIELDS) | {
         "layer", "superseded_by", store.RELATIONS_FIELD} \
-        | set(store.LEGACY_RELATION_FIELDS), \
+        | set(store.LEGACY_RELATION_FIELDS) | set(store.EVENT_FIELDS), \
         "存储层的字段表与判定侧已知字段不一致——两张表必须同时改"
     assert canonlint.KNOWN_FIELDS == store.FIELD_TABLE, "CA106 的词表必须就是存储层的字段表"
 
