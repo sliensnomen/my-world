@@ -10,6 +10,13 @@ id 语法、frontmatter 切分、契约词表、关系名归一化都在 [`store
 只有**判定**侧的东西：规则与它自己的字段政策（`depends_on` 这里收裸字符串，canonlint 要求
 `{id, kind, critical}` 对象——这是两边协议的真实分歧，改任一边都要同时改两处文档）。
 
+**合并的代价（写在这里，免得以后有人踩）**：`classlint.py` 现在会 `import store.parse`，
+所以它**不再是一个能单独拷走的单文件脚本**——必须和仓库一起用，而且要**从仓库根**调用
+（内部把自己所在目录的上一层塞进了 `sys.path`；拷到别处或 `pip install` 都拿不到 `store`）。
+换来的是「同一份数据同一份判定」：id 语法、frontmatter 切分、关系名归一化不会再各漂一份。
+另外那处真实分歧被收成了**一个开关**（`Entry.depends_on_requires_annotations`，canonlint 开、
+classlint 关），不是两份建边代码——所以它改的时候只有一个地方要改。
+
 **状态：生产关系层已完成（PE001–PE005 + PE009 + `graph` + `--impact`）。** 流量层（四种线、守恒律、PE004/PE005 的定量回填）
 与 PE006–PE008 未开始——排期见 [ROADMAP.md](ROADMAP.md)。
 

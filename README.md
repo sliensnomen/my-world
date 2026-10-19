@@ -47,7 +47,8 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 # 前端读 /api/world 或 world.json；wgp-client.js 负责补默认值、给出思维导图要的形状
 ```
 
-退出码：`0` 通过 · `1` 有 error（`--strict` 时 warning 也算）· `2` 用法/环境错误（例如没装 pyyaml）。
+退出码：`0` 通过 · `1` 有 error（`--strict` 时 warning 也算）· `2` 用法/环境错误（例如没装 pyyaml，或 `--dup-threshold` 不在 `(0, 1]` 内）。
+三个开关的边界都钉在 `tests/run_tests.py` 里：`--strict` **只改退出码不改判定**（同一份数据两种模式的 findings 逐字相同）；`--dup-threshold` 越界是用法错误、且它真的是旋钮（放宽到 0.99 会消音 CA201）；`--impact` 给悬空主体出空下游、主体不进自己的下游、报告不影响退出码。
 `report` 级别的发现（CA504 影响报告、`graph`）**永不进退出码**。
 
 > 两层现在读的目录不同：canonlint 读 `entries/`，classlint 读 `codex/`。
@@ -71,7 +72,7 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
 - ✅ **能判**：27 条 CA 规则（结构 / 引用 / 承重链条 / 重复 / 影响报告）+ CL1xx + PE001–PE005 + PE009
-- ✅ **有回归网**：`tests/` 五套（33 + 12 + 23 + 20 + 13 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
+- ✅ **有回归网**：`tests/` 五套（36 + 12 + 23 + 20 + 13 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ⬜ **没有界面** —— 前端最后做：没有判定，就没有值得渲染的东西；渲染器是别人能写的东西
 - ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）

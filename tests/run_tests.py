@@ -241,6 +241,129 @@ def _judge(world: Path, *args: str) -> tuple[int, str, str]:
     return p.returncode, p.stdout, p.stderr
 
 
+def check_strict_only_changes_the_exit_code() -> list[str]:
+    """`--strict` 只许改退出码，不许改判定。
+
+    它是 pre-commit 的门禁开关：同一份数据、同一批 findings，`--strict` 只是把
+    「有警告」也算失败。如果它顺手改了判定（比如让 CA301/CA104 对草稿也发），
+    审计器就替作者做了决定——评审 F8 就是这条。这里钉住三件事：
+    无错只有警告时 0 → 1；findings 的 JSON 逐字相同；有 error 时两者都 1。
+    """
+    problems = []
+    # 只有警告的世界：trial 档 + 正文不足 200 字 → CA104 warning
+    tmp, world = _temp_world("canonlint-strict-", {
+        "thin": _card("thin", status="trial", body="短正文。"),
+    })
+    with tmp:
+        code_plain, out_plain, _ = _judge(world, "--json")
+        code_strict, out_strict, _ = _judge(world, "--strict", "--json")
+        if code_plain != 0:
+            problems.append(f"只有警告时默认应当通过（exit 0），实际 {code_plain}")
+        if code_strict != 1:
+            problems.append(f"--strict 下警告应当算失败（exit 1），实际 {code_strict}")
+        a = json.loads(out_plain)["findings"]
+        b = json.loads(out_strict)["findings"]
+        if a != b:
+            problems.append(f"--strict 改了判定：\n  {a}\n  {b}")
+        if not any(f["rule"] == "CA104" for f in a):
+            problems.append(f"这个夹具本该触发 CA104 警告，实际 {a}")
+
+    # 有 error 的世界：两者都必须 1
+    tmp, world = _temp_world("canonlint-strict-err-", {
+        "ref": _card("ref", extra="canon_refs: [ghost-nowhere]\n"),
+    })
+    with tmp:
+        for extra in ((), ("--strict",)):
+            code, _, _ = _judge(world, *extra)
+            if code != 1:
+                problems.append(f"有 error 时 {' '.join(extra) or '默认'} 应当 exit 1，实际 {code}")
+    return problems
+
+
+def check_dup_threshold_is_a_bounded_knob() -> list[str]:
+    """`--dup-threshold` 的边界与效果都要钉住（评审 §9：三个开关没做守卫审计）。
+
+    边界：必须在 (0, 1] 内，越界是**用法错误**（exit 2），不能静默取默认值。
+    效果：它是真旋钮——同一对相似卡片，阈值放宽到 0.99 会消音，默认 0.85 会报。
+    """
+    problems = []
+    base = "铁王座在君临，龙石岛在海上，北境有长城。" * 12
+    near = base[:-40] + "最后一句不一样，再补一点点东西。"
+    tmp, world = _temp_world("canonlint-dup-", {
+        "one": _card("one", body=base),
+        "two": _card("two", body=near),
+    })
+    with tmp:
+        code, out, _ = _judge(world)
+        if "CA201" not in out:
+            problems.append(f"相似正文没报 CA201：\n{out.strip()}")
+        code, out, _ = _judge(world, "--dup-threshold", "0.99")
+        if "CA201" in out:
+            problems.append("阈值放宽到 0.99 之后仍在报 CA201（旋钮没接上）")
+        if code != 0:
+            problems.append(f"提高阈值后应当通过（exit 0），实际 {code}")
+        for bad in ("0", "-0.1", "1.5", "nan"):
+            code, _, err = _judge(world, "--dup-threshold", bad)
+            if code != 2:
+                problems.append(f"--dup-threshold {bad} 应当 exit 2（用法错误），实际 {code}")
+            if "dup-threshold" not in err:
+                problems.append(f"--dup-threshold {bad} 的报错没点名参数：{err.strip()[:120]}")
+        # 边界值 1.0 是合法的（只有完全一样才报）
+        code, _, err = _judge(world, "--dup-threshold", "1")
+        if code == 2:
+            problems.append(f"--dup-threshold 1 是合法边界，不该当用法错误：{err.strip()[:120]}")
+    return problems
+
+
+def check_impact_reports_are_well_formed() -> list[str]:
+    """`--impact` 的输出要说实话（评审 §9：CA504 没有守卫审计）。
+
+    - 悬空的主体：不崩，下游为空；
+    - 主体不在自己的下游（环里也不行——环由 CA502 单独报）；
+    - 两跳闭包要跨得过去，且按层序降序；
+    - 报告不影响退出码（它是报告，不是判定）。
+    """
+    problems = []
+    tmp, world = _temp_world("canonlint-impact-", {
+        "a": _card("a", extra="layer: core\n"),
+        "b": _card("b", extra="layer: detail\ndepends_on: [{id: a, kind: fiscal, critical: true}]\n"),
+        "c": _card("c", extra="layer: flavor\ndepends_on: [{id: b, kind: fiscal, critical: true}]\n"),
+        "loop1": _card("loop1", extra="depends_on: [{id: loop2, kind: fiscal, critical: true}]\n"),
+        "loop2": _card("loop2", extra="depends_on: [{id: loop1, kind: fiscal, critical: true}]\n"),
+    })
+    with tmp:
+        code, out, _ = _judge(world, "--impact", "a", "--json")
+        data = json.loads(out)
+        reports = {r["subject"]: r for r in data["reports"]}
+        if "a" not in reports:
+            problems.append(f"--impact a 没给出报告：{data.get('reports')}")
+        else:
+            got = reports["a"]["downstream"]
+            if set(got) != {"b", "c"}:
+                problems.append(f"两跳闭包不对：{got}")
+            if got != ["b", "c"]:
+                problems.append(f"下游没按层序降序（core 在前）：{got}")
+        code_without, _, _ = _judge(world, "--json")
+        if code != code_without:
+            problems.append(f"报告本身不该影响退出码：带 --impact 是 {code}，不带是 {code_without}")
+
+        code, out, _ = _judge(world, "--impact", "loop1", "--json")
+        reports = {r["subject"]: r for r in json.loads(out)["reports"]}
+        if "loop1" in reports and "loop1" in reports["loop1"]["downstream"]:
+            problems.append(f"环里把主体列进了自己的下游：{reports['loop1']['downstream']}")
+
+        code, out, _ = _judge(world, "--impact", "根本没有这个条目", "--json")
+        reports = {r["subject"]: r for r in json.loads(out)["reports"]}
+        r = reports.get("根本没有这个条目")
+        if r is None:
+            problems.append("悬空主体没有报告（应当给一份空下游，不是崩）")
+        elif r["downstream"]:
+            problems.append(f"悬空主体的下游应当是空的，实际 {r['downstream']}")
+        if code != code_without:
+            problems.append(f"悬空主体不该影响退出码：带 --impact 是 {code}，不带是 {code_without}")
+    return problems
+
+
 def check_every_relation_reference_is_checked() -> list[str]:
     """契约列过的每一种关系，悬空引用都要报 CA401——不管语义归哪一层管。
 
@@ -881,6 +1004,9 @@ def main() -> int:
         ("降级承接对不算重复（CA201 豁免）", check_supersede_pairs_are_not_duplicates),
     ("被遮蔽条目的引用照样检查", check_shadowed_entries_still_get_their_refs_checked),
     ("非法 id 语法报 CA105（重复 id 已拆成 CA114）", check_bad_id_syntax_reports_ca105),
+    ("--strict 只改退出码，不改判定", check_strict_only_changes_the_exit_code),
+    ("--dup-threshold 的边界与效果", check_dup_threshold_is_a_bounded_knob),
+    ("--impact 的报告说得实话（悬空/环/两跳/退出码）", check_impact_reports_are_well_formed),
     ("指错目录给用法错误，而不是硬审", check_non_world_directory_is_a_usage_error),
     ("有 entries/ 时根目录的卡片不蒸发", check_root_cards_survive_an_entries_dir),
     ("每一种关系的悬空引用都报 CA401", check_every_relation_reference_is_checked),
