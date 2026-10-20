@@ -35,8 +35,8 @@ import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 
-PROTOCOL_VERSION = "1.3"   # 1.3：CA707 owns 断言互搏 + 多值受方 fail-open（新增，按 §9.1 升 minor）
-CONTRACT_VERSION = "0.3"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
+PROTOCOL_VERSION = "1.4"   # 1.4：CA708 存在窗口 + custody_of 对账（CA709/710）+ move 的 from 腿（新增，按 §9.1 升 minor）
+CONTRACT_VERSION = "0.4"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
 
@@ -412,11 +412,27 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
             else:
                 check_target(sb, "superseded_by")
 
-        # 事件腿（by/to/object，协议 1.2）的悬空引用与关系边同罪：
+        # 事件腿（by/to/object/from，协议 1.2/1.4）的悬空引用与关系边同罪：
         # 「指向不存在的 id 是结构问题」不因字段归属而改变（v1.1 修订第 16 条的同一原则）
         for leg in ledger.LEG_FIELDS:
             for ref_id in ledger.event_view(e).legs.get(leg, []):
                 check_target(ref_id, leg)
+
+        # custody_of 保管断言（协议 1.4）：形状（CA109）与存在性（CA401）。
+        # 它是断言不是事件腿，所以不进 ledger.LEG_FIELDS，但检查口径与腿相同
+        raw_custody = e.meta.get("custody_of")
+        if raw_custody is not None:
+            if not isinstance(raw_custody, list):
+                findings.append(Finding("CA109", "error", rel,
+                                        "custody_of 必须是 id 列表"))
+            else:
+                for i, item in enumerate(raw_custody):
+                    if not isinstance(item, str):
+                        findings.append(Finding(
+                            "CA109", "error", rel,
+                            f"custody_of[{i}] 必须是 id 字符串，得到 {item!r}"))
+                    else:
+                        check_target(item, "custody_of")
 
     # CA405: archived、被 canon_refs 引用、且**没有承接者**（字段缺 或 显式 null）
     # 报在目标侧，定位到处置责任人。`superseded_by: null` 是 CA101 允许的写法，
@@ -648,6 +664,65 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                 "CA707", "warning", h.rel,
                 f"owns 断言互搏：`{obj}` 同时被 `{first}` 与本卡断言持有"
                 f"（派生状态按 id 序取 `{first}`；请统一到一张卡上断言，或用流水表达流转）"))
+
+    # CA708: 客体的事件必须落在它自己的存在窗口里（create/birth 开窗，
+    # death/destroy 关窗；端点事件自身即边界，跳过）。缺 when_sort 的
+    # 边界不产生窗口、缺 when_sort 的事件不进流水——两头都 fail-open。
+    windows = ledger.existence_windows(index)
+    for e, v in events:
+        if v.kind in ("birth", "create", "death", "destroy"):
+            continue  # 端点事件自身豁免
+        for obj in v.legs.get("object", []):
+            start, end = windows.get(obj, (None, None))
+            if start is not None and v.when_sort < start:
+                findings.append(Finding(
+                    "CA708", "warning", e.rel,
+                    f"不存在的东西在动弹：`{obj}` 在 when_sort={start:g} 才被造出来/出生，"
+                    f"本事件却在 when_sort={v.when_sort:g} 就拿它当客体"))
+            elif end is not None and v.when_sort > end:
+                findings.append(Finding(
+                    "CA708", "warning", e.rel,
+                    f"不存在的东西在动弹：`{obj}` 在 when_sort={end:g} 已 death/destroy，"
+                    f"本事件却在更晚的 when_sort={v.when_sort:g} 拿它当客体"))
+
+    # CA709: 手写 custody_of 断言与 custody 流水推出的最终保管人打架
+    # （CA704 的保管版；多值受方同口径：最终那笔 to 列表里任一受方放行）
+    custody_to: dict[str, list[str]] = {}
+    for e, v in events:
+        if v.kind == "custody":
+            for obj in v.legs.get("object", []):
+                if v.legs.get("to"):
+                    custody_to[obj] = v.legs["to"]
+    # CA710 的原料也一并收集：custody_of 断言按客体归拢
+    custody_claims: dict[str, list[Entry]] = {}
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        for obj in ledger.custody_assertions(e):
+            custody_claims.setdefault(obj, []).append(e)
+            if obj not in custody_to:
+                continue
+            st = states.get(obj)
+            if (st is not None and st.custodian is not None
+                    and st.custodian != e.id and e.id not in custody_to[obj]):
+                findings.append(Finding(
+                    "CA709", "error", e.rel,
+                    f"结论与流水打架：卡上断言 custody_of `{obj}`，但流水推出的"
+                    f"最终保管人是 `{st.custodian}`（custody 不改变持有者，只改保管）"))
+
+    # CA710: custody_of 断言互搏（CA707 的保管版）
+    for obj in sorted(custody_claims):
+        keepers = custody_claims[obj]
+        if len(keepers) < 2:
+            continue
+        first = min(k.id for k in keepers)
+        for k in sorted(keepers, key=lambda x: x.rel):
+            if k.id == first:
+                continue
+            findings.append(Finding(
+                "CA710", "warning", k.rel,
+                f"custody_of 断言互搏：`{obj}` 同时被 `{first}` 与本卡断言保管"
+                f"（派生状态按 id 序取 `{first}`；请统一到一张卡上断言，或用 custody 流水表达移交）"))
 
 
 def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:

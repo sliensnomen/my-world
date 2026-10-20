@@ -7,9 +7,9 @@
 >
 > 1. `world.schema.json` —— 条目格式的唯一契约；
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
-> 3. 本文档 —— 规则表（§6.3，**34 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
+> 3. 本文档 —— 规则表（§6.3，**37 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.3"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.4"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -55,6 +55,10 @@
 **v1.3 修订记录（2026-10-20，事件流水评审收口）：**
 
 22. **CA707（`owns` 断言互搏）+ 多值受方 fail-open**。同一客体被多张卡断言 `owns` 以前完全隐形（派生状态按 id 序取第一个，不判）；现在报 CA707（warning），与有无流水无关。`transfer`/`grant` 的 `to` 多于一个 id 时归属未定序：派生状态报告取第一个，CA704 对最终那笔受方列表里任一 id 的断言都放行（更早一笔的受方已被转手，不放行）。CA703 补明 `create` 不算持有者来源的理由：它的腿表只有 `object`，事件里没记「谁造的」，推不出持有者。
+
+**v1.4 修订记录（2026-10-20，事件流水评审第二轮收口）：**
+
+23. **存在窗口（CA708）+ 保管线对称（`custody_of` + CA709/CA710）+ `move` 的 `from` 腿**。CA705 只查「死人当施动者」，现在客体也有了对称的端点线：以某 `object` 为客体的事件落在它自己的 `[create/birth, death/destroy]` 窗口外即报 CA708（端点事件豁免，缺 `when_sort` fail-open）。保管权补上与所有权平行的断言字段 `custody_of` 与对账两件套：CA709（断言 vs custody 流水，error）与 CA710（保管断言互搏，warning）——custody 改保管不改持有者，两条线从此对称。`move` 增加可选 `from` 腿（先记后查，轨迹矛盾是下一步）。**已知边界**：CA708 假设客体 id 在窗口内不变；`transform`（旧身份死、新身份生）将来进词表时，转化事件本身要登记为两个 id 各自的窗口边界（设计文档已记下）。
 
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
@@ -166,10 +170,12 @@ ai_assisted: false
 | `by` | 可选 | id 列表 | 事件腿：施动者 |
 | `to` | 可选 | id 列表 | 事件腿：受方（转移的接手人、移动的目的地） |
 | `object` | 可选 | id 列表 | 事件腿：客体（被转移/移动/造/毁的那个） |
+| `from` | 可选 | id 列表 | 事件腿（协议 1.4）：移动的起点，先记后查 |
+| `custody_of` | 可选 | id 列表 | 保管断言（协议 1.4）：本卡保管这些客体；与 `owns` 平行，受 CA709/CA710 对账 |
 
 **扩展字段：** 实现可以添加任何 `x-` 前缀的自定义字段；不带前缀的未定义字段**必须**被审计器拒绝（CA106），防止私有字段渗透进协议。
 
-上表 28 个字段与 `world.schema.json` 的 `properties` 一一对应；其中 `relations` 是规范形，`canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`/`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 是兼容别名——两种写法进同一张边表再判定（§5.4）。`when`/`when_sort`/`event_kind`/`by`/`to`/`object` 六个是协议 1.2 的事件流水字段：契约只约束形状，词表、必填腿、时序与账平是判定层的事（§6.3 CA7xx）。
+上表 30 个字段与 `world.schema.json` 的 `properties` 一一对应；其中 `relations` 是规范形，`canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`/`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 是兼容别名——两种写法进同一张边表再判定（§5.4）。`when`/`when_sort`/`event_kind`/`by`/`to`/`object` 六个是协议 1.2 的事件流水字段：契约只约束形状，词表、必填腿、时序与账平是判定层的事（§6.3 CA7xx）。
 
 ### 2.3 引用语法
 
@@ -443,7 +449,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复 |
 | CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明）。**只对已定档条目（trial/canon）发出**：draft 还没到做决定的时候，而 `--strict` 会把 warning 当失败 |
 | CA302 | error | `load_bearing: true` 但缺 `layer` 或 `depends_on` |
-| CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`，和协议 1.2 的事件腿 `by`/`to`/`object`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
+| CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`，和协议 1.2/1.4 的事件腿 `by`/`to`/`object`/`from` 与保管断言 `custody_of`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
 | CA402 | error | `canon_refs` 目标状态为 `draft`/`trial`；或目标为 `archived` 且已填**有效**的 `superseded_by`（提示迁移至承接条目）。目标为 `archived` 且没有有效承接者（未填、`null`、坏值、指向不存在、指向自己）时**不报本条**，由 CA405 在 archived 条目侧单独报告，避免双报；迁移指引里印出的承接条目一定是真存在的那一个 |
 | CA403 | warning | `conflicts_with` 双方均简式且缺回指（对象式标注豁免，见 §4.2） |
 | CA404 | error | `canon` 条目的 `depends_on` 目标状态非 `canon`（链条依赖只能建立在已定档上） |
@@ -460,6 +466,9 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA705 | warning | 死人做活事：事件的 `by` 里有人在**严格更早**（`when_sort` 较小）的事件里已 `death`；同刻不算 |
 | CA706 | warning | 半截事件：`when` 与 `event_kind` 只给了一个。两个都给才是完整事件，都不给就是普通史料卡（协议 1.1 的世界在 1.2 下不红） |
 | CA707 | warning | `owns` 断言互搏：同一客体被多张卡断言持有。派生状态按 id 序取第一个只是「报告需要一个确定答案」，不是裁决；请统一到一张卡上断言，或改用流水表达流转。与有无流水无关 |
+| CA708 | warning | 不存在的东西在动弹：客体的事件落在它自己的存在窗口外——`create`/`birth` 开窗、`death`/`destroy` 关窗（取最早的边界；缺 `when_sort` 的边界不产生窗口）。端点事件自身豁免。CA705 管 `by` 腿，本条管 `object` 腿。隐含假设：客体 id 在窗口内不变——`transform` 进词表时转化事件本身即两个 id 各自的窗口边界，届时回来改这条 |
+| CA709 | error | 结论与流水打架（保管版）：手写 `custody_of` 断言与 custody 流水推出的最终保管人不一致。custody 不改变持有者、只改保管；多值受方与 CA704 同口径（最终那笔 `to` 列表里任一受方放行） |
+| CA710 | warning | `custody_of` 断言互搏：同一客体被多张卡断言保管（CA707 的保管版） |
 
 **无传递违规原则：** CA402/CA404/CA405 只判**直接边**的违规。A 引用 B、B 违规并不使 A 连带违规；"连带影响"是 CA504 报告的职责，不是 error 的传染。
 
@@ -487,7 +496,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.3",
+  "protocol_version": "1.4",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

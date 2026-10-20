@@ -1258,8 +1258,150 @@ def check_conflicting_owns_assertions_fire_ca707() -> list[str]:
     return problems
 
 
+def check_object_existence_window_fires_ca708() -> list[str]:
+    """CA708：客体的事件必须落在它自己的存在窗口（create/birth 开、death/destroy 合）里。
+
+    destroy 之后被 transfer、create 之前被 move，都是「不存在的东西在动弹」
+    （评审反馈①，CA701 的姊妹规则；CA705 管 by 腿，CA708 管 object 腿）。
+    端点事件自身豁免；缺 when_sort 照旧 fail-open。
+    """
+    problems = []
+    cards = {
+        "sword-x": _card("sword-x", ""),
+        "alice": _card("alice", ""),
+        "bob": _card("bob", ""),
+        "ev-forge": _card("ev-forge", (
+            "when: 元年\nevent_kind: create\nwhen_sort: 1\nobject:\n  - sword-x\n"
+        )).replace("type: location", "type: event"),
+        "ev-melt": _card("ev-melt", (
+            "when: 末年\nevent_kind: destroy\nwhen_sort: 9\nobject:\n  - sword-x\n"
+        )).replace("type: location", "type: event"),
+        # 窗口内：不响
+        "ev-mid": _card("ev-mid", (
+            "when: 五年\nevent_kind: transfer\nwhen_sort: 5\n"
+            "by:\n  - alice\nto:\n  - bob\nobject:\n  - sword-x\n"
+        )).replace("type: location", "type: event"),
+        # 造成之前：响
+        "ev-early": _card("ev-early", (
+            "when: 零年\nevent_kind: move\nwhen_sort: 0\n"
+            "object:\n  - sword-x\nto:\n  - alice\n"
+        )).replace("type: location", "type: event"),
+        # 毁灭之后：响
+        "ev-late": _card("ev-late", (
+            "when: 十年\nevent_kind: transfer\nwhen_sort: 10\n"
+            "by:\n  - alice\nto:\n  - bob\nobject:\n  - sword-x\n"
+        )).replace("type: location", "type: event"),
+        # 缺 when_sort：fail-open，不响
+        "ev-nosort": _card("ev-nosort", (
+            "when: 某年\nevent_kind: move\nobject:\n  - sword-x\nto:\n  - bob\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-window-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"存在窗口把 traceback 写到了 stderr：\n{err}")
+        for bad in ("ev-early", "ev-late"):
+            if not any("[CA708]" in ln and f"{bad}.md" in ln for ln in out.splitlines()):
+                problems.append(f"{bad} 落在窗口外却没报 CA708：\n{out}")
+        for good in ("ev-forge", "ev-melt", "ev-mid", "ev-nosort"):
+            if any("[CA708]" in ln and f"{good}.md" in ln for ln in out.splitlines()):
+                problems.append(f"{good} 不该报 CA708（端点豁免/窗口内/fail-open）：\n{out}")
+    return problems
+
+
+def check_move_from_leg_is_checked() -> list[str]:
+    """move 的可选 `from` 腿（契约 0.4）：悬空 id 报 CA401，与 by/to/object 同罪。"""
+    problems = []
+    cards = {
+        "keep-y": _card("keep-y", ""),
+        "thing-x": _card("thing-x", ""),
+        "ev-dangling": _card("ev-dangling", (
+            "when: 某年\nevent_kind: move\nwhen_sort: 1\n"
+            "from:\n  - ghost-place\nobject:\n  - thing-x\nto:\n  - keep-y\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-movefrom-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"from 腿把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA401]" in ln and "ghost-place" in ln for ln in out.splitlines()):
+            problems.append(f"from 腿的悬空引用没报 CA401：\n{out}")
+    return problems
+
+
+def check_custody_assertions_reconcile_with_ledger() -> list[str]:
+    """custody_of 断言与 custody 流水对账（CA709 error）+ 保管断言互搏（CA710 warning）。
+
+    owns 有三件套（CA703/704/707），保管权以前是孤儿（评审反馈③）；
+    契约 0.4 补 `custody_of` 断言字段后，keeper 线与 owner 线对称。
+    多值受方与 CA704 同口径：最终那笔 to 列表里任一受方的断言放行。
+    """
+    problems = []
+    # 对账打架：断言 keeper-a，流水把保管给了 keeper-b
+    cards = {
+        "keeper-a": _card("keeper-a", "custody_of:\n  - gem-x\n"),
+        "keeper-b": _card("keeper-b", ""),
+        "owner-o": _card("owner-o", ""),
+        "gem-x": _card("gem-x", ""),
+        "ev-handover": _card("ev-handover", (
+            "when: 某年\nevent_kind: custody\nwhen_sort: 1\n"
+            "by:\n  - owner-o\nto:\n  - keeper-b\nobject:\n  - gem-x\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-custody-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"custody 对账把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA709]" in ln and "keeper-a.md" in ln for ln in out.splitlines()):
+            problems.append(f"断言与保管流水打架没报 CA709：\n{out}")
+    # 互搏：两张卡都 custody_of 同一客体（无流水也报）
+    cards2 = {
+        "keeper-a": _card("keeper-a", "custody_of:\n  - gem-x\n"),
+        "keeper-b": _card("keeper-b", "custody_of:\n  - gem-x\n"),
+        "gem-x": _card("gem-x", ""),
+    }
+    tmp, world = _temp_world("canonlint-custodyclash-", cards2)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"保管互搏把 traceback 写到了 stderr：\n{err}")
+        if "[CA710]" not in out:
+            problems.append(f"两张卡 custody_of 同一客体却没报 CA710：\n{out}")
+        if code != 0:
+            problems.append(f"CA710 是 warning，默认模式不该拦（exit {code}）")
+    # 反面：断言 = 流水推出的保管人，两条都不响；悬空/坏形状也有归属
+    cards3 = {
+        "keeper-b": _card("keeper-b", "custody_of:\n  - gem-x\n"),
+        "owner-o": _card("owner-o", ""),
+        "gem-x": _card("gem-x", ""),
+        "ev-handover": _card("ev-handover", (
+            "when: 某年\nevent_kind: custody\nwhen_sort: 1\n"
+            "by:\n  - owner-o\nto:\n  - keeper-b\nobject:\n  - gem-x\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-custodyok-", cards3)
+    with tmp:
+        code, out, err = _judge(world)
+        if "CA709" in out or "CA710" in out:
+            problems.append(f"断言与流水一致时不该报 CA709/CA710：\n{out}")
+    tmp, world = _temp_world("canonlint-custodybad-", {
+        "keeper-a": _card("keeper-a", "custody_of:\n  - ghost-gem\n"),
+        "keeper-b": _card("keeper-b", "custody_of: notalist\n"),
+    })
+    with tmp:
+        code, out, err = _judge(world)
+        if "CA401" not in out or "ghost-gem" not in out:
+            problems.append(f"custody_of 悬空引用没报 CA401：\n{out}")
+        if "CA109" not in out:
+            problems.append(f"custody_of 写坏形状没报 CA109：\n{out}")
+    return problems
+
+
 def check_ledger_bad_world_fires_every_rule() -> list[str]:
-    """变异验证的骨架：world-ledger-bad 必须真的把六条新规则每条至少踩一次。
+    """变异验证的骨架：world-ledger-bad 必须真的把 CA7xx 每条至少踩一次。
 
     快照只证明「没变」，这条证明「守卫在生效」——某条规则被改哑（比如把
     error 降级、把比较方向写反成 >=），这里就变红。
@@ -1268,8 +1410,8 @@ def check_ledger_bad_world_fires_every_rule() -> list[str]:
     code, out, err = _judge(HERE / "world-ledger-bad")
     if err:
         problems.append(f"world-ledger-bad 把 traceback 写到了 stderr：\n{err}")
-    for rule in ("CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
-                 "CA102", "CA401"):
+    for rule in ("CA701", "CA702", "CA703", "CA704", "CA705", "CA706", "CA708",
+                 "CA709", "CA710", "CA102", "CA401"):
         if f"[{rule}]" not in out:
             problems.append(f"world-ledger-bad 没有触发 {rule}（触发矩阵失效）：\n{out}")
     if code != 1:
@@ -1373,6 +1515,9 @@ def main() -> int:
         ("when_sort 写 .nan 报 CA109 并 fail-open", check_when_sort_nan_is_a_shape_error),
         ("多值受方归属未定序：受方断言不吃 CA704、外人照报", check_multi_recipient_transfer_fails_open_on_ca704),
         ("同一客体多卡 owns 断言互搏报 CA707（warning）", check_conflicting_owns_assertions_fire_ca707),
+        ("客体事件落在存在窗口外报 CA708（端点豁免、fail-open）", check_object_existence_window_fires_ca708),
+        ("move 的 from 腿悬空引用报 CA401", check_move_from_leg_is_checked),
+        ("custody_of 断言对账 CA709 + 保管互搏 CA710", check_custody_assertions_reconcile_with_ledger),
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
     ]

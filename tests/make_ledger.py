@@ -103,12 +103,22 @@ BAD = {
         "ev-no-source", "transfer", 8,
         "by:\n  - house-a\nto:\n  - house-b\nobject:\n  - orphan-item\n"),
     # CA401：腿指向幽灵 id（契约形状合法：id 语法正确，只是不存在）
+    # CA708：sword-y 在 9 已 destroy，11 又被 move（落在存在窗口外）
     "ev-ghost": event("ev-ghost", "move", 11,
                       "object:\n  - sword-y\nto:\n  - ghost-place\n"),
     # CA701：when_sort=9 的事件 depends_on when_sort=11 的事件（时序倒流，B > A）
     "ev-late-dep": event(
         "ev-late-dep", "destroy", 9, "object:\n  - sword-y\n",
         depends="\n  - {id: ev-ghost, kind: resource, critical: false}"),
+    # CA709：keeper-old 断言 custody_of sword-y，流水却把保管给了 keeper-new
+    "keeper-old": card("keeper-old", "character", "custody_of:\n  - sword-y\n"),
+    "keeper-new": card("keeper-new", "character"),
+    "ev-custody-to-new": event(
+        "ev-custody-to-new", "custody", 6,
+        "by:\n  - house-a\nto:\n  - keeper-new\nobject:\n  - sword-y\n"),
+    # CA710：两张卡都断言 custody_of orphan-item（保管断言互搏）
+    "keeper-c": card("keeper-c", "character", "custody_of:\n  - orphan-item\n"),
+    "keeper-d": card("keeper-d", "character", "custody_of:\n  - orphan-item\n"),
 }
 
 

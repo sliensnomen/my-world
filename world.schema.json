@@ -1,10 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/sliensnomen/my-world/main/world.schema.json",
-  "title": "世界文件契约 v0.3",
+  "title": "世界文件契约 v0.4",
   "description": "一个「世界」由若干条目文件组成（当前原生位置是 entries/<type>/<id>.md，classlint 用 codex/<id>.md）。每个条目 = YAML frontmatter + 正文；本文件只约束 frontmatter。契约只描述形状（存得下什么），不描述判断（什么算对）——type 的五值表、layer 的八层链、kind 的初始集都是「严格判定器」的判据，不是存储的门槛。散文会撒谎，这个文件不会：tests/test_schema.py 拿真实语料验证它，并把故意写坏的样本判红。",
 
-  "x-contract-version": "0.3",
+  "x-contract-version": "0.4",
   "x-extension": {
     "prefix": "x-",
     "syntax": "x-<命名空间>-<键名>",
@@ -32,7 +32,7 @@
     "type/status/layer：本契约只要求是字符串；严格判定器再查词表（CA102）。",
     "id 非法在 canonlint 里报 CA105，在 classlint 里报 CL104。",
     "depends_on 项多写未声明的键：canonlint 报 CA107，classlint 报 CL104；conflicts_with 多写未声明的键两边都报（CA107 / CL104），但 stance 的**取值**只有判定层查（CA102），classlint 不看。",
-    "事件字段（when/when_sort/event_kind/by/to/object）：本契约只约束形状；event_kind 词表、必填腿、时序与账平是判定层的事（CA102/CA109/CA401/CA701–CA706），classlint 不判事件。"
+    "事件字段（when/when_sort/event_kind/by/to/object/from）与保管断言（custody_of）：本契约只约束形状；event_kind 词表、必填腿、时序与账平是判定层的事（CA102/CA109/CA401/CA701–CA710），classlint 不判事件。"
   ],
 
   "x-relation-source": {
@@ -115,6 +115,8 @@
     "by": {"type": "array", "items": {"$ref": "#/$defs/id"}},
     "to": {"type": "array", "items": {"$ref": "#/$defs/id"}},
     "object": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+    "from": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+    "custody_of": {"type": "array", "items": {"$ref": "#/$defs/id"}},
 
     "relations": {"type": "array", "items": {"$ref": "#/$defs/relation"}},
 

@@ -24,7 +24,7 @@ REQUIRED_LEGS: dict[str, tuple[str, ...]] = {
     "birth": ("object",),
     "death": ("object",),
 }
-LEG_FIELDS = ("by", "to", "object")
+LEG_FIELDS = ("by", "to", "object", "from")
 
 
 @dataclass
@@ -127,3 +127,29 @@ def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
             elif v.kind == "move" and v.legs.get("to"):
                 st.location = v.legs["to"][0]
     return states
+
+
+def custody_assertions(e: Entry) -> list[str]:
+    """`custody_of` 断言里形状合法的 id（形状问题由判定层报 CA109，这里不丢也不报）。"""
+    raw = e.meta.get("custody_of")
+    if not isinstance(raw, list):
+        return []
+    return [x for x in raw if isinstance(x, str)]
+
+
+def existence_windows(index: dict[str, Entry]) -> dict[str, tuple[float | None, float | None]]:
+    """每个客体的存在窗口 (起点, 终点)：birth/create 开窗，death/destroy 关窗。
+
+    只读有 when_sort 的完整事件（缺排序键的边界不产生边界——fail-open）。
+    同一端点出现多次取最早：先死先算。transform 之类的「旧身份死、新身份生」
+    将来进词表时，转化事件本身要登记为两个 id 各自的窗口边界（见设计文档）。
+    """
+    windows: dict[str, list] = {}
+    for e, v in ordered_events(index):
+        for obj in v.legs.get("object", []):
+            w = windows.setdefault(obj, [None, None])
+            if v.kind in ("birth", "create"):
+                w[0] = v.when_sort if w[0] is None else min(w[0], v.when_sort)
+            elif v.kind in ("death", "destroy"):
+                w[1] = v.when_sort if w[1] is None else min(w[1], v.when_sort)
+    return {k: (w[0], w[1]) for k, w in windows.items()}
