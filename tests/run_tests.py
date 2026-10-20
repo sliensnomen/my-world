@@ -1102,7 +1102,12 @@ def check_equal_sort_boundaries() -> list[str]:
 
 
 def check_leg_shape_is_ca109_not_double_ca702() -> list[str]:
-    """腿写坏形状（by 不是列表）报 CA109；这条腿算「声明过」，不叠 CA702。"""
+    """腿写坏形状报 CA109；这条腿算「声明过」，不叠 CA702。
+
+    两种坏法都要锁（评审 I2）：`by: notalist`（不是列表）与 `by: [42]`
+    （是列表但元素全坏）——后者过滤后 legs[leg] 为空，曾被当成「作者给了
+    空列表」再叠一条 CA702，同一句话报两遍，且文案与事实不符。
+    """
     problems = []
     cards = {
         "thing-x": _card("thing-x", ""),
@@ -1113,6 +1118,12 @@ def check_leg_shape_is_ca109_not_double_ca702() -> list[str]:
             "when: 某年\nevent_kind: move\nwhen_sort: 1\n"
             "by: notalist\nobject:\n  - thing-x\nto:\n  - keep-y\n"
         )).replace("type: location", "type: event"),
+        # transfer 的 by 是必填腿：元素全坏的列表 = 声明过但取不出 id，
+        # 只许报 CA109，不许再叠「是空列表」的 CA702
+        "ev-bad-items": _card("ev-bad-items", (
+            "when: 某年\nevent_kind: transfer\nwhen_sort: 2\n"
+            "by:\n  - 42\nto:\n  - keep-y\nobject:\n  - thing-x\n"
+        )).replace("type: location", "type: event"),
     }
     tmp, world = _temp_world("canonlint-legshape-", cards)
     with tmp:
@@ -1120,9 +1131,41 @@ def check_leg_shape_is_ca109_not_double_ca702() -> list[str]:
         if err:
             problems.append(f"坏形状腿把 traceback 写到了 stderr：\n{err}")
         if "CA109" not in out:
-            problems.append(f"by: notalist 没报 CA109（形状坏掉不许静默）：\n{out}")
+            problems.append(f"坏形状腿没报 CA109（形状坏掉不许静默）：\n{out}")
         if "CA702" in out:
             problems.append(f"坏形状腿又叠了一条 CA702（同一句话报两遍）：\n{out}")
+    return problems
+
+
+def check_when_sort_nan_is_a_shape_error() -> list[str]:
+    """`when_sort: .nan` 不是「合法排序键」：报 CA109，按没有排序键 fail-open。
+
+    YAML 的 `.nan` 是 float，过了 isinstance 检查就进了流水；而 NaN 的一切
+    比较都是 False，CA701/CA705 对它整体静默——作者给了排序键，却拿到比
+    「不给」更彻底的豁免，与 D2「写坏就 fail-open」相反（评审 I1）。
+    """
+    problems = []
+    cards = {
+        "thing-x": _card("thing-x", ""),
+        "ev-nan": _card("ev-nan", (
+            "when: 某年\nevent_kind: create\nwhen_sort: .nan\n"
+            "object:\n  - thing-x\n"
+        )).replace("type: location", "type: event"),
+        "ev-dep": _card("ev-dep", (
+            "when: 另一年\nevent_kind: destroy\nwhen_sort: 1\n"
+            "object:\n  - thing-x\n"
+            "depends_on:\n  - {id: ev-nan, kind: resource, critical: false}\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-nan-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"NaN when_sort 把 traceback 写到了 stderr：\n{err}")
+        if "CA109" not in out:
+            problems.append(f"when_sort: .nan 没报 CA109（写坏的排序键不许静默进流水）：\n{out}")
+        if "CA701" in out:
+            problems.append(f"NaN 参与的时序比较不该有结论（fail-open）：\n{out}")
     return problems
 
 
@@ -1238,6 +1281,7 @@ def main() -> int:
         ("缺 when_sort 时时序/账平规则 fail-open", check_ledger_fail_open_without_when_sort),
         ("when_sort 相等：CA701 合法、CA705 不算死后", check_equal_sort_boundaries),
         ("腿形状写坏报 CA109、不叠 CA702", check_leg_shape_is_ca109_not_double_ca702),
+        ("when_sort 写 .nan 报 CA109 并 fail-open", check_when_sort_nan_is_a_shape_error),
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
     ]

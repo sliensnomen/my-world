@@ -318,10 +318,10 @@ def check_events(e: Entry, findings: list[Finding]) -> None:
             findings.append(Finding(
                 "CA702", "error", rel,
                 f"{v.kind} 事件缺腿 `{leg}`（必填：{list(ledger.REQUIRED_LEGS[v.kind])}）——账不平"))
-        elif leg in v.legs and not v.legs[leg]:
+        elif leg in v.legs and not v.legs[leg] and leg not in v.bad_legs:
             findings.append(Finding("CA702", "error", rel,
                                     f"{v.kind} 事件的 `{leg}` 是空列表——账不平"))
-        # 腿声明过但形状写坏：CA109 已报，这里不双报
+        # 腿声明过但形状写坏（含「是列表但元素全坏」）：CA109 已报，这里不双报
 
 
 # 已经有专属引用检查的关系（各自带状态语义：canon_refs 的 CA402/CA405、depends_on 的
@@ -603,7 +603,7 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                 findings.append(Finding(
                     "CA704", "error", e.rel,
                     f"结论与流水打架：卡上断言 owns `{r.target}`，但流水推出的"
-                    f"最终持有者是 `{st.holder}`（来自事件 `{st.holder_source}`）"))
+                    f"最终持有者是 `{st.holder}`（来自 `{st.holder_source}`）"))
 
     # CA705: 事件的 by 里有人在更早的事件里已 death（同刻不算，严格 <）
     deaths: dict[str, float] = {}

@@ -10,6 +10,7 @@ EVENT_KINDS = {"transfer", "custody", "move", "create", "destroy",
                "grant", "birth", "death"}
 
 from dataclasses import dataclass  # noqa: E402
+import math  # noqa: E402
 
 from store import Entry  # noqa: E402
 
@@ -35,6 +36,7 @@ class EventView:
     when_sort: float | None      # 合法数字才是数字，否则 None（fail-open）
     legs: dict[str, list[str]]   # 形状合法的腿 → id 列表
     declared: set[str]           # 作者写过的腿（含写坏的、含空列表）
+    bad_legs: set[str]           # 写坏的腿（含「是列表但元素全坏」）——CA702 的空列表分支不看它
     shape_errors: list[str]      # 人读的形状问题（判定层包成 CA109）
 
 
@@ -42,6 +44,7 @@ def event_view(e: Entry) -> EventView:
     meta = e.meta
     legs: dict[str, list[str]] = {}
     declared: set[str] = set()
+    bad_legs: set[str] = set()
     errors: list[str] = []
     for leg in LEG_FIELDS:
         if leg not in meta:
@@ -49,23 +52,28 @@ def event_view(e: Entry) -> EventView:
         declared.add(leg)
         raw = meta[leg]
         if not isinstance(raw, list):
+            bad_legs.add(leg)
             errors.append(f"事件的 `{leg}` 必须是 id 列表")
             continue
         ids: list[str] = []
         for i, item in enumerate(raw):
             if not isinstance(item, str):
+                bad_legs.add(leg)
                 errors.append(f"事件的 `{leg}[{i}]` 必须是 id 字符串，得到 {item!r}")
                 continue
             ids.append(item)
         legs[leg] = ids
     ws = meta.get("when_sort")
-    if ws is not None and (not isinstance(ws, (int, float)) or isinstance(ws, bool)):
-        errors.append(f"when_sort={ws!r} 必须是数字（可选排序键，不给就不参与时序判定）")
+    if ws is not None and (not isinstance(ws, (int, float)) or isinstance(ws, bool)
+                           or math.isnan(ws) or math.isinf(ws)):
+        # NaN 是 float 却没有任何比较结论（NaN > x 恒 False）：放它进流水，
+        # 时序规则会对它整体静默——给了排序键反而拿到比「不给」更彻底的豁免
+        errors.append(f"when_sort={ws!r} 必须是有限数字（可选排序键，不给就不参与时序判定）")
         ws = None
     when = meta.get("when")
     if when is not None and not isinstance(when, str):
         errors.append(f"when={when!r} 必须是字符串（故事内时间，自由文本）")
-    return EventView(meta.get("event_kind"), when, ws, legs, declared, errors)
+    return EventView(meta.get("event_kind"), when, ws, legs, declared, bad_legs, errors)
 
 
 def is_experimental_kind(kind) -> bool:
@@ -106,7 +114,8 @@ def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
             continue
         for r in e.edges_of("owns"):
             st = states.setdefault(r.target, ObjectState())
-            if st.holder is None:  # 多个 owns 断言并存时按 id 序取第一个；矛盾由 CA704 报
+            if st.holder is None:  # 多个 owns 断言并存时按 id 序取第一个；
+                # 断言互搏目前不判（CA704 只对有流水的客体比对）——是否加规则待作者确认（评审 I3）
                 st.holder, st.holder_source = e.id, e.id
     for e, v in ordered_events(index):
         for obj in v.legs.get("object", []):
