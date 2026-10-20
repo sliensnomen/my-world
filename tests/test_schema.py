@@ -64,7 +64,7 @@ GOOD_CORPUS_DIRS = [
     "classlint/tests/world-arrakis",
     "classlint/tests/world-westeros",
 ]
-EXPECTED_GOOD_ENTRIES = 115  # 条目数变了就要显式改这个数字，不能悄悄漂
+EXPECTED_GOOD_ENTRIES = 134  # 条目数变了就要显式改这个数字，不能悄悄漂
 # 55 = 四个 WGP 世界的条目（clean 3 + arrakis 22 + westeros 16 + middle-earth 14）
 # 60 = classlint 八个好夹具（clean 5 + feudal-rent 4 + merchant-capital 4
 #      + pe001-ok 3 + pe002-ok 3 + pe003-ok 3 + world-arrakis 22 + world-westeros 16）
