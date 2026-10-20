@@ -33,6 +33,7 @@ except ImportError:  # 环境错误，不是逻辑分支
 
 import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
+import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 
 PROTOCOL_VERSION = "1.1"   # 1.1：type 允许 x- 前缀实验类型（放宽，按 §9.1 升 minor）
 CONTRACT_VERSION = "0.3"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
@@ -278,6 +279,51 @@ def check_content(e: Entry, findings: list[Finding]) -> None:
                                     f"命中承重墙关键词 {hits}，但未声明 load_bearing——请考虑声明"))
 
 
+def check_events(e: Entry, findings: list[Finding]) -> None:
+    """CA7xx 的单条目部分 + 事件字段形状（CA109）与 event_kind 词表（CA102）。
+
+    「给了 event_kind 才算完整事件」（D2）；when 与 event_kind 只给一个
+    是半截事件（CA706）。x- 实验 event_kind 与 type/kind 同一套泄压阀：
+    记 info、不判腿、不进派生，但 CA701 时序照算（时序不看 kind）。
+    """
+    if e.parse_error:
+        return
+    rel = e.rel
+    v = ledger.event_view(e)
+    for msg in v.shape_errors:
+        findings.append(Finding("CA109", "error", rel, msg))
+    has_when = "when" in e.meta
+    has_kind = "event_kind" in e.meta
+    if has_kind:
+        if not isinstance(v.kind, str):
+            findings.append(Finding("CA102", "error", rel,
+                                    f"event_kind={v.kind!r} 必须是字符串"))
+        elif v.kind not in ledger.EVENT_KINDS:
+            if ledger.is_experimental_kind(v.kind):
+                findings.append(Finding("CA102", "info", rel,
+                                        f"event_kind={v.kind!r} 为实验值（x- 前缀），已计入案例收集"))
+            else:
+                findings.append(Finding(
+                    "CA102", "error", rel,
+                    f"event_kind={v.kind!r} 非法，须为 {sorted(ledger.EVENT_KINDS)}"
+                    f"（实验值须形如 `x-<命名空间>-<名称>`）"))
+    if has_when != has_kind:
+        findings.append(Finding("CA706", "warning", rel,
+                                "半截事件：`when` 与 `event_kind` 只给了一个"
+                                "（两个都给才进流水判定，都不给就是普通史料卡）"))
+    if not ledger.is_complete_event(v):
+        return
+    for leg in ledger.REQUIRED_LEGS[v.kind]:
+        if leg not in v.declared:
+            findings.append(Finding(
+                "CA702", "error", rel,
+                f"{v.kind} 事件缺腿 `{leg}`（必填：{list(ledger.REQUIRED_LEGS[v.kind])}）——账不平"))
+        elif leg in v.legs and not v.legs[leg]:
+            findings.append(Finding("CA702", "error", rel,
+                                    f"{v.kind} 事件的 `{leg}` 是空列表——账不平"))
+        # 腿声明过但形状写坏：CA109 已报，这里不双报
+
+
 # 已经有专属引用检查的关系（各自带状态语义：canon_refs 的 CA402/CA405、depends_on 的
 # CA404 等）。剩下的关系没有专属规则，但**目标存在性**是结构问题，不属于哪一层的理论：
 # 从前这六种字段一条都不查，于是 `owns: [幽灵]` 在 canonlint 里完全隐形。
@@ -365,6 +411,12 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
                                         "superseded_by 不能指向自己（承接者须是另一条目）"))
             else:
                 check_target(sb, "superseded_by")
+
+        # 事件腿（by/to/object，协议 1.2）的悬空引用与关系边同罪：
+        # 「指向不存在的 id 是结构问题」不因字段归属而改变（v1.1 修订第 16 条的同一原则）
+        for leg in ledger.LEG_FIELDS:
+            for ref_id in ledger.event_view(e).legs.get(leg, []):
+                check_target(ref_id, leg)
 
     # CA405: archived、被 canon_refs 引用、且**没有承接者**（字段缺 或 显式 null）
     # 报在目标侧，定位到处置责任人。`superseded_by: null` 是 CA101 允许的写法，
@@ -485,6 +537,89 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
             if not advanced:
                 stack.pop()
                 color[node] = BLACK
+
+
+def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
+    """CA7xx 的跨条目部分：时序与账平。缺 when_sort 一律 fail-open（D2）。
+
+    CA703/CA704 的持有者口径见 ledger.derive_state：owns 断言是无时间的
+    「有持有者」证据（D3），transfer/grant 推出新的最终持有者；断言与最终
+    持有者打架是 CA704（error），客体从无来源是 CA703（warning）。
+    """
+    events = ledger.ordered_events(index)
+
+    def is_event(v: ledger.EventView) -> bool:
+        return ledger.is_complete_event(v) or ledger.is_experimental_kind(v.kind)
+
+    # CA701: 事件 A depends_on 事件 B，两边都有 when_sort 时要求 B ≤ A
+    for e in index.values():
+        if e.parse_error:
+            continue
+        va = ledger.event_view(e)
+        if va.when_sort is None or not is_event(va):
+            continue
+        for d in e.edges_of("depends_on"):
+            b = index.get(d.target)
+            if b is None or b.parse_error:
+                continue  # 悬空由 CA401 报
+            vb = ledger.event_view(b)
+            if vb.when_sort is None or not is_event(vb):
+                continue
+            if vb.when_sort > va.when_sort:
+                findings.append(Finding(
+                    "CA701", "warning", e.rel,
+                    f"时序倒流：本事件 when_sort={va.when_sort:g}，"
+                    f"depends_on 的事件 `{b.id}` when_sort={vb.when_sort:g}（要求 ≤ 本事件）"))
+
+    # CA703: transfer/grant 的客体在它之前没有任何持有者
+    # （owns 断言是无时间的「有持有者」证据；更早的 transfer/grant 也算）
+    held: set[str] = set()
+    for e in index.values():
+        if not e.parse_error:
+            held.update(r.target for r in e.edges_of("owns"))
+    for e, v in events:
+        if v.kind in ("transfer", "grant"):
+            for obj in v.legs.get("object", []):
+                if obj not in held:
+                    findings.append(Finding(
+                        "CA703", "warning", e.rel,
+                        f"无源之财：{v.kind} 的客体 `{obj}` 在它之前没有任何持有者"
+                        f"（既无 owns 断言，也无更早的 transfer/grant 指向它）"))
+            held.update(v.legs.get("object", []))
+
+    # CA704: 手写 owns 断言与流水推出的最终持有者打架
+    # （只对有流水的客体比对；无流水的客体，断言即全部历史）
+    states = ledger.derive_state(index)
+    transferred = {obj for e, v in events if v.kind in ("transfer", "grant")
+                   for obj in v.legs.get("object", [])}
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        for r in e.edges_of("owns"):
+            if r.target not in transferred:
+                continue
+            st = states.get(r.target)
+            if st is not None and st.holder is not None and st.holder != e.id:
+                findings.append(Finding(
+                    "CA704", "error", e.rel,
+                    f"结论与流水打架：卡上断言 owns `{r.target}`，但流水推出的"
+                    f"最终持有者是 `{st.holder}`（来自事件 `{st.holder_source}`）"))
+
+    # CA705: 事件的 by 里有人在更早的事件里已 death（同刻不算，严格 <）
+    deaths: dict[str, float] = {}
+    for e, v in events:
+        if v.kind == "death":
+            for obj in v.legs.get("object", []):
+                deaths[obj] = min(deaths.get(obj, v.when_sort), v.when_sort)
+    for e, v in events:
+        if v.kind == "death":
+            continue
+        for actor in v.legs.get("by", []):
+            if actor in deaths and deaths[actor] < v.when_sort:
+                findings.append(Finding(
+                    "CA705", "warning", e.rel,
+                    f"死人做活事：`{actor}` 在 when_sort={deaths[actor]:g} 的事件里"
+                    f"已 death，却在更晚的本事件（when_sort={v.when_sort:g}）的 by 里"))
 
 
 def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:
@@ -733,6 +868,9 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
         check_content(e, findings)
     check_refs(all_entries, index, findings)
     check_chain(index, findings)
+    for e in all_entries:
+        check_events(e, findings)
+    check_ledger(index, findings)
     check_duplicates(index, dup_threshold, findings)
 
     reports = impact_report(index, impact_ids) if impact_ids else []

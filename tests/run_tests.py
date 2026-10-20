@@ -48,6 +48,11 @@ CASES: list[tuple[str, list[str]]] = [
     # CA504 只能靠 --impact 触发；这是它的第一条覆盖。
     # 钉住的是「报告行长什么样」与「它仍然是 exit=0」。
     ("world-arrakis+impact", ["tests/world-arrakis", "--impact", "sandworm-cycle"]),
+    # 事件流水（协议 1.2）：world-ledger 是流水族的全绿基准（默认与 --strict 都 exit 0）；
+    # world-ledger-bad 把 CA701–CA706 每条至少踩一次（触发矩阵见 tests/make_ledger.py）。
+    ("world-ledger", ["tests/world-ledger"]),
+    ("world-ledger+strict", ["tests/world-ledger", "--strict"]),
+    ("world-ledger-bad", ["tests/world-ledger-bad"]),
 ]
 
 # 崩溃守卫的意图断言：(说明, 规则编号, 必须出现在同一条发现里的条目路径)
@@ -1013,6 +1018,129 @@ def check_experimental_kinds_are_still_exempt() -> list[str]:
     return problems
 
 
+def check_historical_event_cards_stay_silent() -> list[str]:
+    """D9 硬要求：没有 when/event_kind 的史料事件卡，一条 CA7xx 都不许响。
+
+    示例世界里那 27 张 type: event 卡（起源、改编、文献）不是流水事件；
+    协议 1.1 的世界在 1.2 下必须仍然全绿。
+    """
+    problems = []
+    # _card 固定 type: location；史料事件卡拿它的模板换个 type
+    tmp, world = _temp_world("canonlint-hist-event-", {
+        "old-lore": _card("old-lore", "").replace("type: location", "type: event"),
+    })
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"史料事件卡把 traceback 写到了 stderr：\n{err}")
+        if re.search(r"\[CA70[1-6]\]", out):
+            problems.append(f"史料事件卡（无 when/event_kind）触发了流水规则：\n{out}")
+        if code != 0:
+            problems.append(f"纯史料事件卡的世界应当 exit 0，实际 {code}：\n{out}")
+    return problems
+
+
+def check_ledger_fail_open_without_when_sort() -> list[str]:
+    """缺 when_sort = 全部时序/账平规则 fail-open（D2：不给就不参与时序判定）。
+
+    一个 depends_on 指向「更晚」事件、客体没有来源的完整事件，只要没给
+    when_sort，CA701/CA703 都必须静默——排不了序就猜一个顺序，比不判更坏。
+    """
+    problems = []
+    cards = {
+        "ghostless-item": _card("ghostless-item", ""),
+        "ev-no-sort": _card("ev-no-sort", (
+            "when: 某年\nevent_kind: transfer\n"
+            "by:\n  - somebody\nto:\n  - somebody\nobject:\n  - ghostless-item\n"
+            "depends_on:\n  - {id: ev-later, kind: resource, critical: false}\n"
+        )).replace("type: location", "type: event"),
+        "ev-later": _card("ev-later", (
+            "when: 另一年\nevent_kind: create\nwhen_sort: 99\n"
+            "object:\n  - ghostless-item\n"
+        )).replace("type: location", "type: event"),
+        "somebody": _card("somebody", ""),
+    }
+    tmp, world = _temp_world("canonlint-nosort-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"无 when_sort 的世界把 traceback 写到了 stderr：\n{err}")
+        if re.search(r"\[CA70[1345]\]", out):
+            problems.append(f"缺 when_sort 时 CA701/CA703/CA704/CA705 必须静默：\n{out}")
+    return problems
+
+
+def check_equal_sort_boundaries() -> list[str]:
+    """when_sort 相等：CA701 用 ≤（并列合法），CA705 用严格 <（同刻不算死后）。"""
+    problems = []
+    cards = {
+        "person-a": _card("person-a", ""),
+        "thing-x": _card("thing-x", ""),
+        "ev-a": _card("ev-a", (
+            "when: 同年\nevent_kind: death\nwhen_sort: 5\nobject:\n  - person-a\n"
+        )).replace("type: location", "type: event"),
+        "ev-b": _card("ev-b", (
+            "when: 同年\nevent_kind: move\nwhen_sort: 5\n"
+            "by:\n  - person-a\nobject:\n  - thing-x\nto:\n  - person-a\n"
+            "depends_on:\n  - {id: ev-a, kind: resource, critical: false}\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-eqsort-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"等值 when_sort 把 traceback 写到了 stderr：\n{err}")
+        if "CA701" in out:
+            problems.append(f"when_sort 相等不该报 CA701（规则是 ≤）：\n{out}")
+        if "CA705" in out:
+            problems.append(f"同刻死亡不算「死人做活事」（规则是严格更早）：\n{out}")
+    return problems
+
+
+def check_leg_shape_is_ca109_not_double_ca702() -> list[str]:
+    """腿写坏形状（by 不是列表）报 CA109；这条腿算「声明过」，不叠 CA702。"""
+    problems = []
+    cards = {
+        "thing-x": _card("thing-x", ""),
+        "keep-y": _card("keep-y", ""),
+        # move 的必填腿是 object + to（都给了，不触发 CA702）；
+        # by 不是必填腿，写坏形状只该报 CA109
+        "ev-bad-shape": _card("ev-bad-shape", (
+            "when: 某年\nevent_kind: move\nwhen_sort: 1\n"
+            "by: notalist\nobject:\n  - thing-x\nto:\n  - keep-y\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-legshape-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"坏形状腿把 traceback 写到了 stderr：\n{err}")
+        if "CA109" not in out:
+            problems.append(f"by: notalist 没报 CA109（形状坏掉不许静默）：\n{out}")
+        if "CA702" in out:
+            problems.append(f"坏形状腿又叠了一条 CA702（同一句话报两遍）：\n{out}")
+    return problems
+
+
+def check_ledger_bad_world_fires_every_rule() -> list[str]:
+    """变异验证的骨架：world-ledger-bad 必须真的把六条新规则每条至少踩一次。
+
+    快照只证明「没变」，这条证明「守卫在生效」——某条规则被改哑（比如把
+    error 降级、把比较方向写反成 >=），这里就变红。
+    """
+    problems = []
+    code, out, err = _judge(HERE / "world-ledger-bad")
+    if err:
+        problems.append(f"world-ledger-bad 把 traceback 写到了 stderr：\n{err}")
+    for rule in ("CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
+                 "CA102", "CA401"):
+        if f"[{rule}]" not in out:
+            problems.append(f"world-ledger-bad 没有触发 {rule}（触发矩阵失效）：\n{out}")
+    if code != 1:
+        problems.append(f"world-ledger-bad 有 error 应当 exit 1，实际 {code}")
+    return problems
+
+
 def main() -> int:
     update = "--update" in sys.argv[1:]
     failures: list[str] = []
@@ -1077,6 +1205,11 @@ def main() -> int:
         ("名分依据是关系名不是物资类别（拆分 depends_on 后判定不变）", check_legitimacy_is_its_own_relation_not_a_material_kind),
         ("名分来源只查存在性（悬空报 CA401，归档不报 CA402/CA405）", check_legitimacy_edge_checks_existence_only),
         ("x- 实验 kind 继续豁免 CA501/CA502（门禁改看关系名也不许收走）", check_experimental_kinds_are_still_exempt),
+        ("史料事件卡（无 when/event_kind）一条 CA7xx 都不响（D9）", check_historical_event_cards_stay_silent),
+        ("缺 when_sort 时时序/账平规则 fail-open", check_ledger_fail_open_without_when_sort),
+        ("when_sort 相等：CA701 合法、CA705 不算死后", check_equal_sort_boundaries),
+        ("腿形状写坏报 CA109、不叠 CA702", check_leg_shape_is_ca109_not_double_ca702),
+        ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
     ]
     for label, check in extras:
         problems = check()
