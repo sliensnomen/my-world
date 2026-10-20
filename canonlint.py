@@ -695,6 +695,37 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
     return reports
 
 
+def ledger_report(root: Path) -> int:
+    """`canonlint ledger <世界>`：打印派生状态与没算平的地方。
+
+    与 --impact 同一条纪律：report 级输出，永不进退出码、永不写盘。
+    「没算平的」复用 check_ledger 的判据（CA703/CA704/CA705），
+    报告与门禁不许各说一套。
+    """
+    all_entries, index, _issues = store.collect(root)
+    events = ledger.ordered_events(index)
+    states = ledger.derive_state(index)
+    findings: list[Finding] = []
+    check_ledger(index, findings)
+    n_entries = sum(1 for e in all_entries if not e.parse_error)
+    print(f"{n_entries} 个条目 | {len(events)} 笔完整事件（有 when_sort 才进流水）")
+    print("\n== 派生状态（期初断言 + 流水）==")
+    if not states:
+        print("(没有可派生的客体：没有 owns 断言，也没有完整事件)")
+    for obj in sorted(states):
+        st = states[obj]
+        src = f"（来自 `{st.holder_source}`）" if st.holder_source else ""
+        print(f"{obj}: 持有者 {st.holder or '（无）'}{src}"
+              f" | 保管 {st.custodian or '-'} | 位置 {st.location or '-'}")
+    unbalanced = [f for f in findings if f.rule in ("CA703", "CA704", "CA705")]
+    print("\n== 没算平的 ==")
+    if not unbalanced:
+        print("(账平)")
+    for f in unbalanced:
+        print(f"[{f.rule}] {f.entry}: {f.message}")
+    return 0
+
+
 # ---- 导出（前端 / 其他出口用的数据集）------------------------------------
 
 EXPORT_EXCERPT_CHARS = 200  # 与 CA104 的 MIN_BODY_CHARS 同一个量级：够看开头，不当正文用
@@ -878,8 +909,8 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
 
 
 def main() -> int:
-    # 人类工作流子命令：init / new / link；其余按审计（check）处理
-    if len(sys.argv) > 1 and sys.argv[1] in ("init", "new", "link", "export"):
+    # 人类工作流子命令：init / new / link / export / ledger；其余按审计（check）处理
+    if len(sys.argv) > 1 and sys.argv[1] in ("init", "new", "link", "export", "ledger"):
         cmd = sys.argv[1]
         sp = argparse.ArgumentParser(prog=f"canonlint {cmd}")
         sp.add_argument("--root", type=Path, default=Path("."),
@@ -908,6 +939,9 @@ def main() -> int:
                             help="附带指定条目的下游影响闭包（CA504）")
             sp.add_argument("--pack", action="append", default=[], choices=["econ"],
                             help="启用协议扩展包（econ = WGP-econ 数值系统，CA6xx）")
+        if cmd == "ledger":
+            sp.add_argument("root_pos", type=Path, nargs="?", default=None,
+                            help="世界仓库目录（位置参数，等价 --root）")
         a = sp.parse_args(sys.argv[2:])
         if cmd == "init":
             # exe 从这里传进去：store 里算不出「用户敲的 canonlint 在哪」
@@ -941,6 +975,12 @@ def main() -> int:
             else:
                 print(text)
             return 0  # 导出不是判定：要门禁请用 canonlint <root> --strict
+        if cmd == "ledger":
+            root = (a.root_pos or a.root).resolve()
+            if not root.is_dir():
+                print(f"error: {root} 不是目录", file=sys.stderr)
+                return 2
+            return ledger_report(root)
 
     ap = argparse.ArgumentParser(
         description=f"canonlint — WGP 协议参考实现 v{PROTOCOL_VERSION}",
@@ -951,6 +991,7 @@ def main() -> int:
             "  canonlint new <type> <标题> [--id ID]          新建一个草稿条目\n"
             "  canonlint link <源id> <目标id> --kind K        添加一条依赖边\n"
             "  canonlint export [目录] [--out 文件]           导出数据集（前端/其他出口用，不判定）\n"
+            "  canonlint ledger [目录]                          事件流水：派生状态与没算平的（只读报告）\n"
             "  canonlint <仓库根> --strict                    审计（error 与 warning 都拦）\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter)

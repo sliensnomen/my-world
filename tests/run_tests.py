@@ -53,6 +53,8 @@ CASES: list[tuple[str, list[str]]] = [
     ("world-ledger", ["tests/world-ledger"]),
     ("world-ledger+strict", ["tests/world-ledger", "--strict"]),
     ("world-ledger-bad", ["tests/world-ledger-bad"]),
+    # ledger 子命令是 report 级输出：快照钉住报告形状，钉住它 exit 0
+    ("world-ledger+ledger", ["ledger", "tests/world-ledger"]),
 ]
 
 # 崩溃守卫的意图断言：(说明, 规则编号, 必须出现在同一条发现里的条目路径)
@@ -1141,6 +1143,31 @@ def check_ledger_bad_world_fires_every_rule() -> list[str]:
     return problems
 
 
+def check_ledger_command_is_readonly_report() -> list[str]:
+    """ledger 子命令与 --impact 同一条纪律：报告级输出永不进退出码、永不写盘。
+
+    在一个有 error 的世界上跑 ledger 也必须 exit 0；目录树的逐字节哈希
+    前后一致（「跑一下 ledger 就算改好了」是这条纪律要防的误解）。
+    """
+    problems = []
+    world = HERE / "world-ledger-bad"
+    before = {p.relative_to(world): p.read_bytes()
+              for p in sorted(world.rglob("*")) if p.is_file()}
+    p = subprocess.run([PY, str(TOOL), "ledger", str(world)],
+                       cwd=ROOT, capture_output=True, text=True)
+    if p.stderr:
+        problems.append(f"ledger 子命令把 traceback 写到了 stderr：\n{p.stderr}")
+    if p.returncode != 0:
+        problems.append(f"ledger 在有 error 的世界上也必须 exit 0，实际 {p.returncode}")
+    if "派生状态" not in p.stdout:
+        problems.append(f"ledger 输出里看不到派生状态：\n{p.stdout}")
+    after = {p.relative_to(world): p.read_bytes()
+             for p in sorted(world.rglob("*")) if p.is_file()}
+    if before != after:
+        problems.append("ledger 子命令改动了世界目录（只读纪律被破坏）")
+    return problems
+
+
 def main() -> int:
     update = "--update" in sys.argv[1:]
     failures: list[str] = []
@@ -1210,6 +1237,7 @@ def main() -> int:
         ("when_sort 相等：CA701 合法、CA705 不算死后", check_equal_sort_boundaries),
         ("腿形状写坏报 CA109、不叠 CA702", check_leg_shape_is_ca109_not_double_ca702),
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
+        ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
     ]
     for label, check in extras:
         problems = check()
