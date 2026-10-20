@@ -1,0 +1,14 @@
+exit=0
+35 个条目 | 9 笔完整事件（有 when_sort 才进流水）
+
+== 派生状态（期初断言 + 流水）==
+eddard-stark: 持有者 （无） | 保管 - | 位置 -
+ice-sword: 持有者 eddard-stark（来自 `ev-ice-to-ned`） | 保管 house-stark | 位置 -
+iron-throne: 持有者 robert-baratheon（来自 `ev-robert-crowned`） | 保管 - | 位置 -
+riverrun: 持有者 house-tully（来自 `ev-riverrun-granted`） | 保管 - | 位置 -
+robb-host-army: 持有者 （无） | 保管 - | 位置 the-twins
+stannis-loan-gold: 持有者 stannis-baratheon（来自 `ev-stannis-loan`） | 保管 - | 位置 -
+the-wall-scale: 持有者 （无） | 保管 - | 位置 -
+
+== 没算平的 ==
+(账平)

@@ -7,9 +7,15 @@ ROOT = Path(__file__).parent
 
 
 def fm(id, title, type_, status, layer=None, load_bearing=False,
-       canon_refs="[]", conflicts="[]", depends="[]", superseded="null"):
+       canon_refs="[]", conflicts="[]", depends="[]", superseded="null",
+       owns="[]", legitimacy=""):
     lb = "true" if load_bearing else "false"
     layer_line = f"layer: {layer}\n" if layer else ""
+    owns_line = f"owns: {owns}\n" if owns != "[]" else ""
+    # kind=legitimacy 的依赖走拆分后的关系名 derives_legitimacy_from（无 kind 行）；
+    # 全部依赖都是 legitimacy 时 depends_on 行整行消失（与已提交的世界字节一致）
+    depends_line = f"depends_on: {depends}\n" if depends is not None else ""
+    legit_line = f"derives_legitimacy_from:{legitimacy}\n" if legitimacy else ""
     return f"""---
 id: {id}
 title: {title}
@@ -18,12 +24,36 @@ author: dataset-v1
 date: 2026-09-23
 status: {status}
 load_bearing: {lb}
-{layer_line}canon_refs: {canon_refs}
+{layer_line}{owns_line}canon_refs: {canon_refs}
 conflicts_with: {conflicts}
-depends_on: {depends}
-superseded_by: {superseded}
+{depends_line}{legit_line}superseded_by: {superseded}
 ai_assisted: false
 ---
+"""
+
+
+def evm(id, kind, when, when_sort, body, legs="", status="canon"):
+    """流水事件卡（协议 1.2）。legs 是 by/to/object 的 YAML 片段；
+    body 必填且 ≥200 字（canon 事件卡同样受 CA104 篇幅约束，别给快照添噪声）。"""
+    return f"""---
+id: {id}
+title: {id}
+type: event
+author: dataset-v1
+date: 2026-09-23
+status: {status}
+load_bearing: false
+when: {when}
+when_sort: {when_sort}
+event_kind: {kind}
+{legs}canon_refs: []
+conflicts_with: []
+depends_on: []
+superseded_by: null
+ai_assisted: false
+---
+
+{body}
 """
 
 
@@ -246,18 +276,240 @@ WE["the-north"] = ("faction", "canon", "political", True, """\
 与刚铎财政并列为'大师共同的盲区'：political 承重墙下缺 fiscal 支点。""",
 "[]", "[]", [("robb-host-ledger", "manpower", False)])
 
+# ---- 期初断言与流水的实体卡（协议 1.2；lb 全 False，不给 CA503 添戏）----
+
+WE["house-tully"] = ("faction", "canon", "political", False, """\
+徒利家族，河间地的统领世家，奔流城公爵，族语'家族、责任、荣誉'。
+河间地四战之地，无险可守，徒利家的地位靠的是与史塔克、艾林两家的
+姻亲同盟，而不是天险与体量。凯特琳与莱莎的婚事把这个家族织进了
+北境与谷地的权力网，也让它在五王之战里首当其冲。族语把'责任'排在
+'荣誉'之前，这个次序本身就是河间地生存之道的注脚：先还债，再谈脸面。
+红婚之后家业尽毁，奔流城易主，族人流散——靠关系网立足的家族，
+关系网断时败得比谁都快；到战争后期，连守住自家渡口都成了奢望，
+网断的时候，连收网的人都没有。""",
+"[]", "[]", [], "[riverrun]")
+
+WE["riverrun"] = ("location", "canon", None, False, """\
+奔流城，徒利家族的家堡，坐落于腾石河与红叉河交汇处。两河夹峙使它能
+被水围成孤岛：拉起水闸，城下即成泽国，攻城方须分兵三处，彼此难以呼应。
+书中两次围城（五王之战初期与红色婚礼之后）都演示了这一点。攻城方想
+拿下它，要么备足三份粮草分驻三岸，要么指望城里先断粮——两种都慢，
+所以泰温与佛雷后来都选了更省事的办法：在婚礼上下手，绕过城墙。
+它是河间地少数经得起长期围困的据点，也是徒利家族语的具体化身——
+占地利而不占体量，守得住却难以对外扩张；城墙立在水上，安危系于人心。""",
+"[]", "[]", [])
+
+WE["eddard-stark"] = ("character", "canon", None, False, """\
+艾德·史塔克，临冬城公爵，北境守护，劳勃起义的副帅与后来的国王之手。
+他的行事准则是荣誉与责任，而这在君临的权力场里恰是致命短板：
+他提前警告瑟曦，把先手让给了对手；他拒绝在名册上做半点手脚，
+把退路一条条亲手堵死。299 AC 被乔佛里下令处决，首级挂上枪尖——
+北境与铁王座之间仅存的信任纽带随之断裂，五王之战从此没有了
+媾和的可能。寒冰巨剑随他南行又随囚车北返，最终被泰温下令熔成
+两把新剑。他一生没打过一场败仗，却输掉了只有他才想守的那盘棋；
+账记到这里，北境再无可谈的人。""",
+"[]", "[]", [], "[ice-sword]")
+
+WE["robert-baratheon"] = ("character", "canon", None, False, """\
+劳勃·拜拉席恩，283 AC 戴上王冠的起义领袖。三叉戟河一战亲手击杀雷加，
+靠战功、血统与奈德、琼恩·艾林的同盟坐上铁王座。登基之后迅速对治绩
+失去兴趣：比武、打猎、宴饮，一场接一场的盛会开销无度，把国库花成
+债务黑洞，把朝政交给御前会议，把警觉交给酒杯。他对兰尼斯特的倚重
+与对瑟曦的冷遇同时加深，王朝的平衡全靠他个人的存在维持——
+他死于猎场的那头野猪，直接揭开了五王之战的序幕。打赢王座的人，
+恰恰是最不想要王座日常的那个人；他要的是王冠加冕那一刻，
+从来不是王座背后那本账。""",
+"[]", "[]", [], "[iron-throne]")
+
+WE["stannis-baratheon"] = ("character", "canon", None, False, """\
+史坦尼斯·拜拉席恩，劳勃的二弟，龙石岛公爵。以严酷、记仇与不妥协著称，
+自认是铁王座的合法主人。瑟曦停付铁金库债务后，他接受了铁金库的
+贷款条件：登基即承认王冠旧债。这笔钱支撑了他的北境战事——
+雪衣马队、雇船与粮草，还有一路向北的补给船期。他对名分的执着到了
+自我消耗的地步：明明兵力最弱，却不肯在任何条款上让步，
+也不肯用一句软话换一支援军。公正是他唯一的旗帜，也是他唯一的资产；
+风息堡之围的旧账，他记了一辈子——公正的旗帜不值钱，
+值钱的是有人肯为这面旗出真金白银。""",
+"[]", "[]", [], "[stannis-loan-gold]")
+
+WE["ice-sword"] = ("item", "canon", None, False, """\
+寒冰，史塔克家祖传的瓦雷利亚钢巨剑，长约六尺，宽逾人掌，
+剑身有波纹状暗纹，夜色里剑锋泛着幽光。它在临冬城传承四百年，
+是北境守护身份的信物，只在行刑与大战时出鞘。艾德·史塔克用它
+处决守夜人逃兵，后来它被用来处决艾德本人。泰温·兰尼斯特得到它
+之后将其熔成两把新剑——守誓者与寡妇之嚎，一把给了詹姆，
+一把将赴多恩。一件信物被敌手拆解重铸，是名分易手最直白的物证：
+剑还在，持剑的家族已天各一方；熔剑的炉火熄了，名分的火还没熄，
+两把新剑各自的去向，是另一条流水的开头。""",
+"[]", "[]", [])
+
+WE["stannis-loan-gold"] = ("item", "canon", None, False, """\
+铁金库贷给史坦尼斯的那笔资金（拟物条目）。触发条件是瑟曦的停付决定：
+铁王座不再偿债，铁金库便按'另立新王'的惯例物色下家。布拉佛斯特使
+泰楚·奈斯托斯在长城下找到史坦尼斯，条件写得明白：他日登基，
+承认并偿还铁王座的全部旧债，分文不少。这笔钱换来雇佣兵、船只与补给，
+支撑了从长城到临冬城外的整场北境战事——一笔贷款撬动一个战场，
+是铁金库放贷逻辑的标准样本：不站队，只站偿还得起的那一边。
+账面上的数字不大，押上的却是一个王国的名分；
+回执已经寄出，兑现在下一卷的战场上。""",
+"[]", "[]", [])
+
+WE["house-stark"] = ("faction", "canon", None, False, """\
+史塔克家族，临冬城主人，北境数千年的守护世家，族语'凛冬将至'。
+它的根基不是财富而是名分：北境各封臣对狼家的忠诚建立在漫长的
+共处与偶尔的决断上——恐怖堡的造反被平定过，荒冢屯的怨怼被安抚过，
+旧账都记着，却都翻过去了。艾德死后这个家族迅速失血：罗柏在孪河城
+遇害，家堡被焚，族人四散。但'北境永不遗忘'的另一面也随之显现：
+各封臣明里顺服波顿，暗里仍以狼家为念。一个家族的存续，
+靠的不是城墙，而是别人愿不愿意替它记着——族语不说'凛冬已至'
+而说'将至'，这个家族记挂的从来都是后账。""",
+"[]", "[]", [])
+
+WE["robb-host-army"] = ("faction", "canon", None, False, """\
+罗柏·史塔克的南下大军本体（与 robb-host-theon / robb-host-ledger
+两张兵力口径卡互为表里：那两张记'多少人'，这张记'这支部众'）。
+由北境各封臣的扈从拼成，步兵为主、骑兵为锋，绿叉河分兵之后主力
+西进呓语森林，连战连捷，营中还押着一位兰尼斯特。它的短板在补给
+与人心：深入河间地之后粮草难继，各封臣的家眷又都留在北方，
+而佛雷家的敌意因悔婚不断累积。298 AC 经孪河城南返时，
+它在红色婚礼上一夜瓦解——赢下了每一场战斗，输掉了整场战争；
+部众散了，那两张口径卡还在。""",
+"[]", "[]", [])
+
+WE["the-twins"] = ("location", "canon", None, False, """\
+孪河城，佛雷家族的家堡，绿叉河上唯一的渡口：两座一模一样的城堡
+隔河对峙，中间以石桥相连，桥上还有塔楼与闸门。谁要过大军，
+谁就得答允瓦德·佛雷的条件——这个地利让一个人丁兴旺却名声不佳的
+家族握有超出体量的筹码，也让'迟到的佛雷'的讥诮传了七国。
+罗柏当年以婚约换通行，悔婚之后再想南返，佛雷家开出的价码就变成了
+红色婚礼。渡口即力量：卡着别人必经之路的地方，本身就是一种收成；
+而收成什么时候落袋，由守渡口的人说了算——两座城堡一条桥，
+桥上的闸门比两边的城墙都值钱。""",
+"[]", "[]", [])
+
+# ---- 九笔流水（when_sort 用故事内纪年 AC；断言与流水推出的最终持有者一致）----
+
+WE["ev-wall-built"] = evm("ev-wall-built", "create", "约 -8000 AC", -8000, """\
+筑城者布兰登率巨人与森林之子筑起长城，在绝境以北立下七国的北疆屏障。
+关于它的筑成年代与工艺，书中只有传说口径：冰与石之外据说还织入了
+古老魔法，基座深处的石门只认守夜人的誓言。这笔'期初资产'至今是整个
+防御体系的底座——守夜人只是后来的看管人，而且看管得一年不如一年。
+把它记为 create 而不是自古存在，是因为世界的账需要一笔起点：
+屏障不是从来就有的，它是被造出来的；被造出来的东西，就总有
+造价、工期与维护这三笔后账，哪怕书里一笔都不肯写。起点立住了，
+后账慢慢算。""",
+"object:\n  - the-wall-scale\n")
+
+WE["ev-riverrun-granted"] = evm("ev-riverrun-granted", "grant", "1 AC", 1, """\
+征服者伊耿平定河间地之后，把三叉戟河流域的统辖名分授予率先归附的
+徒利家：奔流城从此是河间地统领的座城，三叉戟诸侯的封君由此换姓。
+这类'名分授予'记作 grant：它不移交实物的钥匙，移交的是'谁说了算'
+的凭证。河间地诸侯从此向徒利家效忠——徒利家的地位源头是一笔王恩，
+而不是打下来的家业，这也埋下了它在乱世里缺乏铁杆根基的伏笔：
+恩典能给的东西，换个王就能收回；三百年后，这话在孪河城应验了两次。
+名分的源头记下了，往后的得失才有地方挂账——这正是流水要记 grant
+的理由。""",
+"by:\n  - iron-throne\nto:\n  - house-tully\nobject:\n  - riverrun\n")
+
+WE["ev-ned-born"] = evm("ev-ned-born", "birth", "263 AC", 263, """\
+艾德·史塔克出生，临冬城公爵瑞卡德的次子。八岁被送往鹰巢城做养子，
+与劳勃·拜拉席恩一同受教于琼恩·艾林——这段少年情谊后来决定了
+北境与风暴地的同盟，也决定了劳勃起义的走向，更决定了他后半生
+每一个选择的底色。次子原本不接班：长兄布兰登死于君临之后，
+公国、婚约与责任一并落到他肩上，他接过的不只是领地，
+还有一份他没挑过的人生。他的出生本身平淡，但这本账要从人记起：
+后来的每一笔名分流转，都挂在他名下。这本账从他记起，却不是由他结清；
+往后的每一笔，都要别人替他还。""",
+"object:\n  - eddard-stark\n")
+
+WE["ev-robert-crowned"] = evm("ev-robert-crowned", "grant", "283 AC", 283, """\
+劳勃在君临加冕，铁王座的名分从坦格利安转到拜拉席恩。授出方这一栏
+写的是 iron-throne 自身：王座作为七国名分的总枢纽，是这场授予真正的
+'经手人'——琼恩·艾林与奈德只是促成者，泰温的献城只是临门一脚。
+名分依据来自三条：战功（三叉戟河）、血统（祖母是坦格利安）、
+与既成事实（君临已下）。这场 grant 是后头一切账的起点：债务、
+贷款、叛旗，全都挂在这顶王冠的名下；王冠换姓的这一刻，
+七国的账本也换了记账人，只是新旧两本账的窟窿，都要后人来填。
+加冕是账本上最贵的一笔进账，也是最贵的一笔欠账。""",
+"by:\n  - iron-throne\nto:\n  - robert-baratheon\nobject:\n  - iron-throne\n")
+
+WE["ev-ice-to-ned"] = evm("ev-ice-to-ned", "transfer", "290 AC", 290, """\
+寒冰由史塔克家传到艾德手里（实际接剑发生在 282 年布兰登与瑞卡德死后，
+此处按故事内惯用纪年取整）。这类'家族信物移交现任当家'记作 transfer：
+实物易手，名分随行，临冬城的钥匙与北境的安危也一并换了主人。
+此剑在艾德手中的用途有明载的两类：处决（守夜人逃兵威尔）与征战。
+它在 297 年被入库保管（见 ev-ice-in-keep），299 年主人死后被缴获，
+最终被熔成两把新剑——信物的存续比主人长，而它的每一次易手，
+都对应北境账本上一笔抹不掉的折损。剑的账，比人的账长。""",
+"by:\n  - house-stark\nto:\n  - eddard-stark\nobject:\n  - ice-sword\n")
+
+WE["ev-ice-in-keep"] = evm("ev-ice-in-keep", "custody", "297 AC", 297, """\
+艾德南下就任国王之手，寒冰留在临冬城，由史塔克家入库保管。
+记作 custody 而不是 transfer：剑的所有名分仍在艾德名下
+（所以卡上的 owns 断言写的是艾德），变的只是'谁在看着它'——
+管家、教头与侍卫轮值，钥匙留在临冬城的库里。保管与持有分开记账，
+正是为了不把'托人看家'误读成'家产易主'。后来城破剑失，
+这条保管记录也随之作废——但它解释了 297 到 299 年间
+剑与主人为何天各一方，也解释了缴获它的为什么不是它的主人。
+城破之后，这条记录成了它被人记得的最后下落。""",
+"by:\n  - eddard-stark\nto:\n  - house-stark\nobject:\n  - ice-sword\n")
+
+WE["ev-robb-marches"] = evm("ev-robb-marches", "move", "298 AC", 298, """\
+罗柏率大军经孪河城南返。绿叉河分兵时他曾以婚约换得佛雷家的通行
+与出兵，悔婚之后这支部众再度需要渡口，价码已今非昔比——瓦德·佛雷
+要的不只是道歉，还有一场当众的羞辱。记作 move：客体是'这支部众'
+（robb-host-army，与两张兵力口径卡分账），目的地是孪河城。
+渡河之后的事写进了红色婚礼：佛雷家以宴会为饵，一夜之内把这支部众
+连同它的统帅一起抹掉——一个渡口卡住了一支大军的生死，
+也卡住了整个北境的前途。渡口过了，命没了；
+这笔 move 是这支大军最后的位置记录。""",
+"object:\n  - robb-host-army\nto:\n  - the-twins\n")
+
+WE["ev-ned-executed"] = evm("ev-ned-executed", "death", "299 AC", 299, """\
+艾德·史塔克在贝勒大圣堂前被处决。他已按瓦里斯的劝说认罪以换取
+披上黑衣，乔佛里临时变卦下令斩首，伊林·派恩用的正是寒冰——
+用主人自己的剑处决主人，是这场处决最刺耳的一笔。记作 death：
+从这一刻起，任何再把他写进 by 的事件都是「死人做活事」（CA705）。
+他名下的账并未清零：寒冰被缴获、北境叛旗竖起、五个子女的流离，
+全都以这一刻为分水岭——人没了，账还在往下滚，而且滚得更快了。
+乔佛里为这一剑付出的代价，写在后面每一卷里：北境不再有人谈归顺，
+河间也不再有人谈中立。""",
+"object:\n  - eddard-stark\n")
+
+WE["ev-stannis-loan"] = evm("ev-stannis-loan", "transfer", "300 AC", 300, """\
+铁金库把贷款交付史坦尼斯。记作 transfer：资金（拟物为
+stannis-loan-gold）的所有权从金库移到他名下，条件是他日登基即
+承认王冠旧债，连本带利，分文不少。这笔钱随即变成雇船、佣兵与粮草，
+支撑从长城到临冬城外的整场战事，也把他更深地绑上铁金库的战车。
+铁金库的账从不看人下菜：瑟曦停付在前，它就按老规矩另寻下家——
+'王侯若不能偿还铁金库，就会有新的王侯凭空坐上他们的王位'，
+这笔 transfer 是那句话的执行记录，也是瑟曦那张停付令的回执。""",
+"by:\n  - iron-bank\nto:\n  - stannis-baratheon\nobject:\n  - stannis-loan-gold\n")
+
 
 def write_world(path: Path, entries: dict) -> None:
     if path.exists():
         shutil.rmtree(path)
     (path / "entries").mkdir(parents=True)
-    for id, (type_, status, layer, lb, body, refs, conflicts, deps) in entries.items():
+    for id, spec in entries.items():
+        if isinstance(spec, str):
+            (path / "entries" / f"{id}.md").write_text(spec, encoding="utf-8")
+            continue
+        (type_, status, layer, lb, body, refs, conflicts, deps) = spec[:8]
+        owns = spec[8] if len(spec) > 8 else "[]"
+        # kind=legitimacy 拆成 derives_legitimacy_from（拆分后的关系名，见协议 §9 修订记录）
+        material = [d for d in deps if d[1] != "legitimacy"]
+        legit = [d for d in deps if d[1] == "legitimacy"]
+        depends = dep_list(material) if material or not legit else None
+        legitimacy = "".join(
+            f"\n  - id: {d[0]}\n    critical: {'true' if d[2] else 'false'}"
+            for d in legit)
         title = id
         text = fm(id, title, type_, status, layer=layer, load_bearing=lb,
                   canon_refs=refs,
                   conflicts=conflicts if conflicts.startswith("[") or conflicts == "[]"
                   else conflict_list([]),
-                  depends=dep_list(deps))
+                  depends=depends, owns=owns, legitimacy=legitimacy)
         (path / "entries" / f"{id}.md").write_text(text + body, encoding="utf-8")
 
 

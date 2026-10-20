@@ -22,4 +22,4 @@ exit=0
 [CA503] warning entries/wight-army.md: military 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
 [CA108] info    entries/wight-army.md: kind='x-magic-logistics' 为实验值，已计入案例收集
 
-16 个条目 | 0 错误 | 21 警告
+35 个条目 | 0 错误 | 21 警告

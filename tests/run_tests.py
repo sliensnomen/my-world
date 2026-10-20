@@ -55,6 +55,8 @@ CASES: list[tuple[str, list[str]]] = [
     ("world-ledger-bad", ["tests/world-ledger-bad"]),
     # ledger 子命令是 report 级输出：快照钉住报告形状，钉住它 exit 0
     ("world-ledger+ledger", ["ledger", "tests/world-ledger"]),
+    # 真实作品的流水：冰火世界补了期初与 9 笔账，ledger 输出是 dogfood 的验收物
+    ("world-westeros+ledger", ["ledger", "tests/world-westeros"]),
 ]
 
 # 崩溃守卫的意图断言：(说明, 规则编号, 必须出现在同一条发现里的条目路径)
