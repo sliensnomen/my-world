@@ -7,9 +7,9 @@
 >
 > 1. `world.schema.json` —— 条目格式的唯一契约；
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
-> 3. 本文档 —— 规则表（§6.3，**27 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
+> 3. 本文档 —— 规则表（§6.3，**33 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.1"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.2"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -47,6 +47,10 @@
     - 锁：`tests/test_store.py` 新增「写入路径只改这一条边（八种输入）」「`new` 写的是 YAML 不是字符串拼接」「坏 YAML 是发现不是 traceback」；`tests/run_tests.py` 新增「拼错一个字符的关系名按规范名判定」并把「每一种关系的悬空引用」改成从契约推导（上一版手写清单漏了 `owes`）；`classlint/tests/run_tests.py` 新增「四条判得不对/静默通过的守卫」。
 
 20. **CA105 一个编号挂两件事，拆成 CA105 / CA114**：id 语法非法（`Bad_ID`）与 id 重复（两张卡撞同一个 id）以前都发 CA105，于是「补一条 `id='Bad_ID'` 必须报 CA105」的锁永远测不到——它锁的是重复那一支。重复 id 归 **CA114**（存储层 `store/layout.py` 报），id 语法仍归 CA105（判定层 `canonlint.py` 报）。两把意图锁各自钉一支，`tests/run_tests.py` 里也补了「非法 id 必须报 CA105」正面断言。classlint 侧不分（CL102 同时管语法与重复，见其协议表——它是另一套编号，一致性要求只约束同一件事的判定结论，不约束编号）。
+
+**v1.2 修订记录（2026-10-19，事件流水；设计决定见 docs/事件流水设计.md）：**
+
+21. **世界是账本：事件流水进核心（CA701–CA706 + `canonlint ledger`）**。一张 `type: event` 的卡可以带六个新字段（`when`/`when_sort`/`event_kind`/`by`/`to`/`object`）变成「一笔账」：卡上断言是期初，事件是变化，现在的状态是算出来的。全部字段可选，只有「完整事件」（给了 `event_kind`）才进流水判定，缺 `when_sort` 一律 fail-open——协议 1.1 的世界在 1.2 下**一条不红**（有锁）。事件腿的悬空 id 报 CA401（修订第 16 条的同一原则），`event_kind` 词表与 `type`/`kind` 同一套 `x-` 泄压阀。`ledger` 子命令是 report 级输出：永不进退出码、永不写盘。
 
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
@@ -152,10 +156,16 @@ ai_assisted: false
 | `layer` | 条件必填 | enum | 见 §5.2；`load_bearing: true` 时必填 |
 | `superseded_by` | 条件必填 | id 或 null | 见 §3.4；`archived` 必填，其他状态可省略或填 null |
 | `ai_assisted` | 必须 | bool | 见 §7 AI 条款 |
+| `when` | 可选 | string | 故事内时间，自由文本（协议 1.2 事件流水） |
+| `when_sort` | 可选 | number | 时序排序键，只用于比较先后；不给就不参与时序判定（fail-open） |
+| `event_kind` | 可选 | enum | 八值：`transfer`/`custody`/`move`/`create`/`destroy`/`grant`/`birth`/`death`；`x-` 前缀实验值合法（CA102 info）。给了它才是「完整事件」，才进流水判定 |
+| `by` | 可选 | id 列表 | 事件腿：施动者 |
+| `to` | 可选 | id 列表 | 事件腿：受方（转移的接手人、移动的目的地） |
+| `object` | 可选 | id 列表 | 事件腿：客体（被转移/移动/造/毁的那个） |
 
 **扩展字段：** 实现可以添加任何 `x-` 前缀的自定义字段；不带前缀的未定义字段**必须**被审计器拒绝（CA106），防止私有字段渗透进协议。
 
-上表 22 个字段与 `world.schema.json` 的 `properties` 一一对应；其中 `relations` 是规范形，`canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`/`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 是兼容别名——两种写法进同一张边表再判定（§5.4）。
+上表 28 个字段与 `world.schema.json` 的 `properties` 一一对应；其中 `relations` 是规范形，`canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`/`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 是兼容别名——两种写法进同一张边表再判定（§5.4）。`when`/`when_sort`/`event_kind`/`by`/`to`/`object` 六个是协议 1.2 的事件流水字段：契约只约束形状，词表、必填腿、时序与账平是判定层的事（§6.3 CA7xx）。
 
 ### 2.3 引用语法
 
@@ -414,7 +424,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 |---|---|---|
 | CA100 | error | 文件无法解析（无 frontmatter / YAML 错误 / 非映射） |
 | CA101 | error | 缺少必填字段（按 §2.2，含条件必填） |
-| CA102 | error | 枚举字段非法（`type`/`status`/`layer`/`stance`）；`type` 是 `x-` 实验类型时降为 info（协议 1.1） |
+| CA102 | error | 枚举字段非法（`type`/`status`/`layer`/`stance`/`event_kind`）；`type` 或 `event_kind` 是 `x-` 实验值时降为 info（协议 1.1 / 1.2） |
 | CA103 | error | `date` 非法。**两种形态都收**：YAML 原生日期对象（`date: 2026-10-15` 没加引号时会被 YAML 解成 `datetime.date`）与契约要求的 ISO 字符串（`"2026-10-15"`）。字符串必须**逐字符**匹配 `^\d{4}-\d{2}-\d{2}$`——`"20261015"`（ISO 基本格式）与 `"2026-W42-6"`（周历）曾被 `date.fromisoformat` 静默收下，与本条文案和契约 pattern 都矛盾；形状对了还要验真日（`"2026-02-30"` 报错）。工具自己写出的卡是字符串形态 |
 | CA104 | warning | `trial`/`canon` 条目正文少于 200 字（计数算法见 §6.6） |
 | CA105 | error | `id` 语法非法：含小写字母/数字/连字符以外的字符，或不是字符串 |
@@ -429,7 +439,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复 |
 | CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明）。**只对已定档条目（trial/canon）发出**：draft 还没到做决定的时候，而 `--strict` 会把 warning 当失败 |
 | CA302 | error | `load_bearing: true` 但缺 `layer` 或 `depends_on` |
-| CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
+| CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`，和协议 1.2 的事件腿 `by`/`to`/`object`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
 | CA402 | error | `canon_refs` 目标状态为 `draft`/`trial`；或目标为 `archived` 且已填**有效**的 `superseded_by`（提示迁移至承接条目）。目标为 `archived` 且没有有效承接者（未填、`null`、坏值、指向不存在、指向自己）时**不报本条**，由 CA405 在 archived 条目侧单独报告，避免双报；迁移指引里印出的承接条目一定是真存在的那一个 |
 | CA403 | warning | `conflicts_with` 双方均简式且缺回指（对象式标注豁免，见 §4.2） |
 | CA404 | error | `canon` 条目的 `depends_on` 目标状态非 `canon`（链条依赖只能建立在已定档上） |
@@ -439,6 +449,12 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA503 | warning | economy/fiscal/military/political 层承重墙条目无任何**物质族** `critical: true` 依赖（ideology 层豁免） |
 | CA505 | warning | 仓库级：存在 military/political 层承重墙条目，但全库没有任何 `layer: fiscal` 的条目（财政维度缺失提示；条目不须为承重墙） |
 | CA504 | report | 变更/降级影响报告：输出变更条目的下游传递闭包（**不含主体自身**——`--impact x` 问的是「谁依赖 x」，环由 CA502 单独报） |
+| CA701 | warning | 时序倒流：事件 A 的 `depends_on` 里有事件 B，两边都有 `when_sort` 且 B > A（要求 B ≤ A，相等合法）。任一边缺 `when_sort` 即豁免 |
+| CA702 | error | 账不平：完整事件的必填腿缺失或为空（`transfer`/`custody`/`grant` 要 `by`+`to`+`object`，`move` 要 `object`+`to`，其余要 `object`）。腿形状写坏归 CA109，不双报 |
+| CA703 | warning | 无源之财：`transfer`/`grant` 的客体在它之前没有任何持有者（既无 `owns` 断言，也无更早的 `transfer`/`grant` 指向它）。事件自身缺 `when_sort` 即豁免 |
+| CA704 | error | 结论与流水打架：手写 `owns` 断言与流水推出的最终持有者不一致（只对有 `transfer`/`grant` 流水的客体比对；无流水的客体断言即全部历史） |
+| CA705 | warning | 死人做活事：事件的 `by` 里有人在**严格更早**（`when_sort` 较小）的事件里已 `death`；同刻不算 |
+| CA706 | warning | 半截事件：`when` 与 `event_kind` 只给了一个。两个都给才是完整事件，都不给就是普通史料卡（协议 1.1 的世界在 1.2 下不红） |
 
 **无传递违规原则：** CA402/CA404/CA405 只判**直接边**的违规。A 引用 B、B 违规并不使 A 连带违规；"连带影响"是 CA504 报告的职责，不是 error 的传染。
 
@@ -466,7 +482,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.1",
+  "protocol_version": "1.2",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

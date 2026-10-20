@@ -77,7 +77,7 @@ python3 classlint/tests/run_tests.py
 
 1. `canonlint.py` 的 `check_structure` / `check_content` / `check_refs` / `check_chain` / `check_duplicates`
    里改判定；
-2. **同步 `PROTOCOL.md` §6.3 的规则表**（那是 27 条规则的清单，`tests/test_docs.py` 要求两边条数与编号一致）；
+2. **同步 `PROTOCOL.md` §6.3 的规则表**（那是 33 条规则的清单，`tests/test_docs.py` 要求两边条数与编号一致）；
 3. **加一个夹具**：在 `tests/world-*` 里造出会/不会触发它的条目，跑 `python3 tests/run_tests.py --update`
    更新快照，然后 **`git diff tests/snapshots/` 逐行看**——快照的 diff 就是这次行为变更的说明书；
 4. 如果是新规则编号，记得在 `PROTOCOL.md` §6.1 的编号段里给它一个位置。
@@ -102,7 +102,7 @@ python3 classlint/tests/run_tests.py
 ## 4. 验证命令（改完必须跑）
 
 ```bash
-python3 tests/run_tests.py            # 10 个世界夹具 + 36 项检查，逐字节比对快照（7 个 tests/world-* 目录、10 种跑法）
+python3 tests/run_tests.py            # 15 个世界夹具 + 47 项检查，逐字节比对快照（9 个 tests/world-* 目录、15 种跑法）
 python3 tests/test_schema.py          # 契约 ↔ 代码常量
 python3 tests/test_store.py           # 存储层边界与写入路径
 python3 tests/test_serve.py           # 接口（serve.py）与解析器（wgp-client.js）
