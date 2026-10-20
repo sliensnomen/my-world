@@ -1169,6 +1169,95 @@ def check_when_sort_nan_is_a_shape_error() -> list[str]:
     return problems
 
 
+def check_multi_recipient_transfer_fails_open_on_ca704() -> list[str]:
+    """多值受方 = 归属未定序：CA704 对最终那笔 `to` 列表里任一受方的断言都放行。
+
+    `to: [bob, carol]` 时派生状态的报告取第一个（bob），但 carol 卡上断言
+    owns 不该吃「最终持有者是 bob」的 error——她是受方之一，不是矛盾
+    （评审反馈：多值腿静默取第一个会造成假 CA704）。列表外的第三者断言照报；
+    更早一笔的受方（已被转手）不放行。
+    """
+    problems = []
+    cards = {
+        "anna": _card("anna", ""),
+        "bob": _card("bob", "owns:\n  - gem-x\n"),
+        "carol": _card("carol", "owns:\n  - gem-x\n"),
+        "dave": _card("dave", "owns:\n  - gem-x\n"),  # 不在受方列表里，CA704 照报
+        "gem-x": _card("gem-x", ""),
+        "ev-split": _card("ev-split", (
+            "when: 某年\nevent_kind: transfer\nwhen_sort: 1\n"
+            "by:\n  - anna\nto:\n  - bob\n  - carol\nobject:\n  - gem-x\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-multito-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"多值受方把 traceback 写到了 stderr：\n{err}")
+        for good in ("bob", "carol"):
+            if any("[CA704]" in ln and f"{good}.md" in ln for ln in out.splitlines()):
+                problems.append(f"受方 {good} 的断言不该吃 CA704（多值受方未定序）：\n{out}")
+        if not any("[CA704]" in ln and "dave.md" in ln for ln in out.splitlines()):
+            problems.append(f"列表外的 dave 断言 owns 必须照报 CA704：\n{out}")
+    # 转手历史不放行：bob 拿到又转给 carol，bob 的断言与最终持有者矛盾，照报
+    cards2 = {
+        "bob": _card("bob", "owns:\n  - gem-y\n"),
+        "carol": _card("carol", ""),
+        "gem-y": _card("gem-y", ""),
+        "ev-1": _card("ev-1", (
+            "when: 元年\nevent_kind: transfer\nwhen_sort: 1\n"
+            "by:\n  - carol\nto:\n  - bob\nobject:\n  - gem-y\n"
+        )).replace("type: location", "type: event"),
+        "ev-2": _card("ev-2", (
+            "when: 二年\nevent_kind: transfer\nwhen_sort: 2\n"
+            "by:\n  - bob\nto:\n  - carol\nobject:\n  - gem-y\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-multito2-", cards2)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"转手历史世界把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA704]" in ln and "bob.md" in ln for ln in out.splitlines()):
+            problems.append(f"bob 已把 gem-y 转给 carol，断言必须照报 CA704：\n{out}")
+    return problems
+
+
+def check_conflicting_owns_assertions_fire_ca707() -> list[str]:
+    """同一客体被多张卡断言 owns = 结论互搏，报 CA707（warning，评审 I3 拍板）。
+
+    以前完全隐形（derive_state 按 id 序取第一个、不判）；有流水时其中一张卡
+    还会吃上 CA704，而根因（断言互搏）没人报。CA707 是 warning：
+    默认模式不拦，--strict 拦。
+    """
+    problems = []
+    cards = {
+        "h1": _card("h1", "owns:\n  - gem-x\n"),
+        "h2": _card("h2", "owns:\n  - gem-x\n"),
+        "gem-x": _card("gem-x", ""),
+    }
+    tmp, world = _temp_world("canonlint-ownsclash-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"断言互搏把 traceback 写到了 stderr：\n{err}")
+        if "[CA707]" not in out:
+            problems.append(f"两张卡断言 owns 同一客体却没报 CA707：\n{out}")
+        if code != 0:
+            problems.append(f"CA707 是 warning，默认模式不该拦（exit {code}）")
+        code_s, out_s, _ = _judge(world, "--strict")
+        if code_s != 1:
+            problems.append(f"--strict 下 CA707 应当算失败（exit 1），实际 {code_s}")
+    # 反面：单一断言不响
+    tmp, world = _temp_world("canonlint-ownsok-", {
+        "h1": _card("h1", "owns:\n  - gem-x\n"), "gem-x": _card("gem-x", "")})
+    with tmp:
+        code, out, err = _judge(world)
+        if "CA707" in out:
+            problems.append(f"单一 owns 断言不该报 CA707：\n{out}")
+    return problems
+
+
 def check_ledger_bad_world_fires_every_rule() -> list[str]:
     """变异验证的骨架：world-ledger-bad 必须真的把六条新规则每条至少踩一次。
 
@@ -1282,6 +1371,8 @@ def main() -> int:
         ("when_sort 相等：CA701 合法、CA705 不算死后", check_equal_sort_boundaries),
         ("腿形状写坏报 CA109、不叠 CA702", check_leg_shape_is_ca109_not_double_ca702),
         ("when_sort 写 .nan 报 CA109 并 fail-open", check_when_sort_nan_is_a_shape_error),
+        ("多值受方归属未定序：受方断言不吃 CA704、外人照报", check_multi_recipient_transfer_fails_open_on_ca704),
+        ("同一客体多卡 owns 断言互搏报 CA707（warning）", check_conflicting_owns_assertions_fire_ca707),
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
     ]

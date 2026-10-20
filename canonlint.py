@@ -35,7 +35,7 @@ import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 
-PROTOCOL_VERSION = "1.2"   # 1.2：事件流水六字段与 CA7xx（新增，按 §9.1 升 minor）
+PROTOCOL_VERSION = "1.3"   # 1.3：CA707 owns 断言互搏 + 多值受方 fail-open（新增，按 §9.1 升 minor）
 CONTRACT_VERSION = "0.3"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
@@ -588,18 +588,25 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
             held.update(v.legs.get("object", []))
 
     # CA704: 手写 owns 断言与流水推出的最终持有者打架
-    # （只对有流水的客体比对；无流水的客体，断言即全部历史）
+    # （只对有流水的客体比对；无流水的客体，断言即全部历史。
+    #  多值受方 = 归属未定序：最终那笔的 to 列表里任一受方的断言都放行，
+    #  更早一笔的受方已被转手，不放行）
     states = ledger.derive_state(index)
-    transferred = {obj for e, v in events if v.kind in ("transfer", "grant")
-                   for obj in v.legs.get("object", [])}
+    final_to: dict[str, list[str]] = {}
+    for e, v in events:
+        if v.kind in ("transfer", "grant"):
+            for obj in v.legs.get("object", []):
+                if v.legs.get("to"):
+                    final_to[obj] = v.legs["to"]
     for e in index.values():
         if e.parse_error or not e.id:
             continue
         for r in e.edges_of("owns"):
-            if r.target not in transferred:
+            if r.target not in final_to:
                 continue
             st = states.get(r.target)
-            if st is not None and st.holder is not None and st.holder != e.id:
+            if (st is not None and st.holder is not None and st.holder != e.id
+                    and e.id not in final_to[r.target]):
                 findings.append(Finding(
                     "CA704", "error", e.rel,
                     f"结论与流水打架：卡上断言 owns `{r.target}`，但流水推出的"
@@ -620,6 +627,27 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                     "CA705", "warning", e.rel,
                     f"死人做活事：`{actor}` 在 when_sort={deaths[actor]:g} 的事件里"
                     f"已 death，却在更晚的本事件（when_sort={v.when_sort:g}）的 by 里"))
+
+    # CA707: 同一客体被多张卡断言 owns——断言互搏。derive_state 按 id 序取第一个
+    # 只是「报告需要一个答案」，不是裁决；互搏本身要报出来（与有无流水无关）。
+    claims: dict[str, list[Entry]] = {}
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        for r in e.edges_of("owns"):
+            claims.setdefault(r.target, []).append(e)
+    for obj in sorted(claims):
+        holders = claims[obj]
+        if len(holders) < 2:
+            continue
+        first = min(h.id for h in holders)  # derive_state 按 id 序取的那个
+        for h in sorted(holders, key=lambda x: x.rel):
+            if h.id == first:
+                continue
+            findings.append(Finding(
+                "CA707", "warning", h.rel,
+                f"owns 断言互搏：`{obj}` 同时被 `{first}` 与本卡断言持有"
+                f"（派生状态按 id 序取 `{first}`；请统一到一张卡上断言，或用流水表达流转）"))
 
 
 def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:

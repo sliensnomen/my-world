@@ -114,8 +114,8 @@ def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
             continue
         for r in e.edges_of("owns"):
             st = states.setdefault(r.target, ObjectState())
-            if st.holder is None:  # 多个 owns 断言并存时按 id 序取第一个；
-                # 断言互搏目前不判（CA704 只对有流水的客体比对）——是否加规则待作者确认（评审 I3）
+            if st.holder is None:  # 多个 owns 断言并存时按 id 序取第一个——
+                # 这只是给派生状态一个确定答案，不是裁决；互搏本身由判定层报 CA707
                 st.holder, st.holder_source = e.id, e.id
     for e, v in ordered_events(index):
         for obj in v.legs.get("object", []):

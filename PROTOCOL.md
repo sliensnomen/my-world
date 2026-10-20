@@ -7,9 +7,9 @@
 >
 > 1. `world.schema.json` —— 条目格式的唯一契约；
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
-> 3. 本文档 —— 规则表（§6.3，**33 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
+> 3. 本文档 —— 规则表（§6.3，**34 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.2"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.3"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -51,6 +51,10 @@
 **v1.2 修订记录（2026-10-19，事件流水；设计决定见 docs/事件流水设计.md）：**
 
 21. **世界是账本：事件流水进核心（CA701–CA706 + `canonlint ledger`）**。一张 `type: event` 的卡可以带六个新字段（`when`/`when_sort`/`event_kind`/`by`/`to`/`object`）变成「一笔账」：卡上断言是期初，事件是变化，现在的状态是算出来的。全部字段可选，只有「完整事件」（给了 `event_kind`）才进流水判定，缺 `when_sort` 一律 fail-open——协议 1.1 的世界在 1.2 下**一条不红**（有锁）。事件腿的悬空 id 报 CA401（修订第 16 条的同一原则），`event_kind` 词表与 `type`/`kind` 同一套 `x-` 泄压阀。`ledger` 子命令是 report 级输出：永不进退出码、永不写盘。
+
+**v1.3 修订记录（2026-10-20，事件流水评审收口）：**
+
+22. **CA707（`owns` 断言互搏）+ 多值受方 fail-open**。同一客体被多张卡断言 `owns` 以前完全隐形（派生状态按 id 序取第一个，不判）；现在报 CA707（warning），与有无流水无关。`transfer`/`grant` 的 `to` 多于一个 id 时归属未定序：派生状态报告取第一个，CA704 对最终那笔受方列表里任一 id 的断言都放行（更早一笔的受方已被转手，不放行）。CA703 补明 `create` 不算持有者来源的理由：它的腿表只有 `object`，事件里没记「谁造的」，推不出持有者。
 
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
@@ -451,10 +455,11 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA504 | report | 变更/降级影响报告：输出变更条目的下游传递闭包（**不含主体自身**——`--impact x` 问的是「谁依赖 x」，环由 CA502 单独报） |
 | CA701 | warning | 时序倒流：事件 A 的 `depends_on` 里有事件 B，两边都有 `when_sort` 且 B > A（要求 B ≤ A，相等合法）。任一边缺 `when_sort` 即豁免 |
 | CA702 | error | 账不平：完整事件的必填腿缺失或为空（`transfer`/`custody`/`grant` 要 `by`+`to`+`object`，`move` 要 `object`+`to`，其余要 `object`）。腿形状写坏归 CA109，不双报 |
-| CA703 | warning | 无源之财：`transfer`/`grant` 的客体在它之前没有任何持有者（既无 `owns` 断言，也无更早的 `transfer`/`grant` 指向它）。事件自身缺 `when_sort` 即豁免 |
-| CA704 | error | 结论与流水打架：手写 `owns` 断言与流水推出的最终持有者不一致（只对有 `transfer`/`grant` 流水的客体比对；无流水的客体断言即全部历史） |
+| CA703 | warning | 无源之财：`transfer`/`grant` 的客体在它之前没有任何持有者（既无 `owns` 断言，也无更早的 `transfer`/`grant` 指向它）。事件自身缺 `when_sort` 即豁免。`create` 不算持有者来源：它的腿表只有 `object`，事件里没记「谁造的」，推不出持有者 |
+| CA704 | error | 结论与流水打架：手写 `owns` 断言与流水推出的最终持有者不一致（只对有 `transfer`/`grant` 流水的客体比对；无流水的客体断言即全部历史）。**多值受方 = 归属未定序**：最终那笔的 `to` 多于一个 id 时，派生状态的报告取第一个，CA704 对列表里任一受方的断言都放行；更早一笔的受方已被转手，不放行 |
 | CA705 | warning | 死人做活事：事件的 `by` 里有人在**严格更早**（`when_sort` 较小）的事件里已 `death`；同刻不算 |
 | CA706 | warning | 半截事件：`when` 与 `event_kind` 只给了一个。两个都给才是完整事件，都不给就是普通史料卡（协议 1.1 的世界在 1.2 下不红） |
+| CA707 | warning | `owns` 断言互搏：同一客体被多张卡断言持有。派生状态按 id 序取第一个只是「报告需要一个确定答案」，不是裁决；请统一到一张卡上断言，或改用流水表达流转。与有无流水无关 |
 
 **无传递违规原则：** CA402/CA404/CA405 只判**直接边**的违规。A 引用 B、B 违规并不使 A 连带违规；"连带影响"是 CA504 报告的职责，不是 error 的传染。
 
@@ -482,7 +487,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.2",
+  "protocol_version": "1.3",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",
