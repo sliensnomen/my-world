@@ -35,7 +35,7 @@ import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 
-PROTOCOL_VERSION = "1.4"   # 1.4：CA708 存在窗口 + custody_of 对账（CA709/710）+ move 的 from 腿（新增，按 §9.1 升 minor）
+PROTOCOL_VERSION = "1.5"   # 1.5：CA711 轨迹断裂（move 的 from 链校验）（新增，按 §9.1 升 minor）
 CONTRACT_VERSION = "0.4"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
@@ -723,6 +723,35 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                 "CA710", "warning", k.rel,
                 f"custody_of 断言互搏：`{obj}` 同时被 `{first}` 与本卡断言保管"
                 f"（派生状态按 id 序取 `{first}`；请统一到一张卡上断言，或用 custody 流水表达移交）"))
+
+    # CA711: 轨迹断裂——move 的 from 对不上链上的当前位置。
+    # 只走存在窗口内的 move（窗外归 CA708，姊妹规则不双报）。
+    # 「未定」对称哲学：上一笔 to 多值 → 位置未知 → 跳过校验，直到单值 to 重新锚定；
+    # from 多值 = 没定，当前位置在列表里就放行；缺 from / 缺 when_sort 不查。
+    UNDETERMINED = object()  # 位置「未定」：与 None（还没出现过）区分——未定跳过校验
+    position: dict[str, object] = {}
+    for e, v in events:
+        if v.kind != "move":
+            continue
+        for obj in v.legs.get("object", []):
+            start, end = windows.get(obj, (None, None))
+            in_window = not ((start is not None and v.when_sort < start)
+                             or (end is not None and v.when_sort > end))
+            to = v.legs.get("to", [])
+            frm = v.legs.get("from", [])
+            if in_window:
+                cur = position.get(obj)
+                if (frm and cur is not None and cur is not UNDETERMINED
+                        and cur not in frm):
+                    findings.append(Finding(
+                        "CA711", "warning", e.rel,
+                        f"轨迹断裂：`{obj}` 上一笔账落在 `{cur}`，本笔却声称从 "
+                        f"`{frm[0]}` 出发（不写 from 就不查；顺路中转请拆成两笔 move）"))
+            if len(to) == 1:
+                position[obj] = to[0]
+            elif len(to) > 1:
+                position[obj] = UNDETERMINED
+            # to 缺失/为空：CA702 已报，位置不动
 
 
 def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:

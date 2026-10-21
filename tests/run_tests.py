@@ -1400,6 +1400,105 @@ def check_custody_assertions_reconcile_with_ledger() -> list[str]:
     return problems
 
 
+def check_trajectory_break_fires_ca711() -> list[str]:
+    """CA711 轨迹断裂：move 的 from 对不上链上当前位置（warning）。
+
+    口径（评审两轮拍板）：只走存在窗口内的 move（窗外归 CA708，姊妹规则不双报）；
+    当前位置是单值才校验 from（列表成员即放行）；上一笔 to 多值 → 当前位置
+    「未定」→ 跳过校验，直到下一笔单值 to 重新锚定；缺 from / 缺 when_sort 不查。
+    """
+    problems = []
+
+    def ev(id, sort, legs):
+        return _card(id, f"when: 第{sort}年\nevent_kind: move\nwhen_sort: {sort}\n{legs}"
+                     ).replace("type: location", "type: event")
+
+    def broken_lines(out):
+        return [ln for ln in out.splitlines() if "[CA711]" in ln]
+
+    # 1. 正常链条 A→B→C：不响
+    cards = {
+        "wagon": _card("wagon", ""),
+        "pa": _card("pa", ""), "pb": _card("pb", ""), "pc": _card("pc", ""),
+        "ev-1": ev("ev-1", 1, "object:\n  - wagon\nfrom:\n  - pa\nto:\n  - pb\n"),
+        "ev-2": ev("ev-2", 2, "object:\n  - wagon\nfrom:\n  - pb\nto:\n  - pc\n"),
+    }
+    tmp, world = _temp_world("canonlint-traj-ok-", cards)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"正常轨迹把 traceback 写到了 stderr：\n{err}")
+        if broken_lines(out):
+            problems.append(f"A→B→C 的正常链条不该报 CA711：\n{out}")
+
+    # 2. 断裂：A→B 之后又「从 C 出发」→ 响
+    cards["ev-2"] = ev("ev-2", 2, "object:\n  - wagon\nfrom:\n  - pc\nto:\n  - pa\n")
+    tmp, world = _temp_world("canonlint-traj-bad-", cards)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"断裂轨迹把 traceback 写到了 stderr：\n{err}")
+        hits = broken_lines(out)
+        if not any("ev-2.md" in ln for ln in hits):
+            problems.append(f"from=pc 对不上落点 pb 却没报 CA711：\n{out}")
+        if any("ev-1.md" in ln for ln in hits):
+            problems.append(f"第一笔 move 是链条起点，不该被查：\n{out}")
+
+    # 3. 上游多值 to → 位置「未定」→ 下一笔 from 不查；再下一笔单值 to 重新锚定后照查
+    cards3 = {
+        "wagon": _card("wagon", ""),
+        "pa": _card("pa", ""), "pb": _card("pb", ""), "pc": _card("pc", ""),
+        "ev-1": ev("ev-1", 1, "object:\n  - wagon\nto:\n  - pa\n  - pb\n"),  # 多值 → 未定
+        "ev-2": ev("ev-2", 2, "object:\n  - wagon\nfrom:\n  - pc\nto:\n  - pc\n"),  # 不查
+        "ev-3": ev("ev-3", 3, "object:\n  - wagon\nfrom:\n  - pa\nto:\n  - pb\n"),  # 上笔落 pc，响
+    }
+    tmp, world = _temp_world("canonlint-traj-undet-", cards3)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"未定位置把 traceback 写到了 stderr：\n{err}")
+        hits = broken_lines(out)
+        if any("ev-2.md" in ln for ln in hits):
+            problems.append(f"上一笔 to 多值 = 位置未定，ev-2 不该被查：\n{out}")
+        if not any("ev-3.md" in ln for ln in hits):
+            problems.append(f"重新锚定后 from 对不上必须报（ev-3）：\n{out}")
+
+    # 4. from 多值：当前位置在列表里就放行（多值 = 没定，不替人裁）
+    cards4 = {
+        "wagon": _card("wagon", ""),
+        "pa": _card("pa", ""), "pb": _card("pb", ""), "pc": _card("pc", ""),
+        "ev-1": ev("ev-1", 1, "object:\n  - wagon\nto:\n  - pb\n"),
+        "ev-2": ev("ev-2", 2, "object:\n  - wagon\nfrom:\n  - pa\n  - pb\nto:\n  - pc\n"),
+    }
+    tmp, world = _temp_world("canonlint-traj-multifrom-", cards4)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"多值 from 把 traceback 写到了 stderr：\n{err}")
+        if broken_lines(out):
+            problems.append(f"当前位置 pb 在 from 列表里，不该报 CA711：\n{out}")
+
+    # 5. 与 CA708 的分工：窗口外的 move 归 CA708，CA711 不重复报
+    cards5 = {
+        "wagon": _card("wagon", ""),
+        "pa": _card("pa", ""), "pb": _card("pb", ""), "pc": _card("pc", ""),
+        "ev-1": ev("ev-1", 1, "object:\n  - wagon\nto:\n  - pb\n"),
+        "ev-death": _card("ev-death", "when: 第2年\nevent_kind: destroy\nwhen_sort: 2\n"
+                          "object:\n  - wagon\n").replace("type: location", "type: event"),
+        "ev-3": ev("ev-3", 3, "object:\n  - wagon\nfrom:\n  - pc\nto:\n  - pa\n"),
+    }
+    tmp, world = _temp_world("canonlint-traj-window-", cards5)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"窗口外轨迹把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA708]" in ln and "ev-3.md" in ln for ln in out.splitlines()):
+            problems.append(f"窗口外的 move 该由 CA708 报：\n{out}")
+        if broken_lines(out):
+            problems.append(f"窗口外的 move 不该再叠 CA711（姊妹规则不双报）：\n{out}")
+    return problems
+
+
 def check_ledger_bad_world_fires_every_rule() -> list[str]:
     """变异验证的骨架：world-ledger-bad 必须真的把 CA7xx 每条至少踩一次。
 
@@ -1518,6 +1617,7 @@ def main() -> int:
         ("客体事件落在存在窗口外报 CA708（端点豁免、fail-open）", check_object_existence_window_fires_ca708),
         ("move 的 from 腿悬空引用报 CA401", check_move_from_leg_is_checked),
         ("custody_of 断言对账 CA709 + 保管互搏 CA710", check_custody_assertions_reconcile_with_ledger),
+        ("轨迹断裂报 CA711（未定/多值放行、与 CA708 不双报）", check_trajectory_break_fires_ca711),
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
     ]
