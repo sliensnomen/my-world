@@ -1230,6 +1230,40 @@ def check_set_fields_does_line_level_updates():
         assert rc == 2 and "重复" in msg, msg
 
 
+
+def check_cmd_new_interactive_false_never_asks():
+    """HTTP 写入路径（interactive=False）绝不能读 stdin：服务器可能是终端起的。
+
+    锁的是 B1：`_ask` 在 TTY 上会 `input()`，serve 的请求线程一旦走到那里就挂在
+    「承重墙条目？[y/N]:」，浏览器超时。这里把 `_ask` 换成一碰就炸的哨兵。
+    """
+    from store import write as write_mod
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        assert store.cmd_init(world, exe="canonlint") == 0
+        old = write_mod._ask
+
+        def boom(*_a, **_k):
+            raise AssertionError("interactive=False 的写路径读了 stdin")
+
+        write_mod._ask = boom
+        fake_stdin = type("FakeTTY", (), {"isatty": lambda self: True})()
+        real_stdin = sys.stdin
+        try:
+            sys.stdin = fake_stdin  # 模拟「服务器从终端启动」：isatty() 为真
+            out: dict = {}
+            rc = store.cmd_new(world, "location", "灰港新港", None,
+                               author=None, fields={},
+                               layer_choices=canonlint.LAYERS,
+                               interactive=False, out=out)
+        finally:
+            sys.stdin = real_stdin
+            write_mod._ask = old
+        assert rc == 0, f"interactive=False 建卡失败 rc={rc}"
+        assert out.get("id") == "location-1", f"自动起名不对：{out.get('id')}"
+        assert Path(out["path"]).is_file(), "建卡成功却没文件"
+
+
 CHECKS = (
     ("规范形与旧写法等价（三种关系）", check_canonical_equals_legacy),
     ("规范形的形状错误会出现在报告里", check_shape_errors_reach_the_report),
@@ -1256,6 +1290,7 @@ CHECKS = (
     ("坏 YAML 是发现不是 traceback（深嵌套 / 重复键）", check_broken_yaml_is_a_finding_not_a_traceback),
     ("new/event 写出事件卡与断言字段（写入路径 Phase 0）", check_new_writes_event_cards),
     ("set_fields 行级改字段 + 写完自检 + 拒绝写坏（Phase 3）", check_set_fields_does_line_level_updates),
+    ("interactive=False 的写路径不读 stdin", check_cmd_new_interactive_false_never_asks),
 )
 
 

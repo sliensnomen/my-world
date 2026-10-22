@@ -314,7 +314,7 @@ def check_首页与存活() -> None:
     status, body, headers = get(server_for(WORLD) + "/")
     assert status == 200 and "text/html" in headers.get("Content-Type", ""), "首页不对"
     text = body.decode("utf-8")
-    assert "只读接口" in text and "个条目" in text, "首页没给出状态"
+    assert "WGP 接口" in text and "默认只读" in text and "个条目" in text, "首页没给出状态"
     status, body, _ = get(server_for(WORLD) + "/api/health")
     d = json.loads(body)
     assert status == 200 and d["ok"] is True, "health 不对"
@@ -574,6 +574,13 @@ def check_可写模式的写入与审计回滚():
         # 坏 kind → 400
         code, body, _ = post(f"{base}/api/event", {"event_kind": "explode"})
         assert code == 400, f"坏 kind 应 400，实际 {code}"
+        # 不给 id + 中文标题：自动起名，响应必须回真实 id（以前回 null）
+        code, body, _ = post(f"{base}/api/entry",
+                             {"type": "location", "title": "灰港新港"})
+        assert code == 201, f"无 id 中文标题应自动起名：{code} {body[:300]}"
+        got = json.loads(body).get("id")
+        assert isinstance(got, str) and got.startswith("location-"), \
+            f"自动起名后响应里的 id 不对：{got!r}"
 
 
 def check_治理端点的升格降级与回滚():
@@ -623,6 +630,183 @@ def check_治理端点的升格降级与回滚():
         assert code == 404, f"未知条目应 404，实际 {code}"
 
 
+
+def check_写路径与读路径同口径():
+    """--pack econ：读路径认 figures，写路径也必须认（以前写卡/治理全 422 CA106）。"""
+    packs, extra = canonlint._load_packs(["econ"])
+    if not packs:
+        return "没装 econ 扩展包"
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        locs = world / "entries" / "locations"
+        locs.mkdir(parents=True)
+        (locs / "port.md").write_text(
+            "---\nid: port\ntitle: 港\ntype: location\nauthor: t\n"
+            "date: 2026-01-01\nstatus: canon\nload_bearing: false\n"
+            "figures:\n  population:\n    value: 1000\n    unit: people\n"
+            "canon_refs: []\nconflicts_with: []\nai_assisted: false\n---\n\n"
+            + "正文" * 120, encoding="utf-8")
+        httpd = serve.make_server(world, "127.0.0.1", 0, packs=packs,
+                                  extra_known=extra, quiet=True, writable=True)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        try:
+            code, body, _ = post(f"{base}/api/entry",
+                                 {"type": "location", "title": "新港", "id": "new-port"})
+            assert code == 201, \
+                f"econ 世界里写卡不该被 CA106 拦：{code} {body[:400]}"
+            assert (locs / "new-port.md").exists(), "写卡成功却没有文件"
+            code, body, _ = post(f"{base}/api/status",
+                                 {"id": "new-port", "status": "trial"})
+            assert code == 200, \
+                f"econ 世界里治理也不该被 CA106 拦：{code} {body[:400]}"
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+
+def _raw_post(base: str, payload: bytes, headers: dict):
+    req = urllib.request.Request(base, data=payload, headers=headers,
+                                 method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as res:
+            return res.status, res.read(), dict(res.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), dict(e.headers)
+
+
+def check_跨源写被挡_同源放行():
+    """写请求必须同源 + application/json；text/plain simple POST 不能再穿过去。"""
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        base = server_for(world, writable=True)
+        host = urllib.parse.urlsplit(base).netloc
+
+        # 1. 同源 + JSON：放行
+        code, body, _ = _raw_post(
+            f"{base}/api/entry",
+            json.dumps({"type": "location", "title": "same", "id": "same-origin"}).encode(),
+            {"Content-Type": "application/json", "Origin": f"http://{host}"})
+        assert code == 201, f"同源 JSON 写被误挡：{code} {body[:300]}"
+
+        # 2. 跨源 simple POST（text/plain）：403，且不留文件
+        code, body, _ = _raw_post(
+            f"{base}/api/entry",
+            json.dumps({"type": "location", "title": "evil", "id": "csrf-card"}).encode(),
+            {"Content-Type": "text/plain", "Origin": "http://evil.example"})
+        assert code == 403, f"跨源写应 403，实际 {code}：{body[:300]}"
+        assert not (world / "entries/locations/csrf-card.md").exists(), \
+            "跨源请求把卡写进去了"
+
+        # 3. 无 Origin 但 Content-Type 不对：415
+        code, body, _ = _raw_post(
+            f"{base}/api/entry",
+            json.dumps({"type": "location", "title": "x", "id": "plain-body"}).encode(),
+            {"Content-Type": "text/plain"})
+        assert code == 415, f"非 JSON 写应 415，实际 {code}：{body[:300]}"
+
+        # 4. 预检：可写模式列出 POST，并回显 Origin（不广播 *）
+        req = urllib.request.Request(f"{base}/api/entry", method="OPTIONS",
+                                     headers={"Origin": "http://127.0.0.1:9999",
+                                              "Access-Control-Request-Method": "POST"})
+        with urllib.request.urlopen(req, timeout=20) as res:
+            hdrs = dict(res.headers)
+            assert res.status == 204, f"OPTIONS 应 204，实际 {res.status}"
+        assert "POST" in hdrs.get("Allow", ""), f"预检 Allow 不含 POST：{hdrs.get('Allow')}"
+        assert hdrs.get("Access-Control-Allow-Methods", "").count("POST") == 1, \
+            f"预检方法不对：{hdrs.get('Access-Control-Allow-Methods')}"
+        assert hdrs.get("Access-Control-Allow-Origin") == "http://127.0.0.1:9999", \
+            f"预检应回显 Origin：{hdrs.get('Access-Control-Allow-Origin')}"
+        assert "Origin" in hdrs.get("Vary", ""), "写模式预检缺 Vary: Origin"
+
+        # 5. 只读模式：预检不提 POST
+        ro_base = server_for(WORLD)
+        req = urllib.request.Request(f"{ro_base}/api/entry", method="OPTIONS",
+                                     headers={"Origin": "http://127.0.0.1:9999"})
+        with urllib.request.urlopen(req, timeout=20) as res:
+            ro_hdrs = dict(res.headers)
+        assert "POST" not in ro_hdrs.get("Allow", ""), \
+            f"只读模式 OPTIONS 不该列 POST：{ro_hdrs.get('Allow')}"
+
+
+def check_坏请求不制造断连():
+    """非法 JSON / 非字符串 id,title / 非法 status id：给 4xx，不许断连。"""
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        base = server_for(world, writable=True)
+        for payload in (b"{", b'{"type":"location","title":"x","id":1}',
+                        b'{"type":"location","title":1,"id":"ok-id"}',
+                        b'[]'):
+            code, body, _ = _raw_post(f"{base}/api/entry", payload,
+                                      {"Content-Type": "application/json"})
+            assert code == 400, f"坏负载 {payload[:40]!r} 应 400，实际 {code}：{body[:200]}"
+        req = urllib.request.Request(
+            f"{base}/api/status",
+            data=json.dumps({"id": 123, "status": "trial"}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=20) as res:
+                code = res.status
+        except urllib.error.HTTPError as e:
+            code = e.code
+        assert code == 400, f"int id 的治理请求应 400，实际 {code}"
+        req = urllib.request.Request(
+            f"{base}/api/status",
+            data=json.dumps({"id": "x", "status": 123}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=20) as res:
+                code = res.status
+        except urllib.error.HTTPError as e:
+            code = e.code
+        assert code == 400, f"int status 的治理请求应 400，实际 {code}"
+
+
+def check_并发写不互删():
+    """两个写请求交错：坏请求的回滚只许删自己建的文件，不许删好请求的新卡。"""
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        base = server_for(world, writable=True)
+        code, body, _ = post(f"{base}/api/entry",
+                             {"type": "item", "title": "遗物", "id": "relic"})
+        assert code == 201, f"初始化 relic 失败：{code} {body[:300]}"
+
+        rounds = 8
+        outcomes: list[tuple[str, int]] = []
+        lock = threading.Lock()
+
+        def fire(tag: str, payload: dict):
+            code, _body, _ = post(f"{base}/api/event", payload)
+            with lock:
+                outcomes.append((tag, code))
+
+        for i in range(rounds):
+            good = {"event_kind": "create", "id": f"good-{i}",
+                    "when": "元年", "when_sort": i, "object": ["relic"]}
+            bad = {"event_kind": "create", "id": f"bad-{i}",
+                   "when": "元年", "when_sort": i, "object": ["ghost-item"]}
+            threads = [threading.Thread(target=fire, args=("good", good)),
+                       threading.Thread(target=fire, args=("bad", bad))]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join()
+        tabs = {}
+        for tag, code in outcomes:
+            tabs.setdefault(tag, []).append(code)
+        assert all(c == 201 for c in tabs.get("good", [])), \
+            f"好请求被坏请求的回滚误伤：{tabs.get('good')}"
+        assert all(c == 422 for c in tabs.get("bad", [])), \
+            f"坏请求应 422：{tabs.get('bad')}"
+        for i in range(rounds):
+            assert (world / f"entries/events/good-{i}.md").exists(), \
+                f"并发写把好卡 good-{i} 删了"
+            assert not (world / f"entries/events/bad-{i}.md").exists(), \
+                f"审计红了的 bad-{i} 没回滚"
+
 CHECKS = [
     ("接口给的数据 = CLI 导出的数据", check_world_同_CLI_导出),
     ("两次请求一致，且不漏绝对路径", check_两次请求一致_且没有绝对路径),
@@ -648,6 +832,10 @@ CHECKS = [
     ("只读界面被伺候且指向数据源（Phase 1）", check_只读界面被伺候且指向数据源),
     ("可写模式的写入与审计回滚（Phase 2）", check_可写模式的写入与审计回滚),
     ("治理端点的升格降级与回滚（Phase 3）", check_治理端点的升格降级与回滚),
+    ("--pack econ 的读/写同一口径（Phase 2）", check_写路径与读路径同口径),
+    ("跨源写被挡、同源放行、预检列 POST", check_跨源写被挡_同源放行),
+    ("坏请求给 4xx 而不是断连", check_坏请求不制造断连),
+    ("并发写不互删（写锁 + 只回滚自己）", check_并发写不互删),
 ]
 
 

@@ -81,6 +81,36 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
+def restore_bytes(path: Path, data: bytes) -> None:
+    """按字节原子恢复一份文件（撤销一次写失败）。
+
+    与 `_atomic_write` 同一条纪律：同目录临时文件 + `os.replace`，中途被杀不会留下
+    半张卡。单独按字节写而不是解码再编码——恢复的职责是「一个字节都不许动」。
+    """
+    target = path.resolve()
+    try:
+        st = target.stat()
+    except OSError as e:
+        raise OSError(f"{path}: 无法读取文件状态（{e}）") from e
+    _sweep_stale_tmp(target.parent)
+    try:
+        fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=_TMP_PREFIX,
+                                   suffix=_TMP_SUFFIX)
+    except OSError as e:
+        raise OSError(f"{target.parent}: 无法在此目录建临时文件（{e}）") from e
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.chmod(tmp, stat.S_IMODE(st.st_mode))
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _sweep_stale_tmp(directory: Path) -> None:
     """清掉上个进程被 SIGKILL 留下的一次性临时文件（只碰自己的前缀与后缀）。"""
     cutoff = time.time() - _TMP_STALE_SECONDS
@@ -226,45 +256,71 @@ def cmd_init(root: Path, *, exe: str) -> int:
     return 0
 
 
+def _auto_id(root: Path, type_: str, index: dict[str, Entry]) -> str:
+    """给「没给 id、标题又 slug 不出东西」的卡起一个确定的名字：`<type>-<序号>`。
+
+    只扫同类型目录与 id 索引：序号从 1 起取第一个空的。名字本身没有语义，但要
+    可复现、可引用、不会撞到手写的条目。"""
+    sub = TYPE_DIRS[type_]
+    n = 1
+    while True:
+        cand = f"{type_}-{n}"
+        if cand not in index and not os.path.lexists(root / "entries" / sub / f"{cand}.md"):
+            return cand
+        n += 1
+
+
 def cmd_new(root: Path, type_: str | None, title: str | None,
             entry_id: str | None, author: str | None = None,
             load_bearing: bool = False, layer: str | None = None,
-            *, layer_choices: Sequence[str], fields: dict | None = None) -> int:
+            *, layer_choices: Sequence[str], fields: dict | None = None,
+            interactive: bool | None = None,
+            out: dict | None = None) -> int:
     """建卡：生成合法 frontmatter，用户只管写正文。交互问答仅在 TTY 下启用。
 
     `fields` 是事件流水与断言字段（when/event_kind/腿/owns 等），白名单
-    就是存储层的 EVENT_FIELDS——别的键一律拒绝（写出去也是 CA106）。"""
-    tty = sys.stdin.isatty()
+    就是存储层的 EVENT_FIELDS——别的键一律拒绝（写出去也是 CA106）。
+
+    `interactive` 给调用方一个明确开关（serve 的 HTTP 处理器必须传 False：进程的
+    stdin 可能是终端，但一次 HTTP 请求没有「问用户」这回事，问了就是挂死）。
+    `out` 非空时带回最终 id 与实际写出的路径——自动起名之后调用方才知道 id。"""
+    tty = sys.stdin.isatty() if interactive is None else bool(interactive)
+
+    def ask(prompt: str, default: str = "") -> str:
+        return _ask(prompt, default) if tty else default
+
     if type_ is None:
-        type_ = _ask(f"类型 {sorted(TYPE_DIRS)}: ")
+        type_ = ask(f"类型 {sorted(TYPE_DIRS)}: ")
+
     if type_ not in TYPE_DIRS:
         print(f"error: type={type_!r} 非法（非交互环境请传位置参数：canonlint new <type> <title>）",
               file=sys.stderr)
         return 2
     if title is None:
-        title = _ask("标题: ")
+        title = ask("标题: ")
     if not title:
         print("error: 缺少标题（非交互环境请传：canonlint new <type> <title>）", file=sys.stderr)
         return 2
+
+    _, index, _ = collect(root)
     if entry_id is None:
-        guess = slugify(title)
-        entry_id = _ask(f"id（小写字母/数字/连字符）{f'[{guess}]' if guess else ''}: ",
-                        guess)
+        guess = slugify(title) or _auto_id(root, type_, index)
+        entry_id = ask(f"id（小写字母/数字/连字符）{f'[{guess}]' if guess else ''}: ",
+                       guess)
     if not entry_id or not ID_RE.match(entry_id):
         print(f"error: id={entry_id!r} 非法或缺失（中文标题请用 --id 指定）", file=sys.stderr)
         return 2
 
-    _, index, _ = collect(root)
     if entry_id in index:
         print(f"error: id `{entry_id}` 已存在（{index[entry_id].rel}）", file=sys.stderr)
         return 1
 
     if tty and not load_bearing:
-        load_bearing = _ask("承重墙条目？[y/N]: ").lower() == "y"
+        load_bearing = ask("承重墙条目？[y/N]: ").lower() == "y"
     if author is None:
-        author = _ask("署名: ", "anonymous")
+        author = ask("署名: ", "anonymous")
     if load_bearing and layer is None and layer_choices:
-        layer = _ask(f"层级 {list(layer_choices)}: ")
+        layer = ask(f"层级 {list(layer_choices)}: ")
     if load_bearing and layer not in layer_choices:
         print(f"error: 承重墙条目必须给 layer（{list(layer_choices)}）", file=sys.stderr)
         return 2
@@ -313,6 +369,9 @@ def cmd_new(root: Path, type_: str | None, title: str | None,
         print(f"error: 建卡失败：{e}", file=sys.stderr)
         return 2
     print(f"已建卡: {path.relative_to(root)}（draft）")
+    if out is not None:
+        out["id"] = entry_id
+        out["path"] = path
     if load_bearing:
         print(f"提示: 用 canonlint link {entry_id} <它靠谁养> --kind fiscal 连线")
     return 0

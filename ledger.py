@@ -92,6 +92,16 @@ def is_complete_event(v: EventView) -> bool:
     return v.kind in EVENT_KINDS
 
 
+def is_event_card(e: Entry) -> bool:
+    """事件字段只许出现在 `type: event` 的卡上（协议 1.8）。
+
+    以前只看「有没有 event_kind」：一张 `type: location` 的卡随手带上一组事件字段，
+    就被流水当成一笔完整事件、参与派生状态，却永远不会进入 `entries/events/`。
+    卡片的类型是作者声明，流水不该替它改。
+    """
+    return not e.parse_error and e.meta.get("type") == "event"
+
+
 @dataclass
 class ObjectState:
     holder: str | None = None         # 当前持有者（owns 断言或 transfer/grant 推出）
@@ -101,10 +111,15 @@ class ObjectState:
 
 
 def ordered_events(index: dict[str, Entry]) -> list[tuple[Entry, EventView]]:
-    """有 when_sort 的完整事件，按 (when_sort, id) 确定序。没有排序键的不进流水。"""
+    """有 when_sort 的完整事件，按 (when_sort, id) 排列。没有排序键的不进流水。
+
+    **id 只用来让输出稳定，不是时序**（协议 1.8）：同一 when_sort 的两笔事件是
+    「同刻」——谁先谁后没有定义，判定层不许拿这里的顺序当事实。判语里需要
+    「严格更早」时只比较 when_sort；同刻冲突要么报「未定序」，要么 fail-open。
+    """
     out = []
     for e in index.values():
-        if e.parse_error:
+        if not is_event_card(e):
             continue
         v = event_view(e)
         if is_complete_event(v) and v.when_sort is not None:
@@ -114,7 +129,11 @@ def ordered_events(index: dict[str, Entry]) -> list[tuple[Entry, EventView]]:
 
 
 def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
-    """期初断言（owns）+ 流水 → 每个客体的当前状态。只读，确定序。"""
+    """期初断言（owns）+ 流水 → 每个客体的当前状态。只读，确定序。
+
+    多值 `to` 只取第一个：派生状态是**展示用**的单一答案，不是裁决——「多值受方
+    未定序」由 CA704 在断言侧处理。同刻事件的先后同样只影响展示，不影响判定。
+    """
     states: dict[str, ObjectState] = {}
     for e in sorted(index.values(), key=lambda x: x.id or ""):
         if e.parse_error or not e.id:
@@ -158,7 +177,8 @@ def member_of_assertions(e: Entry) -> list[str]:
 def derive_membership(index: dict[str, Entry]) -> dict[str, dict[str, str]]:
     """{人: {组织: "join"|"leave"}}——每个人对每个组织、流水里的最后一个动作。
 
-    只读有 when_sort 的完整事件（fail-open）；同刻两笔按 id 序，确定。
+    只读有 when_sort 的完整事件（fail-open）。同刻两笔按 id 序只是展示答案；
+    判定层在「同刻 join 与 leave 并存」时 fail-open（CA712 不报）。
     """
     last: dict[str, dict[str, str]] = {}
     for e, v in ordered_events(index):

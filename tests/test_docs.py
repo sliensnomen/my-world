@@ -36,7 +36,8 @@ DOCS = (
     "classlint/tests/world-westeros/README.md",
 )
 
-CORE_SRC = (ROOT / "canonlint.py", *sorted((ROOT / "store").glob("*.py")))
+CORE_SRC = (ROOT / "canonlint.py", ROOT / "serve.py",
+            *sorted((ROOT / "store").glob("*.py")))
 ECON_SRC = (ROOT / "econ.py",)
 CL_SRC = (ROOT / "classlint/classlint.py",)
 WORKFLOW = ROOT / ".github/workflows/canonlint.yml"
@@ -290,7 +291,10 @@ def check_code_identifiers_exist():
 def check_stale_claims_are_gone():
     """已经被证伪的旧说法不得复现——它们正是这份文档要修掉的东西。"""
     stale = ("规则表 22 条", "22 条 CA", "五套测试世界", "七层字典", "七层链",
-             "七层，刻意最小", "Sprint 0 基础层", "ideology=6")
+             "七层，刻意最小", "Sprint 0 基础层", "ideology=6",
+             # 可写接口落地后过期：只读是默认值，不再是「全部」
+             "只读界面 v0.1", "写入表单与治理界面是下一步",
+             "只读**：`POST` / `PUT` / `DELETE` / `PATCH`")
     hits = [f"{name}: 「{s}」" for name in DOCS for s in stale if s in doc(name)]
     assert not hits, "文档里还留着已被证伪的旧说法：" + "；".join(hits)
 

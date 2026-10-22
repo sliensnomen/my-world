@@ -237,7 +237,7 @@ function renderTickets() {
       const payload = {id: btn.dataset.id};
       if (btn.dataset.act === "status") payload.status = btn.dataset.st;
       else {
-        const succ = prompt(`降级 ${btn.dataset.id}：承接条目 id（留空 = 无承接者）`);
+        const succ = prompt(`降级 ${btn.dataset.id}：承接条目 id（留空 = 显式无承接者，superseded_by: null）`);
         if (succ === null) return;
         payload.status = "archived";
         payload.superseded_by = succ.trim() || null;
@@ -246,9 +246,10 @@ function renderTickets() {
         headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
       const data = await res.json().catch(() => ({}));
       if (res.status === 200) {
-        $("#f-msg").innerHTML = `<span style="color:var(--green)">已更新 ${esc(payload.id)}</span>`;
         WORLD = await (await fetch("/api/world")).json();
+        // 先重绘再写提示：重绘会替换 #main（提示节点在它里面），顺序反了就只剩空节点
         renderTickets();
+        $("#f-msg").innerHTML = `<span style="color:var(--green)">已更新 ${esc(payload.id)}</span>`;
       } else {
         $("#f-msg").innerHTML = `<span style="color:var(--red)">${esc(data.error || ("HTTP " + res.status))}</span>` +
           (data.findings || []).map(f => `<p><span class="badge ${f.level}">${f.rule}</span> ${esc(f.message)}</p>`).join("");

@@ -1698,6 +1698,198 @@ def check_ledger_command_is_readonly_report() -> list[str]:
     return problems
 
 
+def check_same_instant_id_order_is_not_history() -> list[str]:
+    """协议 1.8：同刻（when_sort 相等）没有先后，改名不许翻转 CA704/CA709/CA711/CA712。
+
+    以前流水按 (when_sort, id) 排序后，判定把它当成了时序：两笔同刻 transfer 的
+    文件名一换，CA704 的 error 就在「c 是持有者」与「d 是持有者」之间翻转。
+    """
+    problems = []
+
+    def ev(eid: str, kind: str, sort: float, legs: str) -> str:
+        return _card(eid, f"when: 第{sort:g}年\nevent_kind: {kind}\nwhen_sort: {sort:g}\n{legs}"
+                     ).replace("type: location", "type: event")
+
+    def tie_world(ev1: str, ev2: str) -> tuple:
+        cards = {
+            "a": _card("a", ""), "b": _card("b", ""),
+            "c": _card("c", "owns:\n  - relic\n"),
+            "d": _card("d", ""), "relic": _card("relic", ""),
+            ev1: ev(ev1, "transfer", 5, "by:\n  - a\nobject:\n  - relic\nto:\n  - d\n"),
+            ev2: ev(ev2, "transfer", 5, "by:\n  - b\nobject:\n  - relic\nto:\n  - c\n"),
+        }
+        return _temp_world("canonlint-tie704-", cards)
+
+    for names in (("ev-a", "ev-b"), ("ev-z", "ev-y")):
+        tmp, world = tie_world(*names)
+        with tmp:
+            _, out, err = _judge(world)
+            if err:
+                problems.append(f"同刻转让把 traceback 写到了 stderr：\n{err}")
+            lines = [ln for ln in out.splitlines() if "[CA704]" in ln]
+            if any("] error " in ln for ln in lines):
+                problems.append(f"同刻两笔转让没定序，不该报 CA704 error（{'/'.join(names)}）：\n{out}")
+            if not any("] warning " in ln and "未定序" in ln for ln in lines):
+                problems.append(f"同刻两笔转让受方不同，应报 CA704 warning「未定序」（{'/'.join(names)}）：\n{out}")
+
+    # CA711：同刻两笔 move，id 序与故事序相反也不许断裂
+    def move(id: str, frm: str, to: str) -> str:
+        return ev(id, "move", 5, f"object:\n  - relic\nfrom:\n  - {frm}\nto:\n  - {to}\n")
+
+    for ids in (("mv-a", "mv-b"), ("mv-z", "mv-y")):
+        cards = {
+            "hall": _card("hall", ""), "gate": _card("gate", ""),
+            "tower": _card("tower", ""), "relic": _card("relic", ""),
+            ids[0]: move(ids[0], "hall", "gate"),
+            ids[1]: move(ids[1], "gate", "tower"),
+        }
+        tmp, world = _temp_world("canonlint-tie711-", cards)
+        with tmp:
+            _, out, err = _judge(world)
+            if err:
+                problems.append(f"同刻移动把 traceback 写到了 stderr：\n{err}")
+            if "[CA711]" in out:
+                problems.append(f"同刻两笔 move 没有先后，不该报 CA711（{'/'.join(ids)}）：\n{out}")
+
+    # CA709：同刻两笔 custody
+    for ev1, ev2 in (("cu-a", "cu-b"), ("cu-z", "cu-y")):
+        cards = {
+            "x": _card("x", "custody_of:\n  - relic\n"),
+            "y": _card("y", ""), "relic": _card("relic", ""),
+            ev1: ev(ev1, "custody", 5, "by:\n  - x\nobject:\n  - relic\nto:\n  - x\n"),
+            ev2: ev(ev2, "custody", 5, "by:\n  - y\nobject:\n  - relic\nto:\n  - y\n"),
+        }
+        tmp, world = _temp_world("canonlint-tie709-", cards)
+        with tmp:
+            _, out, err = _judge(world)
+            if err:
+                problems.append(f"同刻保管把 traceback 写到了 stderr：\n{err}")
+            if any("] error " in ln for ln in out.splitlines() if "[CA709]" in ln):
+                problems.append(f"同刻两笔 custody 没定序，不该报 CA709 error（{ev1}/{ev2}）：\n{out}")
+
+    # CA712：同刻 join 与 leave 并存 → fail-open
+    for ev1, ev2 in (("j-a", "l-b"), ("j-z", "l-y")):
+        cards = {
+            "a": _card("a", "member_of:\n  - guild\n"),
+            "org": _card("org", ""),
+            ev1: ev(ev1, "join", 5, "by:\n  - a\nto:\n  - org\n"),
+            ev2: ev(ev2, "leave", 5, "by:\n  - a\nfrom:\n  - org\n"),
+        }
+        tmp, world = _temp_world("canonlint-tie712-", cards)
+        with tmp:
+            _, out, err = _judge(world)
+            if err:
+                problems.append(f"同刻 join/leave 把 traceback 写到了 stderr：\n{err}")
+            if "[CA712]" in out:
+                problems.append(f"同刻 join 与 leave 谁最后未定序，应 fail-open（{ev1}/{ev2}）：\n{out}")
+    return problems
+
+
+def check_death_events_are_checked_as_actors() -> list[str]:
+    """CA705 覆盖 death 事件自身：死人在更晚的另一笔 death 里不能当施动者（协议 1.8）。"""
+    cards = {
+        "person-a": _card("person-a", ""),
+        "person-b": _card("person-b", ""),
+        "ev-a": _card("ev-a", (
+            "when: 元年\nevent_kind: death\nwhen_sort: 1\nobject:\n  - person-a\n"
+        )).replace("type: location", "type: event"),
+        "ev-b": _card("ev-b", (
+            "when: 五年\nevent_kind: death\nwhen_sort: 5\nby:\n  - person-a\nobject:\n  - person-b\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-death-actor-", cards)
+    problems = []
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"death 事件把 traceback 写到了 stderr：\n{err}")
+        hit = [ln for ln in out.splitlines() if "[CA705]" in ln and "ev-b.md" in ln]
+        if not hit:
+            problems.append(f"死人在更晚的 death 事件里当 by，应报 CA705：\n{out}")
+    return problems
+
+
+def check_event_fields_need_event_type() -> list[str]:
+    """事件字段只许在 type: event 的卡上（协议 1.8，CA109）；否则不进流水。"""
+    cards = {
+        "a": _card("a", ""), "b": _card("b", ""), "relic": _card("relic", ""),
+        "port": _card("port", (
+            "when: 元年\nevent_kind: transfer\nwhen_sort: 1\n"
+            "by:\n  - a\nobject:\n  - relic\nto:\n  - b\n"
+        )),
+    }
+    tmp, world = _temp_world("canonlint-event-type-", cards)
+    problems = []
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"非事件卡带事件字段把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA109]" in ln and "type: event" in ln for ln in out.splitlines()):
+            problems.append(f"location 卡带事件字段应报 CA109（只许 type: event）：\n{out}")
+        if "[CA702]" in out:
+            problems.append(f"非事件卡不该被当成完整事件判腿（CA702）：\n{out}")
+        lcode, lout, lerr = subprocess.run(
+            [PY, str(TOOL), "ledger", str(world)], cwd=ROOT,
+            capture_output=True, text=True).returncode, "", ""
+        # 上面只取退出码会丢输出，重新跑一次拿文本
+        p = subprocess.run([PY, str(TOOL), "ledger", str(world)], cwd=ROOT,
+                           capture_output=True, text=True)
+        if p.returncode != 0 or "0 笔完整事件" not in p.stdout:
+            problems.append(f"非事件卡不该进流水，ledger 应报 0 笔完整事件：\n{p.stdout}{p.stderr}")
+    return problems
+
+
+def check_experimental_event_kind_via_cli() -> list[str]:
+    """CLI 的 event 子命令接受 x- 实验 kind（CA102 info，以前被 choices 拦死）。"""
+    cards = {"relic": _card("relic", "")}
+    tmp, world = _temp_world("canonlint-xkind-cli-", cards)
+    problems = []
+    with tmp:
+        p = subprocess.run(
+            [PY, str(TOOL), "event", "x-wgp-trial", "实验账",
+             "--root", str(world), "--id", "x-wgp-trial",
+             "--when", "元年", "--when-sort", "1",
+             "--object", "relic"],
+            cwd=ROOT, capture_output=True, text=True)
+        if p.returncode != 0:
+            problems.append(f"event x- 实验 kind 应是合法入口，实际 exit={p.returncode}：\n{p.stderr or p.stdout}")
+        card = world / "entries" / "events" / "x-wgp-trial.md"
+        if not card.exists():
+            problems.append(f"实验事件卡没写出来（找 {card}）")
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"实验事件卡把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA102] info" in ln and "实验值" in ln for ln in out.splitlines()):
+            problems.append(f"x- 实验 kind 应记 CA102 info：\n{out}")
+    return problems
+
+
+def check_auto_id_when_slug_is_empty() -> list[str]:
+    """id 省略 + 非 ASCII 标题：自动起名 <type>-<序号>，连续两次不撞车。"""
+    sys.path.insert(0, str(ROOT))
+    import canonlint
+    import store
+    tmp, world = _temp_world("canonlint-autoid-", {"seed": _card("seed", "")})
+    problems = []
+    with tmp:
+        ids = []
+        for _ in range(2):
+            out: dict = {}
+            rc = store.cmd_new(world, "location", "灰港新港", None,
+                               author="t", fields={}, layer_choices=canonlint.LAYERS,
+                               interactive=False, out=out)
+            if rc != 0:
+                problems.append(f"中文标题 + 无 id 应自动起名，实际 rc={rc}")
+                break
+            ids.append(out.get("id"))
+            if not out.get("path") or not Path(out["path"]).exists():
+                problems.append(f"自动起名没回传真实路径：{out}")
+                break
+        if ids != ["location-1", "location-2"]:
+            problems.append(f"自动起名的序号不对：{ids}")
+    return problems
+
+
 def main() -> int:
     update = "--update" in sys.argv[1:]
     failures: list[str] = []
@@ -1778,6 +1970,11 @@ def main() -> int:
         ("transform 窗口交接：旧关新开、自身豁免、不自动继承", check_transform_closes_and_opens_windows),
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
+        ("同刻事件不按 id 定序（CA704/709/711/712 改名不翻转）", check_same_instant_id_order_is_not_history),
+        ("death 事件自身也查 CA705（死人不当施动者）", check_death_events_are_checked_as_actors),
+        ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
+        ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),
+        ("id 省略 + 中文标题自动起名 <type>-<序号>", check_auto_id_when_slug_is_empty),
     ]
     for label, check in extras:
         problems = check()

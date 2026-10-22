@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""WGP 只读接口：把世界数据用 HTTP 交给前端。
+"""WGP HTTP 接口：把世界数据交给前端；默认只读，`--writable` 才开写。
 
-    python3 serve.py [世界目录] [--host 127.0.0.1] [--port 8000] [--pack econ]
+    python3 serve.py [世界目录] [--host 127.0.0.1] [--port 8000] [--pack econ] [--writable]
 
 路由
     GET /                  一页说明（不是界面）
@@ -11,17 +11,25 @@
     GET /api/entry/<id>    单个条目 + 跟它相关的边（进的和出的）
     GET /api/raw/<path>    世界目录里的原始文件（只读，给"看原文"用）
     GET /web/...           ./web 目录下的静态文件（前端可以放这儿，同源，省掉 CORS）
+    POST /api/entry        写一张卡（仅 --writable；写完即审，红则回滚）
+    POST /api/event        记一笔账（仅 --writable；同上）
+    POST /api/status       升格/降级（仅 --writable；同上）
 
 规矩
-    · 只读：任何非 GET/HEAD 一律 405。
+    · 默认只读：任何非 GET/HEAD 一律 405；`--writable` 只开上面三条 POST。
+    · 写请求只收同源页面发来的 `application/json`：跨源写（含表单式 simple POST）
+      一律拒绝。接口没有登录态，浏览器里的「同源」就是唯一凭据。
     · 每次请求重新读盘：Markdown 是唯一真相，改完文件刷新页面就是新数据。
-    · 不缓存、不写盘、不留时间戳 —— 同一份数据两次请求字节一致。
+    · 读不写盘、不留时间戳 —— 同一份数据两次请求字节一致。
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
@@ -34,6 +42,7 @@ import canonlint  # noqa: E402  （同一个目录里的参考实现）
 
 WEB_DIR = HERE / "web"
 ROUTES = ["/", "/api/health", "/api/world", "/api/entry/<id>", "/api/raw/<path>", "/web/..."]
+_MAX_BODY = 1 << 20  # 写请求体上限：一张卡的 frontmatter 再大也用不到 1 MiB
 
 _CTYPES = {
     ".html": "text/html; charset=utf-8",
@@ -145,21 +154,73 @@ class Handler(BaseHTTPRequestHandler):
 
         纪律与 pre-commit 钩子同源：先走 store 的写入路径，再跑审计——
         有 error 就回滚刚写的文件并回 422（钩子语义延伸到 HTTP）。
+
+        写请求必须**同源 + application/json**：`text/plain` 的 simple POST 不触发
+        预检，光靠 CORS 响应头挡不住（任意网页都能替用户写卡），所以在这里挡。
         """
         if not getattr(self.server, "wgp_writable", False):
             return self._readonly()
-        path = unquote(urlparse(self.path).path)
-        if path == "/api/entry":
-            return self._post_card(event=False)
-        if path == "/api/event":
-            return self._post_card(event=True)
-        if path == "/api/status":
-            return self._post_status()
-        return self._json(404, {"error": f"没有这个路由: {path}", "routes": ROUTES})
+        origin = self.headers.get("Origin")
+        if origin and not self._same_origin(origin):
+            return self._json(403, {
+                "code": "cross_origin",
+                "error": "跨源写请求被拒绝（只接受同源页面发来的请求）"})
+        ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if ctype != "application/json":
+            return self._json(415, {
+                "code": "unsupported_media_type",
+                "error": "写请求的 Content-Type 必须是 application/json",
+                "got": self.headers.get("Content-Type")})
+        try:
+            # 写锁：审计回滚是「先写卡、再全库审、红就删」——不串行化的话，A 的回滚
+            # 会删掉 B 刚建好的卡（差集求的是「请求开始之后所有新文件」）。
+            with self.server.wgp_write_lock:
+                path = unquote(urlparse(self.path).path)
+                if path == "/api/entry":
+                    return self._post_card(event=False)
+                if path == "/api/event":
+                    return self._post_card(event=True)
+                if path == "/api/status":
+                    return self._post_status()
+                return self._json(404, {"error": f"没有这个路由: {path}", "routes": ROUTES})
+        except (BrokenPipeError, ConnectionResetError):
+            raise
+        except Exception as e:  # noqa: BLE001 —— HTTP 边界：任何异常都变成 500，不许断连
+            if not getattr(self, "_headers_buffer", None):
+                self.log_error("写请求内部错误：%s: %s", type(e).__name__, e)
+                return self._json(500, {"error": f"服务器内部错误（{type(e).__name__}）"})
+            raise
+
+    def _same_origin(self, origin: str) -> bool:
+        """写请求只认同源 Origin：netloc 与 Host 一致（scheme 只认 http/https）。
+
+        没有 Origin 的请求（curl、脚本）放行——浏览器发起的跨源请求一定带 Origin，
+        带上了就必须对得上；`Origin: null`（沙箱 iframe / file://）没有 netloc，拒绝。
+        """
+        try:
+            parts = urlparse(origin)
+        except ValueError:
+            return False
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host or not parts.netloc:
+            return False
+        return parts.scheme in ("http", "https") and parts.netloc.lower() == host
+
+    def _audit(self):
+        """写后审计必须与 GET 同口径：同一个世界，不能「读时合法、写时非法」。"""
+        return canonlint.run(self.server.wgp_root, 0.85, [],
+                             extra_known=self.server.wgp_extra_known,
+                             packs=getattr(self.server, "wgp_packs", ()))
 
     def _read_json(self):
+        raw_len = self.headers.get("Content-Length")
         try:
-            length = int(self.headers.get("Content-Length") or 0)
+            length = int(raw_len or 0)
+        except ValueError:
+            return None, self._json(400, {"error": f"Content-Length 非法: {raw_len!r}"})
+        if length < 0 or length > _MAX_BODY:
+            return None, self._json(413, {"error": f"请求体过大（上限 {_MAX_BODY} 字节）"})
+        try:
             data = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, TypeError) as e:
             return None, self._json(400, {"error": f"JSON 解析失败: {e}"})
@@ -177,17 +238,23 @@ class Handler(BaseHTTPRequestHandler):
             return err
         root = self.server.wgp_root
         entry_id = data.get("id")
+        if not isinstance(entry_id, str) or not entry_id:
+            return self._json(400, {"error": "id 必须是非空字符串"})
         updates: dict = {}
         if "status" in data:
-            if data["status"] not in canonlint.VALID_STATUS:
+            status = data["status"]
+            if not isinstance(status, str) or status not in canonlint.VALID_STATUS:
                 return self._json(400, {
-                    "error": f"status={data['status']!r} 非法，须为 "
+                    "error": f"status={status!r} 非法，须为 "
                              f"{sorted(canonlint.VALID_STATUS)}"})
-            updates["status"] = data["status"]
+            updates["status"] = status
         if "superseded_by" in data:
-            updates["superseded_by"] = data["superseded_by"]
-        if not entry_id or not updates:
-            return self._json(400, {"error": "必须给 id 与至少一个字段（status/superseded_by）"})
+            sup = data["superseded_by"]
+            if sup is not None and not isinstance(sup, str):
+                return self._json(400, {"error": "superseded_by 必须是字符串或 null"})
+            updates["superseded_by"] = sup
+        if not updates:
+            return self._json(400, {"error": "必须给至少一个字段（status/superseded_by）"})
         _all, index, _issues = canonlint.store.collect(root)
         target = index.get(entry_id)
         if target is None:
@@ -196,10 +263,16 @@ class Handler(BaseHTTPRequestHandler):
         rc, msg = canonlint.store.set_fields(root, entry_id, updates)
         if rc != 0:
             return self._json(400, {"error": msg})
-        _all, _idx, findings, _reports = canonlint.run(root, 0.85, [])
+        _all, _idx, findings, _reports = self._audit()
         errors = [f for f in findings if f.level == "error"]
         if errors:
-            target.path.write_bytes(old_bytes)
+            try:
+                # 原子恢复：回滚本身不能留下半张卡（以前是 write_bytes，断电就剩一半）
+                canonlint.store.restore_bytes(target.path, old_bytes)
+            except OSError as e:
+                return self._json(500, {
+                    "error": f"审计不通过，但回滚失败：{e}",
+                    "hint": f"请手工恢复 {target.path}"})
             return self._json(422, {
                 "error": "审计不通过，已回滚",
                 "findings": [{"rule": f.rule, "level": f.level,
@@ -214,51 +287,79 @@ class Handler(BaseHTTPRequestHandler):
             return err
         legs = ("when", "when_sort", "by", "to", "object", "from", "result",
                 "owns", "custody_of", "member_of")
+        entry_id = data.get("id")
+        if entry_id is not None and not isinstance(entry_id, str):
+            return self._json(400, {"error": "id 必须是字符串"})
+        author = data.get("author")
+        if author is not None and not isinstance(author, str):
+            return self._json(400, {"error": "author 必须是字符串"})
         if event:
             kind = data.get("event_kind")
-            if kind not in canonlint.ledger.EVENT_KINDS:
+            experimental = isinstance(kind, str) and kind.startswith("x-") and len(kind) > 2
+            if not isinstance(kind, str) or (
+                    kind not in canonlint.ledger.EVENT_KINDS and not experimental):
                 return self._json(400, {
                     "error": f"event_kind={kind!r} 非法，须为 "
-                             f"{sorted(canonlint.ledger.EVENT_KINDS)}"})
+                             f"{sorted(canonlint.ledger.EVENT_KINDS)} 或 x- 开头的实验值"})
             type_ = "event"
             title = data.get("title") or f"{kind} 事件"
+            if not isinstance(title, str):
+                return self._json(400, {"error": "title 必须是字符串"})
             fields = {k: data[k] for k in legs if k in data}
             fields["event_kind"] = kind
         else:
             type_ = data.get("type")
             title = data.get("title")
-            if not type_ or not title:
-                return self._json(400, {"error": "写卡必须给 type 与 title"})
+            if not isinstance(type_, str) or not isinstance(title, str) or not type_ or not title:
+                return self._json(400, {"error": "写卡必须给字符串 type 与 title"})
             fields = {k: data[k] for k in legs + ("event_kind",) if k in data}
-        before = set(root.rglob("*.md"))
-        rc = canonlint.store.cmd_new(root, type_, title, data.get("id"),
-                                     author=data.get("author"),
-                                     fields=fields,
-                                     layer_choices=canonlint.LAYERS)
+        out: dict = {}
+        # cmd_new 会往 stdout 打「已建卡: …」；HTTP 客户端看不到服务器屏幕，
+        # 别让它混进 serve 的日志（那是给终端用户看的）。
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = canonlint.store.cmd_new(
+                root, type_, title, entry_id,
+                author=author, fields=fields,
+                layer_choices=canonlint.LAYERS,
+            # 一次 HTTP 请求没有「问用户」这回事：stdin 可能是终端，但这里必须不问，
+            # 否则服务器终端挂着 `承重墙条目？[y/N]:`，浏览器那头超时。
+                interactive=False, out=out)
         if rc == 1:
-            return self._json(409, {"error": f"id `{data.get('id')}` 已存在"})
+            return self._json(409, {"error": f"id `{entry_id}` 已存在"})
         if rc != 0:
             return self._json(400, {"error": "参数非法（type/id 缺失或不合法）"})
-        _all, _idx, findings, _reports = canonlint.run(root, 0.85, [])
+        created = [out["path"]] if out.get("path") else []
+        _all, _idx, findings, _reports = self._audit()
         errors = [f for f in findings if f.level == "error"]
         if errors:
-            for p in set(root.rglob("*.md")) - before:
-                p.unlink()
+            # 只删这一次请求自己建的文件（写锁保证没有别人的新文件混进来），
+            # unlink 失败也只影响这一张，不能让整个响应变成断连。
+            for p in created:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
             return self._json(422, {
                 "error": "审计不通过，已回滚",
                 "findings": [{"rule": f.rule, "level": f.level,
                               "entry": f.entry, "message": f.message}
                              for f in errors]})
-        return self._json(201, {"ok": True, "id": data.get("id")})
+        return self._json(201, {"ok": True, "id": out.get("id", entry_id)})
 
     def do_OPTIONS(self):  # noqa: N802
         # 浏览器的 CORS 预检打的就是 OPTIONS。以前没有这个方法 → 501 + HTML 错误页，
-        # 预检失败，前端连 GET 都发不出去。
+        # 预检失败，前端连 GET 都发不出去。写模式下必须把 POST 列进去，否则
+        # 「同源页面能写、跨源页面预检后却写不了」自相矛盾。
+        writable = bool(getattr(self.server, "wgp_writable", False))
+        methods = "GET, HEAD, OPTIONS" + (", POST" if writable else "")
+        origin = self.headers.get("Origin")
         self.send_response(204)
-        self.send_header("Allow", "GET, HEAD, OPTIONS")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Allow", methods)
+        self.send_header("Access-Control-Allow-Origin", origin or "*")
+        if origin:
+            self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", methods)
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Max-Age", "86400")
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -344,15 +445,18 @@ class Handler(BaseHTTPRequestHandler):
             f"<tr><td><code>{r}</code></td></tr>" for r in ROUTES)
         html = f"""<!doctype html>
 <html lang="zh"><meta charset="utf-8">
-<title>WGP 只读接口</title>
+<title>WGP 接口</title>
 <style>body{{font:15px/1.6 system-ui,sans-serif;max-width:44rem;margin:3rem auto;padding:0 1rem}}
 code{{background:#f2f2f2;padding:.1em .3em;border-radius:3px}}td{{padding:.2rem 0}}</style>
-<h1>WGP 只读接口</h1>
+<h1>WGP 接口</h1>
 <p>世界：<code>{self.server.wgp_root.name}</code>（目录本身不对外显示）</p>
 <p>{c['entries']} 个条目（{c['unparsed']} 个读不出来）｜{c['relations']} 条边（{c['dangling']} 条指不到人）｜
 {c['errors']} 错误 / {c['warnings']} 警告</p>
 <p>协议 <code>{data['protocol_version']}</code>，数据合同 <code>{data['contract_version']}</code></p>
 <table>{rows}</table>
+<p>默认只读；<code>--writable</code> 时额外开放 <code>POST /api/entry</code>（写卡）、
+<code>POST /api/event</code>（记账）、<code>POST /api/status</code>（升格/降级），
+写请求只接受同源页面的 <code>application/json</code>。</p>
 <p>这不是界面 —— 界面由前端写。前端文件放进仓库根的 <code>web/</code>（与 <code>serve.py</code> 同级），然后用
 <code>/web/index.html</code> 打开，和接口同源。</p>
 </html>
@@ -369,6 +473,8 @@ def make_server(root: Path, host: str, port: int, packs=(), extra_known=frozense
     httpd.wgp_extra_known = extra_known        # type: ignore[attr-defined]
     httpd.quiet = quiet                        # type: ignore[attr-defined]
     httpd.wgp_writable = writable              # type: ignore[attr-defined]
+    # 写请求串行化：审计回滚是「写卡 → 全库审 → 红就删」，两个请求交错会互删新卡。
+    httpd.wgp_write_lock = threading.Lock()    # type: ignore[attr-defined]
     httpd.daemon_threads = True
     return httpd
 
@@ -394,7 +500,7 @@ def serve(root: Path, host: str, port: int, packs=(), extra_known=frozenset(),
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
-        description=f"WGP 只读接口 v{canonlint.PROTOCOL_VERSION}（Python 标准库，无依赖）",
+        description=f"WGP HTTP 接口 v{canonlint.PROTOCOL_VERSION}（Python 标准库，无依赖；默认只读，--writable 开写）",
         epilog="例：python3 serve.py tests/world-arrakis --port 8000",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root", nargs="?", type=Path, default=Path("."),

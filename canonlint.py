@@ -35,7 +35,8 @@ import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 
-PROTOCOL_VERSION = "1.7"   # 1.7：transform 转正，存在窗口在转化处交接（新增，按 §9.1 升 minor）
+PROTOCOL_VERSION = "1.8"   # 1.8：同刻事件不排序（CA704/709/711/712 不再按 id 订正误）；
+                           #      事件字段只许在 type: event；CA705 覆盖 death 事件自身
 CONTRACT_VERSION = "0.6"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
@@ -289,6 +290,16 @@ def check_events(e: Entry, findings: list[Finding]) -> None:
     if e.parse_error:
         return
     rel = e.rel
+    if not ledger.is_event_card(e):
+        # 事件字段是流水的一部分，流水只收 `type: event` 的卡。以前只看有没有
+        # event_kind：一张 location 卡带上事件字段就被当成完整事件参与派生状态，
+        # 却永远不在 entries/events/ 里。类型是作者声明的，判定器不替它改。
+        if "event_kind" in e.meta or any(leg in e.meta for leg in ledger.LEG_FIELDS):
+            findings.append(Finding(
+                "CA109", "error", rel,
+                f"事件字段只能出现在 `type: event` 的卡上（本卡 type={e.meta.get('type')!r}）；"
+                f"要记账请建 event 卡，史料卡上不要放 event_kind/腿"))
+        return
     v = ledger.event_view(e)
     for msg in v.shape_errors:
         findings.append(Finding("CA109", "error", rel, msg))
@@ -571,14 +582,14 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
 
     # CA701: 事件 A depends_on 事件 B，两边都有 when_sort 时要求 B ≤ A
     for e in index.values():
-        if e.parse_error:
+        if not ledger.is_event_card(e):
             continue
         va = ledger.event_view(e)
         if va.when_sort is None or not is_event(va):
             continue
         for d in e.edges_of("depends_on"):
             b = index.get(d.target)
-            if b is None or b.parse_error:
+            if b is None or not ledger.is_event_card(b):
                 continue  # 悬空由 CA401 报
             vb = ledger.event_view(b)
             if vb.when_sort is None or not is_event(vb):
@@ -610,21 +621,41 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
     #  多值受方 = 归属未定序：最终那笔的 to 列表里任一受方的断言都放行，
     #  更早一笔的受方已被转手，不放行）
     states = ledger.derive_state(index)
-    final_to: dict[str, list[str]] = {}
+    # 每个客体的「最终一刻」：when_sort 最大的那批 transfer/grant。同刻多笔的先后
+    # 没有定义（ordered_events 的 id 序只用于输出稳定），所以不许拿 id 序挑一个赢家：
+    # 受方集合不同 = 归属未定序，报 warning；相同才继续对账。
+    final_acts: dict[str, tuple[float, list[tuple[Entry, list[str]]]]] = {}
     for e, v in events:
-        if v.kind in ("transfer", "grant"):
-            for obj in v.legs.get("object", []):
-                if v.legs.get("to"):
-                    final_to[obj] = v.legs["to"]
+        if v.kind not in ("transfer", "grant"):
+            continue
+        if not v.legs.get("to"):
+            continue
+        for obj in v.legs.get("object", []):
+            per_obj = final_acts.setdefault(obj, (v.when_sort, []))
+            if v.when_sort > per_obj[0]:
+                final_acts[obj] = (v.when_sort, [(e, v.legs["to"])])
+            elif v.when_sort == per_obj[0]:
+                per_obj[1].append((e, v.legs["to"]))
     for e in index.values():
         if e.parse_error or not e.id:
             continue
         for r in e.edges_of("owns"):
-            if r.target not in final_to:
+            if r.target not in final_acts:
                 continue
+            when, acts = final_acts[r.target]
+            recipient_sets = {frozenset(to) for _ev, to in acts}
+            if len(recipient_sets) > 1:
+                peers = "、".join(sorted(ev.id or ev.rel for ev, _to in acts))
+                findings.append(Finding(
+                    "CA704", "warning", e.rel,
+                    f"归属未定序：`{r.target}` 在 when_sort={when:g} 同时有 "
+                    f"{len(acts)} 笔转让（{peers}），受方集合不同——先按 id 序挑一个"
+                    f"只是展示，断言无法对账；请拆开 when_sort 或让受方一致"))
+                continue
+            recipients = set().union(*recipient_sets)
             st = states.get(r.target)
             if (st is not None and st.holder is not None and st.holder != e.id
-                    and e.id not in final_to[r.target]):
+                    and e.id not in recipients):
                 findings.append(Finding(
                     "CA704", "error", e.rel,
                     f"结论与流水打架：卡上断言 owns `{r.target}`，但流水推出的"
@@ -637,8 +668,8 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
             for obj in v.legs.get("object", []):
                 deaths[obj] = min(deaths.get(obj, v.when_sort), v.when_sort)
     for e, v in events:
-        if v.kind == "death":
-            continue
+        # 以前这里跳过所有 death 事件：一笔「死人主持的死亡」永远不报。
+        # 协议没有这条豁免——death 的 by 里若有人严格更早死亡，同样是 CA705。
         for actor in v.legs.get("by", []):
             if actor in deaths and deaths[actor] < v.when_sort:
                 findings.append(Finding(
@@ -689,12 +720,16 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
 
     # CA709: 手写 custody_of 断言与 custody 流水推出的最终保管人打架
     # （CA704 的保管版；多值受方同口径：最终那笔 to 列表里任一受方放行）
-    custody_to: dict[str, list[str]] = {}
+    custody_final: dict[str, tuple[float, list[tuple[Entry, list[str]]]]] = {}
     for e, v in events:
-        if v.kind == "custody":
-            for obj in v.legs.get("object", []):
-                if v.legs.get("to"):
-                    custody_to[obj] = v.legs["to"]
+        if v.kind != "custody" or not v.legs.get("to"):
+            continue
+        for obj in v.legs.get("object", []):
+            per_obj = custody_final.setdefault(obj, (v.when_sort, []))
+            if v.when_sort > per_obj[0]:
+                custody_final[obj] = (v.when_sort, [(e, v.legs["to"])])
+            elif v.when_sort == per_obj[0]:
+                per_obj[1].append((e, v.legs["to"]))
     # CA710 的原料也一并收集：custody_of 断言按客体归拢
     custody_claims: dict[str, list[Entry]] = {}
     for e in index.values():
@@ -702,11 +737,22 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
             continue
         for obj in ledger.custody_assertions(e):
             custody_claims.setdefault(obj, []).append(e)
-            if obj not in custody_to:
+            if obj not in custody_final:
                 continue
+            when, acts = custody_final[obj]
+            recipient_sets = {frozenset(to) for _ev, to in acts}
+            if len(recipient_sets) > 1:
+                peers = "、".join(sorted(ev.id or ev.rel for ev, _to in acts))
+                findings.append(Finding(
+                    "CA709", "warning", e.rel,
+                    f"归属未定序：`{obj}` 在 when_sort={when:g} 同时有 "
+                    f"{len(acts)} 笔 custody（{peers}），保管人集合不同——"
+                    f"断言无法对账；请拆开 when_sort 或让保管人一致"))
+                continue
+            recipients = set().union(*recipient_sets)
             st = states.get(obj)
             if (st is not None and st.custodian is not None
-                    and st.custodian != e.id and e.id not in custody_to[obj]):
+                    and st.custodian != e.id and e.id not in recipients):
                 findings.append(Finding(
                     "CA709", "error", e.rel,
                     f"结论与流水打架：卡上断言 custody_of `{obj}`，但流水推出的"
@@ -729,13 +775,29 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
     # CA712: member_of 断言与流水打架——断言在，但该人对那个组织的最后一个
     # 流水动作是 leave。组织没有流水时断言即全部历史，不判（D3 同款豁免）。
     # member_of 多值合法：一个人在多个组织不算互搏，所以只有对账没有互搏规则。
-    membership = ledger.derive_membership(index)
+    # 同刻 join 与 leave 并存时没有「最后一个动作」：以前按 id 序挑一个，改个文件名
+    # 就能让结论翻转。这里 fail-open（不报），与 CA705 的「同刻不算」同一口径。
+    membership_acts: dict[tuple[str, str], list[tuple[float, str]]] = {}
+    for _e, v in events:
+        if v.kind not in ("join", "leave"):
+            continue
+        orgs = v.legs.get("to" if v.kind == "join" else "from", [])
+        for person in v.legs.get("by", []):
+            for org in orgs:
+                membership_acts.setdefault((person, org), []).append(
+                    (v.when_sort, v.kind))
     for e in index.values():
         if e.parse_error or not e.id:
             continue
         for org in ledger.member_of_assertions(e):
-            last_action = membership.get(e.id, {}).get(org)
-            if last_action == "leave":
+            acts = membership_acts.get((e.id, org))
+            if not acts:
+                continue
+            last_when = max(when for when, _kind in acts)
+            last_kinds = {kind for when, kind in acts if when == last_when}
+            if len(last_kinds) > 1:
+                continue  # 同刻 join/leave 并存：未定序，fail-open
+            if "leave" in last_kinds:
                 findings.append(Finding(
                     "CA712", "error", e.rel,
                     f"结论与流水打架：卡上断言 member_of `{org}`，但流水里本条目"
@@ -746,7 +808,7 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
     # 「未定」对称哲学：上一笔 to 多值 → 位置未知 → 跳过校验，直到单值 to 重新锚定；
     # from 多值 = 没定，当前位置在列表里就放行；缺 from / 缺 when_sort 不查。
     UNDETERMINED = object()  # 位置「未定」：与 None（还没出现过）区分——未定跳过校验
-    position: dict[str, object] = {}
+    position: dict[str, tuple[object, float]] = {}  # 位置 + 它出自哪个 when_sort
     for e, v in events:
         if v.kind != "move":
             continue
@@ -756,18 +818,22 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                              or (end is not None and v.when_sort > end))
             to = v.legs.get("to", [])
             frm = v.legs.get("from", [])
-            if in_window:
-                cur = position.get(obj)
-                if (frm and cur is not None and cur is not UNDETERMINED
-                        and cur not in frm):
-                    findings.append(Finding(
-                        "CA711", "warning", e.rel,
-                        f"轨迹断裂：`{obj}` 上一笔账落在 `{cur}`，本笔却声称从 "
-                        f"`{frm[0]}` 出发（不写 from 就不查；顺路中转请拆成两笔 move）"))
-            if len(to) == 1:
-                position[obj] = to[0]
-            elif len(to) > 1:
-                position[obj] = UNDETERMINED
+            cur = position.get(obj)
+            if (in_window and frm and cur is not None
+                    and cur[0] is not UNDETERMINED
+                    and cur[1] < v.when_sort  # 同刻的 move 彼此不构成「上一笔」
+                    and cur[0] not in frm):
+                findings.append(Finding(
+                    "CA711", "warning", e.rel,
+                    f"轨迹断裂：`{obj}` 上一笔账落在 `{cur[0]}`（when_sort={cur[1]:g}），"
+                    f"本笔却声称从 `{frm[0]}` 出发（不写 from 就不查；同刻 move 不排序）"))
+            # 同刻多笔 move 只在结论一致时保留位置；不一致 = 位置未定。
+            if to:
+                loc = to[0] if len(to) == 1 else UNDETERMINED
+                if cur is not None and cur[1] == v.when_sort:
+                    if cur[0] is UNDETERMINED or loc is UNDETERMINED or cur[0] != loc:
+                        loc = UNDETERMINED
+                position[obj] = (loc, v.when_sort)
             # to 缺失/为空：CA702 已报，位置不动
 
 
@@ -1039,8 +1105,7 @@ def export_world(root: Path, packs=(), impact=(), extra_known=frozenset(),
     导出不是判定：这里绝不改退出码，也不吞掉 findings——它们原样进数据集。
     """
     all_entries, index, findings, reports = run(root, dup_threshold, list(impact),
-                                                extra_known=extra_known)
-    _apply_packs(packs, index, findings)
+                                                extra_known=extra_known, packs=packs)
     findings.sort(key=lambda f: (LEVEL_ORDER.get(f.level, 3), f.rule, f.entry))
     return build_export(all_entries, findings, reports, root, index=index)
 
@@ -1075,7 +1140,12 @@ def _apply_packs(packs, index: dict, findings: list[Finding]) -> None:
 
 
 def run(root: Path, dup_threshold: float, impact_ids: list[str],
-        extra_known: frozenset[str] = frozenset()):
+        extra_known: frozenset[str] = frozenset(), packs=()):
+    """完整判定：结构 → 内容 → 引用 → 链 → 事件 → 流水 → 重复 → 扩展包。
+
+    `packs` 必须与读路径（export_world / CLI）同口径：以前只有 CLI 和导出应用
+    扩展包，serve 的写后审计不应用——同一个世界「读时合法、写时非法」。
+    """
     all_entries, index, issues = store.collect(root)
     # 存储层报的形状问题（今天只有 id 重复 CA114）升级成报告项
     findings = [Finding(i.rule, "error", i.rel, i.message) for i in issues]
@@ -1090,6 +1160,7 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
         check_events(e, findings)
     check_ledger(index, findings)
     check_duplicates(index, dup_threshold, findings)
+    _apply_packs(packs, index, findings)
 
     reports = impact_report(index, impact_ids) if impact_ids else []
     return all_entries, index, findings, reports
@@ -1114,6 +1185,19 @@ def _event_fields_from_args(a) -> dict | None:
     return fields or None
 
 
+def _event_kind(value: str) -> str:
+    """argparse 的 event_kind 校验：词表值或 x- 实验值（CA102 的实验泄压阀）。
+
+    以前 `choices=EVENT_KINDS` 把实验值挡在官方入口外：协议允许记 x- 并降 info，
+    但 CLI/HTTP 都说「非法」，作者只能手写卡。
+    """
+    if value in ledger.EVENT_KINDS or ledger.is_experimental_kind(value):
+        return value
+    raise argparse.ArgumentTypeError(
+        f"event_kind={value!r} 非法，须为 {sorted(ledger.EVENT_KINDS)} "
+        f"或 x- 开头的实验值")
+
+
 def main() -> int:
     # 人类工作流子命令：init / new / link / export / ledger / event；其余按审计（check）处理
     if len(sys.argv) > 1 and sys.argv[1] in ("init", "new", "link", "export", "ledger", "event"):
@@ -1133,7 +1217,7 @@ def main() -> int:
             sp.add_argument("--layer", choices=LAYERS)
         if cmd == "event":
             # 一行记账：canonlint event transfer --by a --to b --object c
-            sp.add_argument("kind", choices=sorted(ledger.EVENT_KINDS))
+            sp.add_argument("kind", type=_event_kind)
             sp.add_argument("title", nargs="?")
             sp.add_argument("--id")
             sp.add_argument("--author")
@@ -1141,7 +1225,7 @@ def main() -> int:
             # 事件流水与断言字段（白名单 = store 的 EVENT_FIELDS；store 端再挡一道）
             sp.add_argument("--when")
             sp.add_argument("--when-sort", type=float)
-            sp.add_argument("--event-kind", choices=sorted(ledger.EVENT_KINDS))
+            sp.add_argument("--event-kind", type=_event_kind)
             sp.add_argument("--from", dest="from_", nargs="+")
             for leg in ("by", "to", "object", "result", "owns",
                         "custody-of", "member-of"):
@@ -1258,9 +1342,7 @@ def main() -> int:
         return 2
 
     all_entries, index, findings, reports = run(root, args.dup_threshold, args.impact,
-                                                extra_known=extra_known)
-
-    _apply_packs(packs, index, findings)
+                                                extra_known=extra_known, packs=packs)
 
     findings.sort(key=lambda f: (LEVEL_ORDER.get(f.level, 3), f.rule, f.entry))
     errors = [f for f in findings if f.level == "error"]

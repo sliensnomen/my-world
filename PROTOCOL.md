@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**39 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.7"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.8"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -71,6 +71,14 @@
 **v1.7 修订记录（2026-10-22，transform 转正）：**
 
 26. **`transform` 进词表 + `result` 腿：存在窗口在转化处交接**。案例是寒冰熔成守誓者与寡妇之嚎（`ev-ice-reforged`）：`object` 是旧身份（窗口止于这笔），`result` 是新身份列表（各自的窗口始于这笔，多值 = 一生多）。CA708 在 1.4 记下的「隐含假设」就此兑现：客体 id 不再假设全程不变，转化事件本身即两个 id 各自的边界。**持有者与位置不自动继承**——新身份的账由作者另写事件补记，v0 不猜。
+
+**v1.8 修订记录（2026-10-22，评审收口：同刻事件不排序、事件卡类型门禁、写入口禁交互）：**
+
+27. **同刻事件没有先后（判定语义）**。`when_sort` 相等即同刻；流水按 `(when_sort, id)` 排序只是**输出稳定键**，不是时序。此前 CA704/CA711 隐式拿 id 字典序当「更晚」，于是把两笔同刻事件改名就能翻转 error——同一份历史，判定结论取决于文件名。现在：CA701 明写「id 序不是时序」；CA704/CA709 在同刻有多笔且受方集合不同时报 **warning**「归属未定序」，不许挑一笔当最终持有者；CA711 同刻先合并位置（一致才确定），只有严格更晚才比对；CA712 同刻 join 与 leave 并存时 fail-open。这是收紧判据、同时放松「必须能被 id 序判定」的旧隐含约定，按 §9.1 升 minor。
+28. **事件字段只许出现在 `type: event` 的卡上**。以前只看「有没有 `event_kind`」：一张 `type: location` 的卡带上事件字段就被当成一笔完整事件、进派生状态，却永远不在 `entries/events/` 里。现在非事件卡上的事件字段由 **CA109** 报，`ordered_events` 只收 `type: event`。这是收紧，按 §9.1 升 minor。
+29. **CA705 覆盖 `death` 事件自身**。旧实现为避开「自己 by 自己」而跳过全部 `death` 事件的 `by` 检查，结果「死人在更晚的另一笔 death 里当施动者」完全不报；判定改为只跳过「自己 by 自己」这一种自环（同一事件内），严格更早的 death 对后续任何事件都生效。这是收紧，按 §9.1 升 minor。
+30. **写入口不再把交互问答带进 HTTP**（实现修复，不改判定）：`store.cmd_new` 新增 `interactive`（默认仍按 TTY 猜，CLI 行为不变），serve 的写路径固定 `interactive=False`；HTTP 处理器里任何异常都变成 JSON 500，不再断连。写卡回滚改成「只删本次请求建的文件」+ 原子恢复字节；写请求串行化，避免并发回滚互删新卡。**跨源写**：`text/plain` 的 simple POST 不触发预检，光靠 CORS 响应头挡不住，所以服务端要求同源 `Origin` + `application/json`；`OPTIONS` 在可写模式下列出 `POST` 并回显 Origin。
+31. **写后审计与读路径同口径**：`run()` 新增 `packs` 参数并统一应用扩展包，`serve` 的 `_audit` 传 `extra_known` 与 `packs`——`--writable --pack econ` 下写卡/治理不再被自己的审计判 CA106。CLI 的 `event` 子命令与 `--event-kind` 接受 `x-` 实验值（CA102 早就允许，入口却用 `choices` 拦死）。
 
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
@@ -178,7 +186,7 @@ ai_assisted: false
 | `ai_assisted` | 必须 | bool | 见 §7 AI 条款 |
 | `when` | 可选 | string | 故事内时间，自由文本（协议 1.2 事件流水） |
 | `when_sort` | 可选 | number | 时序排序键，只用于比较先后；不给就不参与时序判定（fail-open） |
-| `event_kind` | 可选 | enum | 八值：`transfer`/`custody`/`move`/`create`/`destroy`/`grant`/`birth`/`death`；`x-` 前缀实验值合法（CA102 info）。给了它才是「完整事件」，才进流水判定 |
+| `event_kind` | 可选 | enum | 十一值：`transfer`/`custody`/`move`/`create`/`destroy`/`grant`/`birth`/`death`/`join`/`leave`/`transform`；`x-` 前缀实验值合法（CA102 info）。给了它才是「完整事件」，才进流水判定；**事件字段只许出现在 `type: event` 的卡上**（协议 1.8，否则 CA109） |
 | `by` | 可选 | id 列表 | 事件腿：施动者 |
 | `to` | 可选 | id 列表 | 事件腿：受方（转移的接手人、移动的目的地） |
 | `object` | 可选 | id 列表 | 事件腿：客体（被转移/移动/造/毁的那个） |
@@ -189,7 +197,8 @@ ai_assisted: false
 
 **扩展字段：** 实现可以添加任何 `x-` 前缀的自定义字段；不带前缀的未定义字段**必须**被审计器拒绝（CA106），防止私有字段渗透进协议。
 
-上表 32 个字段与 `world.schema.json` 的 `properties` 一一对应；其中 `relations` 是规范形，`canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`/`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 是兼容别名——两种写法进同一张边表再判定（§5.4）。`when`/`when_sort`/`event_kind`/`by`/`to`/`object` 六个是协议 1.2 的事件流水字段：契约只约束形状，词表、必填腿、时序与账平是判定层的事（§6.3 CA7xx）。
+上表 32 个字段与 `world.schema.json` 的 `properties` 一一对应；其中 `relations` 是规范形，`canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`/`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 是兼容别名——两种写法进同一张边表再判定（§5.4）。`when`/`when_sort`/`event_kind` 与腿 `by`/`to`/`object`/`from`/`result` 是协议 1.2–1.7 的事件流水字段；
+`custody_of`（1.4）与 `member_of`（1.6）是断言字段，不是事件腿。契约只约束形状，词表、必填腿、时序与账平是判定层的事（§6.3 CA7xx）。
 
 ### 2.3 引用语法
 
@@ -455,7 +464,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA106 | error | 存在不带 `x-` 前缀的未定义字段 |
 | CA107 | error | `depends_on` 对象违反 §5.4 schema（缺字段/多非 x- 字段） |
 | CA108 | error/info | `depends_on[].kind` 在初始集外：无 `x-` 前缀 = error；有 `x-` 前缀 = info（案例收集） |
-| CA109 | error | 字段类型/格式非法：`canon_refs` 非列表或元素非字符串、`load_bearing`/`ai_assisted`/`critical` 非 bool、id 引用不符合 `^[a-z0-9-]+$` 格式（`world:id` 形式除外，归 CA401）等 |
+| CA109 | error | 字段类型/格式非法：`canon_refs` 非列表或元素非字符串、`load_bearing`/`ai_assisted`/`critical` 非 bool、id 引用不符合 `^[a-z0-9-]+$` 格式（`world:id` 形式除外，归 CA401）等；事件字段出现在非 `type: event` 的卡上（协议 1.8）也归本条 |
 | CA110 | warning | 关系名拼写近失：规范形 `relations[].type` 与某个规范关系名的编辑距离 ≤1（如 `depends-onn`、`depend_on`、`extractss`）。距离在**去掉连字符/下划线之后**计算——不这么做，量的是分隔符风格而不是「打错没有」，协议自己举的例子 `depends-onn` 就会落在阈值之外、整条边静默。工具**真的把这条边按规范名建进图**（CA401/CA501/CA504 照判），本条只提示疑似拼写错误；距离 ≥2 的名字原样保留、不提示（自由档，见 §5.4） |
 | CA111 | warning | 旧写法迁移提示：某个关系名拆分前用「旧关系名 + 某个注解值」表达（见契约 `x-relation-vocabulary.deprecations`）。工具**已按新关系名判定**（结论与迁移后逐条相同），本条只提示作者改写，例如把 `depends_on` 里 `kind: legitimacy` 的那一条改写成关系名 `derives_legitimacy_from`。这是唯一允许的迁移提示；迁移完成后本条不再触发 |
 | CA112 | error | YAML frontmatter 里有**重复键**。PyYAML 是 last-wins 且一声不响：`depends_on` 写两遍时，写在前面的那一条边在解析结果里彻底消失，而所有规则都看不见它——「写了两遍」与「只写一遍」在工具眼里完全一样。本条规定必须报出来；写入命令（`link`）遇到重复键直接拒绝改写 |
@@ -473,18 +482,18 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA503 | warning | economy/fiscal/military/political 层承重墙条目无任何**物质族** `critical: true` 依赖（ideology 层豁免） |
 | CA505 | warning | 仓库级：存在 military/political 层承重墙条目，但全库没有任何 `layer: fiscal` 的条目（财政维度缺失提示；条目不须为承重墙） |
 | CA504 | report | 变更/降级影响报告：输出变更条目的下游传递闭包（**不含主体自身**——`--impact x` 问的是「谁依赖 x」，环由 CA502 单独报） |
-| CA701 | warning | 时序倒流：事件 A 的 `depends_on` 里有事件 B，两边都有 `when_sort` 且 B > A（要求 B ≤ A，相等合法）。任一边缺 `when_sort` 即豁免 |
+| CA701 | warning | 时序倒流：事件 A 的 `depends_on` 里有事件 B，两边都有 `when_sort` 且 B > A（要求 B ≤ A，相等合法）。任一边缺 `when_sort` 即豁免；非 `type: event` 的卡不参与。**`when_sort` 相等即同刻，同刻没有先后**——流水里的 id 序只是输出稳定键，不是时序（协议 1.8） |
 | CA702 | error | 账不平：完整事件的必填腿缺失或为空（`transfer`/`custody`/`grant` 要 `by`+`to`+`object`，`move` 要 `object`+`to`，其余要 `object`）。腿形状写坏归 CA109，不双报 |
 | CA703 | warning | 无源之财：`transfer`/`grant` 的客体在它之前没有任何持有者（既无 `owns` 断言，也无更早的 `transfer`/`grant` 指向它）。事件自身缺 `when_sort` 即豁免。`create` 不算持有者来源：它的腿表只有 `object`，事件里没记「谁造的」，推不出持有者 |
-| CA704 | error | 结论与流水打架：手写 `owns` 断言与流水推出的最终持有者不一致（只对有 `transfer`/`grant` 流水的客体比对；无流水的客体断言即全部历史）。**多值受方 = 归属未定序**：最终那笔的 `to` 多于一个 id 时，派生状态的报告取第一个，CA704 对列表里任一受方的断言都放行；更早一笔的受方已被转手，不放行 |
-| CA705 | warning | 死人做活事：事件的 `by` 里有人在**严格更早**（`when_sort` 较小）的事件里已 `death`；同刻不算 |
+| CA704 | error/warning | 结论与流水打架：手写 `owns` 断言与流水推出的最终持有者不一致（只对有 `transfer`/`grant` 流水的客体比对；无流水的客体断言即全部历史）。**多值受方 = 归属未定序**：最终那笔的 `to` 多于一个 id 时，派生状态的报告取第一个，CA704 对列表里任一受方的断言都放行；更早一笔的受方已被转手，不放行。**同刻多笔转让**（协议 1.8）：同一客体在最大 `when_sort` 上有多笔转让且受方集合不同 → **warning**「归属未定序」，不许按 id 序挑一笔当最终持有者；受方集合一致则按一致集合对账，仍是 error |
+| CA705 | warning | 死人做活事：事件的 `by` 里有人在**严格更早**（`when_sort` 较小）的事件里已 `death`；同刻不算。**`death` 事件自身也查**（协议 1.8）：死者不能再当任何事件的施动者，包括另一笔 `death` |
 | CA706 | warning | 半截事件：`when` 与 `event_kind` 只给了一个。两个都给才是完整事件，都不给就是普通史料卡（协议 1.1 的世界在 1.2 下不红） |
 | CA707 | warning | `owns` 断言互搏：同一客体被多张卡断言持有。派生状态按 id 序取第一个只是「报告需要一个确定答案」，不是裁决；请统一到一张卡上断言，或改用流水表达流转。与有无流水无关 |
 | CA708 | warning | 不存在的东西在动弹：客体的事件落在它自己的存在窗口外——`create`/`birth` 开窗、`death`/`destroy` 关窗、`transform` 关旧窗开新窗（取最早的边界；缺 `when_sort` 的边界不产生窗口）。端点事件自身豁免。CA705 管 `by` 腿，本条管 `object` 腿 |
-| CA709 | error | 结论与流水打架（保管版）：手写 `custody_of` 断言与 custody 流水推出的最终保管人不一致。custody 不改变持有者、只改保管；多值受方与 CA704 同口径（最终那笔 `to` 列表里任一受方放行） |
+| CA709 | error/warning | 结论与流水打架（保管版）：手写 `custody_of` 断言与 custody 流水推出的最终保管人不一致。custody 不改变持有者、只改保管；多值受方与 CA704 同口径（最终那笔 `to` 列表里任一受方放行）。同刻多笔 custody 且受方集合不同 → warning「未定序」（协议 1.8，与 CA704 对称） |
 | CA710 | warning | `custody_of` 断言互搏：同一客体被多张卡断言保管（CA707 的保管版） |
-| CA711 | warning | 轨迹断裂：`move` 的 `from` 对不上链上当前位置（上一笔 `move` 的 `to`）。只查存在窗口内的 `move`（窗外归 CA708，不双报）；上一笔 `to` 多值则位置「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时当前位置在列表里即放行；缺 `from`/`when_sort` 不查 |
-| CA712 | error | 结论与流水打架（成员版）：手写 `member_of` 断言，但该人流水里对那个组织的最后一个动作是 `leave`——要么补一笔 `join`，要么撤断言。组织没有流水时断言即全部历史，不判。`member_of` 多值合法（一个人可以在多个组织），所以只有对账、没有互搏规则 |
+| CA711 | warning | 轨迹断裂：`move` 的 `from` 对不上链上当前位置（上一笔 `move` 的 `to`）。只查存在窗口内的 `move`（窗外归 CA708，不双报）；上一笔 `to` 多值则位置「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时当前位置在列表里即放行；缺 `from`/`when_sort` 不查。**同刻多笔 `move`**（协议 1.8）之间没有先后：同刻先合并位置（目的地一致才确定，不一致即「未定」），只有**严格更晚**的 `move` 才与它比对 |
+| CA712 | error | 结论与流水打架（成员版）：手写 `member_of` 断言，但该人流水里对那个组织的最后一个动作是 `leave`——要么补一笔 `join`，要么撤断言。组织没有流水时断言即全部历史，不判。`member_of` 多值合法（一个人可以在多个组织），所以只有对账、没有互搏规则。**同刻 join 与 leave 并存**时最后动作未定序 → fail-open，不报（协议 1.8） |
 
 **无传递违规原则：** CA402/CA404/CA405 只判**直接边**的违规。A 引用 B、B 违规并不使 A 连带违规；"连带影响"是 CA504 报告的职责，不是 error 的传染。
 
@@ -514,7 +523,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.7",
+  "protocol_version": "1.8",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",
