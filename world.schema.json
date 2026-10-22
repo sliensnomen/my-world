@@ -1,10 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/sliensnomen/my-world/main/world.schema.json",
-  "title": "世界文件契约 v0.4",
+  "title": "世界文件契约 v0.5",
   "description": "一个「世界」由若干条目文件组成（当前原生位置是 entries/<type>/<id>.md，classlint 用 codex/<id>.md）。每个条目 = YAML frontmatter + 正文；本文件只约束 frontmatter。契约只描述形状（存得下什么），不描述判断（什么算对）——type 的五值表、layer 的八层链、kind 的初始集都是「严格判定器」的判据，不是存储的门槛。散文会撒谎，这个文件不会：tests/test_schema.py 拿真实语料验证它，并把故意写坏的样本判红。",
 
-  "x-contract-version": "0.4",
+  "x-contract-version": "0.5",
   "x-extension": {
     "prefix": "x-",
     "syntax": "x-<命名空间>-<键名>",
@@ -23,7 +23,7 @@
     "layer": ["geo", "resource", "production", "economy", "fiscal", "military", "political", "ideology"],
     "depends_on.kind": ["resource", "production", "economy", "fiscal", "manpower"],
     "depends_on.kind-exception": "以 x- 开头的实验值合法（CA108 记 info）。它对 CA501/502/503 同样是豁免：实验值不进承重链条判定。",
-    "event_kind": ["birth", "create", "custody", "death", "destroy", "grant", "move", "transfer"],
+    "event_kind": ["birth", "create", "custody", "death", "destroy", "grant", "join", "leave", "move", "transfer"],
     "event_kind-exception": "以 x- 开头的实验值合法（CA102 记 info），与 type/kind 同一套泄压阀（协议 1.2）。实验值的腿表未知，不进 CA702–CA705 判定。",
     "type-exception": "以 x-<命名空间>-<名称> 开头的实验类型合法（CA102 记 info，协议 1.1）。确定普适的类型进入 type 词表是收紧词表的协议变更（§9.1），不能在这里悄悄做。"
   },
@@ -117,6 +117,7 @@
     "object": {"type": "array", "items": {"$ref": "#/$defs/id"}},
     "from": {"type": "array", "items": {"$ref": "#/$defs/id"}},
     "custody_of": {"type": "array", "items": {"$ref": "#/$defs/id"}},
+    "member_of": {"type": "array", "items": {"$ref": "#/$defs/id"}},
 
     "relations": {"type": "array", "items": {"$ref": "#/$defs/relation"}},
 

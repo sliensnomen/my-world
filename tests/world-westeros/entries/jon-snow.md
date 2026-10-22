@@ -6,6 +6,7 @@ author: dataset-v1
 date: 2026-09-23
 status: canon
 load_bearing: false
+member_of: [night-watch-order]
 canon_refs: []
 conflicts_with: []
 depends_on: []

@@ -1499,6 +1499,97 @@ def check_trajectory_break_fires_ca711() -> list[str]:
     return problems
 
 
+def check_join_leave_are_vocabulary_kinds() -> list[str]:
+    """join/leave 转正（协议 1.6）：进 event_kind 词表，腿表参与 CA702。
+
+    人写 by 腿（与 CA705 同一条腿，白拿「死人不能入伙」），组织写
+    to（join）/ from（leave）。不为「组织同意」单独立腿（v0 只记事实侧）。
+    """
+    problems = []
+    cards = {
+        "jon": _card("jon", ""),
+        "watch": _card("watch", ""),
+        "ev-join": _card("ev-join", (
+            "when: 某年\nevent_kind: join\nwhen_sort: 1\n"
+            "by:\n  - jon\nto:\n  - watch\n"
+        )).replace("type: location", "type: event"),
+        # leave 缺 from 腿 → CA702
+        "ev-leave-bad": _card("ev-leave-bad", (
+            "when: 另一年\nevent_kind: leave\nwhen_sort: 2\n"
+            "by:\n  - jon\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-joinleave-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"join/leave 把 traceback 写到了 stderr：\n{err}")
+        if "CA102" in out:
+            problems.append(f"join/leave 已是词表值，不该报 CA102：\n{out}")
+        if not any("[CA702]" in ln and "ev-leave-bad.md" in ln for ln in out.splitlines()):
+            problems.append(f"leave 缺 from 腿没报 CA702：\n{out}")
+    return problems
+
+
+def check_member_of_reconciles_with_ledger() -> list[str]:
+    """member_of 断言 vs 流水（CA712 error）：断言在，但该人流水里对那个组织
+    的最后一个动作是 leave。
+
+    member_of 多值合法（一个人可以同时在多个组织），所以只有对账、
+    没有互搏规则。断言与最终归属一致、或该组织没有流水，都不响。
+    """
+    problems = []
+    # 打架：dan 断言 member_of watch，流水里他后来 leave 了
+    cards = {
+        "dan": _card("dan", "member_of:\n  - watch\n"),
+        "watch": _card("watch", ""),
+        "ev-join": _card("ev-join", (
+            "when: 元年\nevent_kind: join\nwhen_sort: 1\nby:\n  - dan\nto:\n  - watch\n"
+        )).replace("type: location", "type: event"),
+        "ev-leave": _card("ev-leave", (
+            "when: 二年\nevent_kind: leave\nwhen_sort: 2\nby:\n  - dan\nfrom:\n  - watch\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-member-bad-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"member_of 对账把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA712]" in ln and "dan.md" in ln for ln in out.splitlines()):
+            problems.append(f"断言 member_of 但流水里已 leave，没报 CA712：\n{out}")
+    # 一致：断言 = 最终归属（join 之后无 leave）→ 不响
+    cards2 = {
+        "jon": _card("jon", "member_of:\n  - watch\n"),
+        "watch": _card("watch", ""),
+        "ev-join": _card("ev-join", (
+            "when: 元年\nevent_kind: join\nwhen_sort: 1\nby:\n  - jon\nto:\n  - watch\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-member-ok-", cards2)
+    with tmp:
+        code, out, err = _judge(world)
+        if "CA712" in out:
+            problems.append(f"断言与流水一致时不该报 CA712：\n{out}")
+    # 断言的组织没有流水：断言即全部历史，不响（D3 同款豁免）
+    tmp, world = _temp_world("canonlint-member-noflow-", {
+        "jon": _card("jon", "member_of:\n  - watch\n"), "watch": _card("watch", "")})
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA712" in out:
+            problems.append(f"无流水的 member_of 断言不该报 CA712：\n{out}")
+    # 悬空与坏形状：CA401 / CA109（与 custody_of 同口径）
+    tmp, world = _temp_world("canonlint-member-shape-", {
+        "jon": _card("jon", "member_of:\n  - ghost-org\n"),
+        "dan": _card("dan", "member_of: notalist\n")})
+    with tmp:
+        _, out, _ = _judge(world)
+        if "CA401" not in out or "ghost-org" not in out:
+            problems.append(f"member_of 悬空引用没报 CA401：\n{out}")
+        if "CA109" not in out:
+            problems.append(f"member_of 写坏形状没报 CA109：\n{out}")
+    return problems
+
+
 def check_ledger_bad_world_fires_every_rule() -> list[str]:
     """变异验证的骨架：world-ledger-bad 必须真的把 CA7xx 每条至少踩一次。
 
@@ -1510,7 +1601,7 @@ def check_ledger_bad_world_fires_every_rule() -> list[str]:
     if err:
         problems.append(f"world-ledger-bad 把 traceback 写到了 stderr：\n{err}")
     for rule in ("CA701", "CA702", "CA703", "CA704", "CA705", "CA706", "CA708",
-                 "CA709", "CA710", "CA102", "CA401"):
+                 "CA709", "CA710", "CA712", "CA102", "CA401"):
         if f"[{rule}]" not in out:
             problems.append(f"world-ledger-bad 没有触发 {rule}（触发矩阵失效）：\n{out}")
     if code != 1:
@@ -1618,6 +1709,8 @@ def main() -> int:
         ("move 的 from 腿悬空引用报 CA401", check_move_from_leg_is_checked),
         ("custody_of 断言对账 CA709 + 保管互搏 CA710", check_custody_assertions_reconcile_with_ledger),
         ("轨迹断裂报 CA711（未定/多值放行、与 CA708 不双报）", check_trajectory_break_fires_ca711),
+        ("join/leave 进词表、腿表参与 CA702", check_join_leave_are_vocabulary_kinds),
+        ("member_of 断言与流水对账（CA712）+ 悬空/坏形状", check_member_of_reconciles_with_ledger),
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
     ]

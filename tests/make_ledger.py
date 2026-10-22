@@ -119,6 +119,10 @@ BAD = {
     # CA710：两张卡都断言 custody_of orphan-item（保管断言互搏）
     "keeper-c": card("keeper-c", "character", "custody_of:\n  - orphan-item\n"),
     "keeper-d": card("keeper-d", "character", "custody_of:\n  - orphan-item\n"),
+    # CA712：deserter-dan 断言 member_of house-a，但流水里他 10 年 leave 了
+    "deserter-dan": card("deserter-dan", "character", "member_of:\n  - house-a\n"),
+    "ev-dan-leaves": event(
+        "ev-dan-leaves", "leave", 10, "by:\n  - deserter-dan\nfrom:\n  - house-a\n"),
 }
 
 

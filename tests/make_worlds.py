@@ -8,10 +8,11 @@ ROOT = Path(__file__).parent
 
 def fm(id, title, type_, status, layer=None, load_bearing=False,
        canon_refs="[]", conflicts="[]", depends="[]", superseded="null",
-       owns="[]", legitimacy=""):
+       owns="[]", legitimacy="", member_of="[]"):
     lb = "true" if load_bearing else "false"
     layer_line = f"layer: {layer}\n" if layer else ""
     owns_line = f"owns: {owns}\n" if owns != "[]" else ""
+    member_line = f"member_of: {member_of}\n" if member_of != "[]" else ""
     # kind=legitimacy 的依赖走拆分后的关系名 derives_legitimacy_from（无 kind 行）；
     # 全部依赖都是 legitimacy 时 depends_on 行整行消失（与已提交的世界字节一致）
     depends_line = f"depends_on: {depends}\n" if depends is not None else ""
@@ -24,7 +25,7 @@ author: dataset-v1
 date: 2026-09-23
 status: {status}
 load_bearing: {lb}
-{layer_line}{owns_line}canon_refs: {canon_refs}
+{layer_line}{owns_line}{member_line}canon_refs: {canon_refs}
 conflicts_with: {conflicts}
 {depends_line}{legit_line}superseded_by: {superseded}
 ai_assisted: false
@@ -497,7 +498,7 @@ WE["jon-snow"] = ("character", "canon", None, False, """\
 而他的家族在他离开后一路破碎。这条线上每个节点都是 join/leave
 的样本。私生子这个出身，北境没人当面提，但也没人忘；他自己更没忘。
 白灵跟在他脚边，比任何名分都忠实。""",
-"[]", "[]", [])
+"[]", "[]", [], "[]", "[night-watch-order]")
 
 WE["will-deserter"] = ("character", "canon", None, False, """\
 威尔，守夜人游骑兵，《权力的游戏》序章里那个从长城以北逃回来的人。
@@ -532,27 +533,26 @@ WE["widows-wail"] = ("item", "canon", None, False, """\
 挂着它的那面墙，比它见过的战场多。""",
 "[]", "[]", [])
 
-WE["ev-jon-joins"] = evm("ev-jon-joins", "x-wgp-join", "298 AC", 298, """\
+WE["ev-jon-joins"] = evm("ev-jon-joins", "join", "298 AC", 298, """\
 琼恩·雪诺北上长城，在守夜人军团的新兵誓约下披上黑衣。
-这条用实验种类 x-wgp-join 记：现有八种事件类管物（转移、保管、
-移动、生灭），不管'人进组织'。腿的写法也还在试：by 记加入者本人，
-to 记加入的组织——将来转正时 join 的腿表就从这笔账定型。
-加入之后，他名下的账换了算法：家族名分按誓言清零，
-守夜人的口粮与职责开始挂账。（设计注记：这笔账没地方写
-'守夜人同意收他'这一侧——组织的同意在现有腿表里没有位置，
-join 转正前这也是要回答的问题。先记账，后定性。）长城以北的风，
+join 的腿表就是从这笔账定型的：by 记加入者本人，to 记加入的组织
+（人是 by，与 CA705 同一条腿——死人不能入伙；组织的'同意收人'
+一侧没有腿，v0 只记事实侧）。加入之后，他名下的账换了算法：
+家族名分按誓言清零，守夜人的口粮与职责开始挂账。
+（backlog B2 的攒案例事件，协议 1.6 转正——它是 join 这个词进词表
+的理由本身：先有真实的一笔账，后有词表里的一个名字。）长城以北的风，
 从他踏进黑城堡那天起，就是另一本账了。""",
 "by:\n  - jon-snow\nto:\n  - night-watch-order\n")
 
-WE["ev-will-deserts"] = evm("ev-will-deserts", "x-wgp-leave", "297 AC", 297, """\
+WE["ev-will-deserts"] = evm("ev-will-deserts", "leave", "297 AC", 297, """\
 威尔当了四年游骑兵，在长城以北看见了不该存在的东西，转身南逃。
-用 x-wgp-leave 记：by 是离开者，from 是离开的组织——正好用上
-1.4 加的 from 腿。它与 join 不对称的地方值得记下：join 是双向自愿
-（组织收人），leave 可以是单方面的（叛逃不需要守夜人同意）。
-这笔账的结局写在临冬城外：逃兵被处决，寒冰出鞘——'离开'
-这个事件的代价随世界规则而不同，工具只记账，不评价。
-（设计注记：leave 需不需要组织一侧的'确认'腿——是除名还是
-叛逃——这个问题也留给转正那一轮。）""",
+leave 的腿表从这笔定型：by 是离开者，from 是离开的组织。
+它与 join 不对称的地方值得记下：join 是双向自愿（组织收人），
+leave 可以是单方面的（叛逃不需要守夜人同意）。这笔账的结局写在
+临冬城外：逃兵被处决，寒冰出鞘——'离开'这个事件的代价
+随世界规则而不同，工具只记账，不评价。
+（backlog B2 的攒案例事件，协议 1.6 转正——leave 与 join 的
+不对称（单方面 vs 双向）就写在这笔账的注脚里。）""",
 "by:\n  - will-deserter\nfrom:\n  - night-watch-order\n")
 
 WE["ev-ice-reforged"] = evm("ev-ice-reforged", "x-wgp-transform", "301 AC", 301, """\
@@ -576,6 +576,7 @@ def write_world(path: Path, entries: dict) -> None:
             continue
         (type_, status, layer, lb, body, refs, conflicts, deps) = spec[:8]
         owns = spec[8] if len(spec) > 8 else "[]"
+        member_of = spec[9] if len(spec) > 9 else "[]"
         # kind=legitimacy 拆成 derives_legitimacy_from（拆分后的关系名，见协议 §9 修订记录）
         material = [d for d in deps if d[1] != "legitimacy"]
         legit = [d for d in deps if d[1] == "legitimacy"]
@@ -588,7 +589,8 @@ def write_world(path: Path, entries: dict) -> None:
                   canon_refs=refs,
                   conflicts=conflicts if conflicts.startswith("[") or conflicts == "[]"
                   else conflict_list([]),
-                  depends=depends, owns=owns, legitimacy=legitimacy)
+                  depends=depends, owns=owns, legitimacy=legitimacy,
+                  member_of=member_of)
         (path / "entries" / f"{id}.md").write_text(text + body, encoding="utf-8")
 
 

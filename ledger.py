@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 EVENT_KINDS = {"transfer", "custody", "move", "create", "destroy",
-               "grant", "birth", "death"}
+               "grant", "birth", "death", "join", "leave"}
 
 from dataclasses import dataclass  # noqa: E402
 import math  # noqa: E402
@@ -23,6 +23,10 @@ REQUIRED_LEGS: dict[str, tuple[str, ...]] = {
     "destroy": ("object",),
     "birth": ("object",),
     "death": ("object",),
+    # join/leave（协议 1.6）：人写 by（白拿 CA705 的死人检查），组织写 to/from。
+    # 不为「组织同意」单独立腿——v0 只记事实侧（人进了/出了）
+    "join": ("by", "to"),
+    "leave": ("by", "from"),
 }
 LEG_FIELDS = ("by", "to", "object", "from")
 
@@ -135,6 +139,33 @@ def custody_assertions(e: Entry) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [x for x in raw if isinstance(x, str)]
+
+
+def member_of_assertions(e: Entry) -> list[str]:
+    """`member_of` 断言里形状合法的 id（同 custody_assertions 的口径）。
+
+    多值合法：一个人可以同时在多个组织，所以成员关系没有互搏规则。
+    """
+    raw = e.meta.get("member_of")
+    if not isinstance(raw, list):
+        return []
+    return [x for x in raw if isinstance(x, str)]
+
+
+def derive_membership(index: dict[str, Entry]) -> dict[str, dict[str, str]]:
+    """{人: {组织: "join"|"leave"}}——每个人对每个组织、流水里的最后一个动作。
+
+    只读有 when_sort 的完整事件（fail-open）；同刻两笔按 id 序，确定。
+    """
+    last: dict[str, dict[str, str]] = {}
+    for e, v in ordered_events(index):
+        if v.kind not in ("join", "leave"):
+            continue
+        orgs = v.legs.get("to" if v.kind == "join" else "from", [])
+        for person in v.legs.get("by", []):
+            for org in orgs:
+                last.setdefault(person, {})[org] = v.kind
+    return last
 
 
 def existence_windows(index: dict[str, Entry]) -> dict[str, tuple[float | None, float | None]]:

@@ -35,8 +35,8 @@ import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 
-PROTOCOL_VERSION = "1.5"   # 1.5：CA711 轨迹断裂（move 的 from 链校验）（新增，按 §9.1 升 minor）
-CONTRACT_VERSION = "0.4"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
+PROTOCOL_VERSION = "1.6"   # 1.6：join/leave 转正 + member_of 断言与 CA712 对账（新增，按 §9.1 升 minor）
+CONTRACT_VERSION = "0.5"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
 
@@ -418,21 +418,23 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
             for ref_id in ledger.event_view(e).legs.get(leg, []):
                 check_target(ref_id, leg)
 
-        # custody_of 保管断言（协议 1.4）：形状（CA109）与存在性（CA401）。
-        # 它是断言不是事件腿，所以不进 ledger.LEG_FIELDS，但检查口径与腿相同
-        raw_custody = e.meta.get("custody_of")
-        if raw_custody is not None:
-            if not isinstance(raw_custody, list):
+        # custody_of / member_of 断言（协议 1.4/1.6）：形状（CA109）与存在性（CA401）。
+        # 它们是断言不是事件腿，所以不进 ledger.LEG_FIELDS，但检查口径与腿相同
+        for assertion in ("custody_of", "member_of"):
+            raw_assertion = e.meta.get(assertion)
+            if raw_assertion is None:
+                continue
+            if not isinstance(raw_assertion, list):
                 findings.append(Finding("CA109", "error", rel,
-                                        "custody_of 必须是 id 列表"))
-            else:
-                for i, item in enumerate(raw_custody):
-                    if not isinstance(item, str):
-                        findings.append(Finding(
-                            "CA109", "error", rel,
-                            f"custody_of[{i}] 必须是 id 字符串，得到 {item!r}"))
-                    else:
-                        check_target(item, "custody_of")
+                                        f"{assertion} 必须是 id 列表"))
+                continue
+            for i, item in enumerate(raw_assertion):
+                if not isinstance(item, str):
+                    findings.append(Finding(
+                        "CA109", "error", rel,
+                        f"{assertion}[{i}] 必须是 id 字符串，得到 {item!r}"))
+                else:
+                    check_target(item, assertion)
 
     # CA405: archived、被 canon_refs 引用、且**没有承接者**（字段缺 或 显式 null）
     # 报在目标侧，定位到处置责任人。`superseded_by: null` 是 CA101 允许的写法，
@@ -724,6 +726,21 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                 f"custody_of 断言互搏：`{obj}` 同时被 `{first}` 与本卡断言保管"
                 f"（派生状态按 id 序取 `{first}`；请统一到一张卡上断言，或用 custody 流水表达移交）"))
 
+    # CA712: member_of 断言与流水打架——断言在，但该人对那个组织的最后一个
+    # 流水动作是 leave。组织没有流水时断言即全部历史，不判（D3 同款豁免）。
+    # member_of 多值合法：一个人在多个组织不算互搏，所以只有对账没有互搏规则。
+    membership = ledger.derive_membership(index)
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        for org in ledger.member_of_assertions(e):
+            last_action = membership.get(e.id, {}).get(org)
+            if last_action == "leave":
+                findings.append(Finding(
+                    "CA712", "error", e.rel,
+                    f"结论与流水打架：卡上断言 member_of `{org}`，但流水里本条目"
+                    f"对该组织的最后一个动作是 leave——要么补一笔 join，要么把断言撤了"))
+
     # CA711: 轨迹断裂——move 的 from 对不上链上的当前位置。
     # 只走存在窗口内的 move（窗外归 CA708，姊妹规则不双报）。
     # 「未定」对称哲学：上一笔 to 多值 → 位置未知 → 跳过校验，直到单值 to 重新锚定；
@@ -855,6 +872,18 @@ def ledger_report(root: Path) -> int:
         print("(账平)")
     for f in unbalanced:
         print(f"[{f.rule}] {f.entry}: {f.message}")
+    membership = ledger.derive_membership(index)
+    print("\n== 组织归属（join/leave 流水）==")
+    if not membership:
+        print("(没有 join/leave 流水)")
+    for person in sorted(membership):
+        acts = membership[person]
+        joined = sorted(o for o, a in acts.items() if a == "join")
+        left = sorted(o for o, a in acts.items() if a == "leave")
+        line = f"{person}: " + ("在 " + "、".join(joined) if joined else "无在册组织")
+        if left:
+            line += "（已离开 " + "、".join(left) + "）"
+        print(line)
     return 0
 
 

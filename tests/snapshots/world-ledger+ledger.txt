@@ -12,3 +12,6 @@ watch-command: 持有者 squire-bob（来自 `ev-command-granted`） | 保管 - 
 
 == 没算平的 ==
 (账平)
+
+== 组织归属（join/leave 流水）==
+(没有 join/leave 流水)
