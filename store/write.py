@@ -35,7 +35,7 @@ from pathlib import Path
 import yaml
 
 from .layout import TYPE_DIRS, collect
-from .model import Entry
+from .model import Entry, EVENT_FIELDS
 from .parse import FRONTMATTER_RE, ID_RE, parse_text
 
 # 陈旧临时文件的清理门槛：同目录 mkstemp 出来的 `.canonlint-*.tmp`，若进程被 SIGKILL
@@ -229,8 +229,11 @@ def cmd_init(root: Path, *, exe: str) -> int:
 def cmd_new(root: Path, type_: str | None, title: str | None,
             entry_id: str | None, author: str | None = None,
             load_bearing: bool = False, layer: str | None = None,
-            *, layer_choices: Sequence[str]) -> int:
-    """建卡：生成合法 frontmatter，用户只管写正文。交互问答仅在 TTY 下启用。"""
+            *, layer_choices: Sequence[str], fields: dict | None = None) -> int:
+    """建卡：生成合法 frontmatter，用户只管写正文。交互问答仅在 TTY 下启用。
+
+    `fields` 是事件流水与断言字段（when/event_kind/腿/owns 等），白名单
+    就是存储层的 EVENT_FIELDS——别的键一律拒绝（写出去也是 CA106）。"""
     tty = sys.stdin.isatty()
     if type_ is None:
         type_ = _ask(f"类型 {sorted(TYPE_DIRS)}: ")
@@ -277,6 +280,15 @@ def cmd_new(root: Path, type_: str | None, title: str | None,
     }
     if load_bearing:
         meta["layer"] = layer
+    if fields:
+        # owns 是断言但走关系字段面（LEGACY_RELATION_FIELDS），这里一并放行
+        allowed = set(EVENT_FIELDS) | {"owns"}
+        unknown = sorted(set(fields) - allowed)
+        if unknown:
+            print(f"error: 不认识的字段 {unknown}（事件/断言字段只有 {sorted(allowed)}）",
+                  file=sys.stderr)
+            return 2
+        meta.update(fields)
     meta.update({"canon_refs": [], "conflicts_with": [], "depends_on": [],
                  "superseded_by": None, "ai_assisted": False})
     fm = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False,

@@ -1069,9 +1069,28 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
     return all_entries, index, findings, reports
 
 
+def _event_fields_from_args(a) -> dict | None:
+    """把 new/event 子命令的事件与断言标志收成 fields 字典（None 表示没带任何字段）。
+
+    argparse 的 `--from` 住在 dest=from_，这里换回字段名；`--when-sort` 同理。
+    """
+    if not hasattr(a, "when"):
+        return None
+    fields: dict = {}
+    for attr, name in (("when", "when"), ("when_sort", "when_sort"),
+                       ("event_kind", "event_kind"), ("from_", "from"),
+                       ("by", "by"), ("to", "to"), ("object", "object"),
+                       ("result", "result"), ("owns", "owns"),
+                       ("custody_of", "custody_of"), ("member_of", "member_of")):
+        value = getattr(a, attr, None)
+        if value is not None:
+            fields[name] = value
+    return fields or None
+
+
 def main() -> int:
-    # 人类工作流子命令：init / new / link / export / ledger；其余按审计（check）处理
-    if len(sys.argv) > 1 and sys.argv[1] in ("init", "new", "link", "export", "ledger"):
+    # 人类工作流子命令：init / new / link / export / ledger / event；其余按审计（check）处理
+    if len(sys.argv) > 1 and sys.argv[1] in ("init", "new", "link", "export", "ledger", "event"):
         cmd = sys.argv[1]
         sp = argparse.ArgumentParser(prog=f"canonlint {cmd}")
         sp.add_argument("--root", type=Path, default=Path("."),
@@ -1086,6 +1105,21 @@ def main() -> int:
             sp.add_argument("--author")
             sp.add_argument("--load-bearing", action="store_true")
             sp.add_argument("--layer", choices=LAYERS)
+        if cmd == "event":
+            # 一行记账：canonlint event transfer --by a --to b --object c
+            sp.add_argument("kind", choices=sorted(ledger.EVENT_KINDS))
+            sp.add_argument("title", nargs="?")
+            sp.add_argument("--id")
+            sp.add_argument("--author")
+        if cmd in ("new", "event"):
+            # 事件流水与断言字段（白名单 = store 的 EVENT_FIELDS；store 端再挡一道）
+            sp.add_argument("--when")
+            sp.add_argument("--when-sort", type=float)
+            sp.add_argument("--event-kind", choices=sorted(ledger.EVENT_KINDS))
+            sp.add_argument("--from", dest="from_", nargs="+")
+            for leg in ("by", "to", "object", "result", "owns",
+                        "custody-of", "member-of"):
+                sp.add_argument(f"--{leg}", nargs="+")
         if cmd == "link":
             sp.add_argument("src")
             sp.add_argument("dst")
@@ -1110,9 +1144,17 @@ def main() -> int:
             return store.cmd_init(a.root_pos or a.root, exe=exe)
         if cmd == "new":
             # 层级词表是理论，归判定器；存储层只收下它
+            fields = _event_fields_from_args(a)
             return store.cmd_new(a.root, a.type, a.title, a.id,
                                  author=a.author, load_bearing=a.load_bearing,
-                                 layer=a.layer, layer_choices=LAYERS)
+                                 layer=a.layer, layer_choices=LAYERS, fields=fields)
+        if cmd == "event":
+            fields = _event_fields_from_args(a) or {}
+            fields["event_kind"] = a.kind
+            title = a.title or f"{a.kind} 事件"
+            return store.cmd_new(a.root, "event", title, a.id,
+                                 author=a.author, layer_choices=LAYERS,
+                                 fields=fields)
         if cmd == "link":
             return store.cmd_link(a.root, a.src, a.dst, a.kind, a.critical,
                                   kind_choices=KIND_INITIAL_SET)
@@ -1153,6 +1195,7 @@ def main() -> int:
             "  canonlint link <源id> <目标id> --kind K        添加一条依赖边\n"
             "  canonlint export [目录] [--out 文件]           导出数据集（前端/其他出口用，不判定）\n"
             "  canonlint ledger [目录]                          事件流水：派生状态与没算平的（只读报告）\n"
+            "  canonlint event <kind> --by X --to Y ...         一行记一笔流水（事件卡，等价 new event）\n"
             "  canonlint <仓库根> --strict                    审计（error 与 warning 都拦）\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter)

@@ -1149,6 +1149,47 @@ def check_both_engines_build_the_same_graph():
                 f"{type_} → {target}（口径差目标：{sorted(allowed)}）")
 
 
+def check_new_writes_event_cards():
+    """事件卡与断言字段进写入路径（人机交互 Phase 0）：`canonlint event` 一行记账。
+
+    社员不写 YAML：`canonlint event transfer --by a --to b --object c --when ...`
+    就该产出一张合法事件卡；`new` 也要能带 owns/custody_of/member_of 断言。
+    引用的 id 存在时，审计必须全绿。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        assert store.cmd_init(world, exe="canonlint") == 0
+        for eid in ("anna", "bob", "sword-x"):
+            rc, out, err = run(["new", "item" if eid == "sword-x" else "character",
+                                eid, "--id", eid, "--root", str(world)])
+            assert rc == 0, f"{eid}: {out} {err}"
+        # 断言字段：new --owns/--member-of/--custody-of（steward 是流水推出的最终持有者，对账一致）
+        rc, out, err = run(["new", "character", "管家", "--id", "steward",
+                            "--owns", "sword-x", "--member-of", "anna",
+                            "--custody-of", "sword-x", "--root", str(world)])
+        assert rc == 0, f"new --owns 失败：{out} {err}"
+        got = store.parse_entry(world / "entries/characters/steward.md", world)
+        assert got.meta["owns"] == ["sword-x"]
+        assert got.meta["member_of"] == ["anna"]
+        assert got.meta["custody_of"] == ["sword-x"]
+        rc, out, err = run(["event", "transfer", "剑易手", "--id", "ev-1",
+                            "--by", "anna", "--to", "steward", "--object", "sword-x",
+                            "--when", "元年", "--when-sort", "1", "--root", str(world)])
+        assert rc == 0, f"event 命令失败：{out} {err}"
+        got = store.parse_entry(world / "entries/events/ev-1.md", world)
+        assert not got.parse_error, got.parse_error
+        assert got.meta["type"] == "event" and got.meta["event_kind"] == "transfer"
+        assert got.meta["when"] == "元年" and got.meta["when_sort"] == 1
+        assert got.meta["by"] == ["anna"] and got.meta["to"] == ["steward"]
+        assert got.meta["object"] == ["sword-x"]
+        # 审计全绿（事件腿与断言指向的卡都存在，断言与流水一致）
+        rc, out, err = run(["--strict", str(world)])
+        assert rc == 0, f"写入路径产出的世界应当 --strict 全绿：\n{out}"
+        # 坏 kind 是用法错误，不是崩
+        rc, out, err = run(["event", "explode", "--id", "ev-2", "--root", str(world)])
+        assert rc == 2, f"坏 event_kind 应当 exit 2，实际 {rc}：{out} {err}"
+
+
 CHECKS = (
     ("规范形与旧写法等价（三种关系）", check_canonical_equals_legacy),
     ("规范形的形状错误会出现在报告里", check_shape_errors_reach_the_report),
@@ -1173,6 +1214,7 @@ CHECKS = (
     ("写入自检不过就退回重排（插错的边不许写盘）", check_write_path_verifies_before_trusting_itself),
     ("new 写的是 YAML 不是字符串拼接（标题里的 # 与冒号）", check_new_writes_yaml_not_string_splicing),
     ("坏 YAML 是发现不是 traceback（深嵌套 / 重复键）", check_broken_yaml_is_a_finding_not_a_traceback),
+    ("new/event 写出事件卡与断言字段（写入路径 Phase 0）", check_new_writes_event_cards),
 )
 
 

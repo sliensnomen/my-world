@@ -31,6 +31,7 @@ python3 canonlint.py ~/worlds/grey-harbor --strict          # warning 也当失�
 python3 canonlint.py ~/worlds/grey-harbor --json            # 机器可读
 python3 canonlint.py ~/worlds/grey-harbor --impact crown-capital  # CA504：改它会波及谁（只读）
 python3 canonlint.py ledger ~/worlds/grey-harbor            # 事件流水：派生状态（只读，不进退出码）
+python3 canonlint.py event transfer --by anna --to bob --object sword-x --when "元年" --when-sort 1  # 一行记一笔流水
 python3 canonlint.py ~/worlds/grey-harbor --pack econ        # 启用 econ 扩展包（CA601/CA602）
 
 # ── 政治经济学层：classlint（条目住 codex/，目前是另一个仓库根）
@@ -68,14 +69,14 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
    其余叙述是当时的意图。与代码不一致时**以代码为准**。
 4. **`项目文书.md` / `classlint/项目文书.md`** —— 定位与路线图，属于「想法」，不是契约。
 
-`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与项数（39 条 CA、8 条 CL、6 条 PE、五套检查的 57 + 12 + 23 + 20 + 14、18 个 classlint 夹具），以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
+`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与项数（39 条 CA、8 条 CL、6 条 PE、五套检查的 57 + 12 + 24 + 20 + 14、18 个 classlint 夹具），以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
 它**不**是全文校验：层数、字段数、示例世界的条目数、退出码说明这些没被钉住，改代码时请顺手 `grep` 一遍文档。
 
 ## 现状（不吹）
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
 - ✅ **能判**：39 条 CA 规则（结构 / 引用 / 承重链条 / 事件流水 / 重复 / 影响报告）+ CL1xx + PE001–PE005 + PE009
-- ✅ **有回归网**：`tests/` 五套（57 + 12 + 23 + 20 + 14 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
+- ✅ **有回归网**：`tests/` 五套（57 + 12 + 24 + 20 + 14 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ⬜ **没有界面** —— 前端最后做：没有判定，就没有值得渲染的东西；渲染器是别人能写的东西
 - ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）
