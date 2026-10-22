@@ -474,6 +474,47 @@ def check_字段说明覆盖真实导出的每个字段():
     assert not missing, f"字段说明里没写到这些字段：{missing}"
 
 
+def check_导出透出事件字段与派生状态():
+    """B6：export 透出事件字段与 derive_state——前端要渲染「谁拿着什么」。
+
+    冰火世界有真实流水：ice-sword 的派生持有者是 eddard-stark、保管是
+    house-stark；jon-snow 的守夜人归属来自 join 流水。事件卡的六个字段
+    与断言字段原样透出。
+    """
+    real = canonlint.export_world(ROOT / "tests" / "world-westeros")
+    assert set(real["ledger"]) == {"states", "membership"}, \
+        f"ledger 段的键不对：{sorted(real['ledger'])}"
+    st = real["ledger"]["states"].get("ice-sword")
+    assert st and st["holder"] == "eddard-stark", f"ice-sword 派生持有者不对：{st}"
+    assert st["custodian"] == "house-stark", f"ice-sword 派生保管不对：{st}"
+    assert real["ledger"]["membership"].get("jon-snow", {}).get("night-watch-order") == "join", \
+        f"琼恩的组织归属不对：{real['ledger']['membership'].get('jon-snow')}"
+    ev = next(d for d in real["entries"] if d["id"] == "ev-ice-to-ned")
+    for key in ("when", "when_sort", "event_kind", "by", "to", "object"):
+        assert ev[key] is not None, f"事件卡没透出 {key}：{ev}"
+    assert ev["event_kind"] == "transfer"
+    jon = next(d for d in real["entries"] if d["id"] == "jon-snow")
+    assert jon["member_of"] == ["night-watch-order"], f"member_of 没透出：{jon}"
+
+
+def check_只读界面被伺候且指向数据源():
+    """web/index.html（人机交互 Phase 1）：只读界面真实存在、从 /api/world 取数。
+
+    三个视图（台账/审计/流水）的关键字样都在；界面不引构建链（没有 <script src= 外链框架）。
+    """
+    page = ROOT / "web" / "index.html"
+    assert page.is_file(), "web/index.html 不存在"
+    text = page.read_text(encoding="utf-8")
+    for marker in ("/api/world", "台账", "审计", "流水", "派生状态"):
+        assert marker in text, f"web/index.html 少了 {marker!r}"
+    assert "cdn" not in text and "unpkg" not in text and "jsdelivr" not in text, \
+        "界面引了外链框架（约定是零依赖、零构建）"
+    base = server_for(WORLD)
+    code, body, _headers = get(f"{base}/web/index.html")
+    assert code == 200 and "派生状态" in body.decode("utf-8"), \
+        f"/web/index.html 没被正确伺候：{code}"
+
+
 CHECKS = [
     ("接口给的数据 = CLI 导出的数据", check_world_同_CLI_导出),
     ("两次请求一致，且不漏绝对路径", check_两次请求一致_且没有绝对路径),
@@ -495,6 +536,8 @@ CHECKS = [
     ("文档里写的路由都真实存在", check_文档写的路由都是真的),
     ("文档里的 JSON 样例与真实导出一致", check_文档里的_JSON_样例与真实导出一致),
     ("字段说明覆盖真实导出的每个字段", check_字段说明覆盖真实导出的每个字段),
+    ("导出透出事件字段与派生状态（B6）", check_导出透出事件字段与派生状态),
+    ("只读界面被伺候且指向数据源（Phase 1）", check_只读界面被伺候且指向数据源),
 ]
 
 

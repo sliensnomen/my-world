@@ -894,7 +894,11 @@ LEVEL_ORDER = {"error": 0, "warning": 1, "info": 2}
 
 
 def _entry_export(e: Entry) -> dict:
-    """一个条目的导出形态：选定字段 + 统一视图的边。前端不该自己解析 Markdown。"""
+    """一个条目的导出形态：选定字段 + 统一视图的边。前端不该自己解析 Markdown。
+
+    事件流水字段（协议 1.2 起）与断言字段（1.4/1.6）原样透出——前端要渲染
+    「谁拿着什么」，B6 的触发条件已经达成。
+    """
     meta = e.meta
     d = meta.get("date")
     return {
@@ -909,6 +913,17 @@ def _entry_export(e: Entry) -> dict:
         "load_bearing": meta.get("load_bearing"),
         "ai_assisted": meta.get("ai_assisted"),
         "superseded_by": meta.get("superseded_by"),
+        "when": meta.get("when"),
+        "when_sort": meta.get("when_sort"),
+        "event_kind": meta.get("event_kind"),
+        "by": meta.get("by"),
+        "to": meta.get("to"),
+        "object": meta.get("object"),
+        "from": meta.get("from"),
+        "result": meta.get("result"),
+        "owns": [r.target for r in e.edges_of("owns")] or None,
+        "custody_of": meta.get("custody_of"),
+        "member_of": meta.get("member_of"),
         "parse_error": e.parse_error,
         "body_chars": len((e.body or "").strip()),
         "body_excerpt": (e.body or "").strip()[:EXPORT_EXCERPT_CHARS],
@@ -948,7 +963,8 @@ def _json_safe(value):
 
 
 def build_export(all_entries: list[Entry], findings: list[Finding],
-                 reports: list[dict], root: Path) -> dict:
+                 reports: list[dict], root: Path,
+                 index: dict[str, Entry] | None = None) -> dict:
     """把已算好的审计结果整理成自描述数据集。确定性：无时间戳、无绝对路径。"""
     entries = sorted((_entry_export(e) for e in all_entries), key=lambda d: d["path"])
     known = {e.id for e in all_entries if e.id}
@@ -973,6 +989,9 @@ def build_export(all_entries: list[Entry], findings: list[Finding],
     stances = [a.get("stance") for d in parsed for a in d["relations"]
                if a.get("stance") is not None]
     levels = _counts(f.level for f in findings)
+    # 派生状态透出（B6）：期初断言 + 流水 → 谁拿着什么、谁在哪个组织
+    states_raw = ledger.derive_state(index) if index is not None else {}
+    membership_raw = ledger.derive_membership(index) if index is not None else {}
     return _json_safe({
         "protocol_version": PROTOCOL_VERSION,
         "contract_version": CONTRACT_VERSION,
@@ -996,6 +1015,13 @@ def build_export(all_entries: list[Entry], findings: list[Finding],
             "relation_types": _counts(a["type"] for d in parsed for a in d["relations"]),
             "fields": _counts(k for e in all_entries if not e.parse_error for k in e.meta),
         },
+        "ledger": {
+            "states": {obj: {"holder": st.holder, "holder_source": st.holder_source,
+                             "custodian": st.custodian, "location": st.location}
+                       for obj, st in sorted(states_raw.items())},
+            "membership": {p: dict(sorted(acts.items()))
+                           for p, acts in sorted(membership_raw.items())},
+        },
         "entries": entries,
         "relations": relations,
         "dangling": dangling,
@@ -1016,7 +1042,7 @@ def export_world(root: Path, packs=(), impact=(), extra_known=frozenset(),
                                                 extra_known=extra_known)
     _apply_packs(packs, index, findings)
     findings.sort(key=lambda f: (LEVEL_ORDER.get(f.level, 3), f.rule, f.entry))
-    return build_export(all_entries, findings, reports, root)
+    return build_export(all_entries, findings, reports, root, index=index)
 
 
 def _load_packs(names: list[str]):

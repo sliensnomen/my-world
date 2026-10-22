@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>世界仓库</title>
+<style>
+  :root { --red: #b3261e; --yellow: #8a6d00; --green: #1e7b34; --gray: #666; --bg: #fafafa; --line: #ddd; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: var(--bg); color: #222; }
+  header { padding: 12px 16px; background: #fff; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .meta { color: var(--gray); font-size: 13px; }
+  nav { display: flex; gap: 4px; margin-left: auto; }
+  nav button { border: 1px solid var(--line); background: #fff; padding: 4px 12px; cursor: pointer; border-radius: 4px; font-size: 14px; }
+  nav button.active { background: #333; color: #fff; }
+  main { padding: 16px; max-width: 960px; margin: 0 auto; }
+  .badge { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 12px; margin-right: 4px; }
+  .badge.error { background: #fbe4e2; color: var(--red); }
+  .badge.warning { background: #fdf3d7; color: var(--yellow); }
+  .badge.info { background: #e4effb; color: #1a5fa8; }
+  .badge.type { background: #eee; color: var(--gray); }
+  table { width: 100%; border-collapse: collapse; background: #fff; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 13px; color: var(--gray); }
+  .findings-col { white-space: nowrap; }
+  details { background: #fff; border: 1px solid var(--line); border-radius: 4px; margin-bottom: 8px; }
+  summary { padding: 8px 12px; cursor: pointer; }
+  details .body { padding: 0 12px 12px; }
+  pre { background: #f4f4f4; padding: 8px; overflow-x: auto; font-size: 12px; border-radius: 4px; }
+  .filters { margin-bottom: 8px; font-size: 14px; color: var(--gray); }
+  .filters a { color: #1a5fa8; cursor: pointer; margin-right: 8px; text-decoration: none; }
+  .filters a.active { font-weight: bold; }
+  .muted { color: var(--gray); }
+  .empty { color: var(--gray); padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>世界仓库</h1>
+  <span class="meta" id="meta">加载中…</span>
+  <nav>
+    <button data-view="entries" class="active">台账</button>
+    <button data-view="findings">审计</button>
+    <button data-view="ledger">流水</button>
+  </nav>
+</header>
+<main id="main"></main>
+<script>
+let WORLD = null;
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function boot() {
+  const res = await fetch("/api/world");
+  WORLD = await res.json();
+  const c = WORLD.counts;
+  $("#meta").textContent =
+    `${c.entries} 条目 | ${c.errors} 错误 | ${c.warnings} 警告 | 协议 ${WORLD.protocol_version} / 契约 ${WORLD.contract_version}`;
+  document.querySelectorAll("nav button").forEach(b =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("nav button").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      render(b.dataset.view);
+    }));
+  render("entries");
+}
+
+function findingsByEntry() {
+  const map = {};
+  for (const f of WORLD.findings) {
+    const key = f.entry.split(" ↔ ")[0];
+    (map[key] ||= []).push(f);
+  }
+  return map;
+}
+
+function renderEntries(filter) {
+  const fmap = findingsByEntry();
+  const entries = WORLD.entries.filter(e =>
+    !filter || e.type === filter || e.status === filter);
+  const types = [...new Set(WORLD.entries.map(e => e.type).filter(Boolean))].sort();
+  let html = `<div class="filters">筛选：<a data-f="" class="${!filter?'active':''}">全部</a>` +
+    types.map(t => `<a data-f="${esc(t)}" class="${filter===t?'active':''}">${esc(t)}</a>`).join("") + `</div>`;
+  html += `<table><tr><th>id</th><th>类型/状态</th><th>标题</th><th>审计</th></tr>`;
+  for (const e of entries) {
+    const fs = (fmap[e.path] || []).map(f =>
+      `<span class="badge ${f.level}">${f.rule}</span>`).join("");
+    const badges = e.parse_error ? `<span class="badge error">读不出</span>` : fs;
+    html += `<tr><td><code>${esc(e.id)}</code></td>
+      <td class="findings-col"><span class="badge type">${esc(e.type)}</span><span class="badge type">${esc(e.status)}</span>${e.load_bearing?'<span class="badge warning">承重</span>':''}</td>
+      <td><a href="/api/entry/${encodeURIComponent(e.id)}">${esc(e.title)}</a><br><span class="muted">${esc(e.body_excerpt||"").slice(0,60)}…</span></td>
+      <td class="findings-col">${badges}</td></tr>`;
+  }
+  html += "</table>";
+  $("#main").innerHTML = html;
+  document.querySelectorAll(".filters a").forEach(a =>
+    a.addEventListener("click", () => renderEntries(a.dataset.f || null)));
+}
+
+function renderFindings() {
+  const groups = {};
+  for (const f of WORLD.findings) (groups[f.rule] ||= []).push(f);
+  let html = "";
+  for (const rule of Object.keys(groups).sort()) {
+    const fs = groups[rule];
+    html += `<details open><summary><span class="badge ${fs[0].level}">${rule}</span> ${fs.length} 条</summary><div class="body"><table>`;
+    for (const f of fs) html += `<tr><td><code>${esc(f.entry)}</code></td><td>${esc(f.message)}</td></tr>`;
+    html += "</table></div></details>";
+  }
+  $("#main").innerHTML = html || `<div class="empty">零 findings——这个世界全绿。</div>`;
+}
+
+function renderLedger() {
+  const L = WORLD.ledger || {states: {}, membership: {}};
+  const objs = Object.keys(L.states);
+  const persons = Object.keys(L.membership);
+  let html = "<h3>派生状态（期初断言 + 流水）</h3>";
+  if (!objs.length) html += `<div class="empty">没有可派生的客体。</div>`;
+  else {
+    html += `<table><tr><th>客体</th><th>持有者</th><th>保管</th><th>位置</th></tr>`;
+    for (const o of objs) {
+      const s = L.states[o];
+      const src = s.holder_source ? `<span class="muted">（来自 ${esc(s.holder_source)}）</span>` : "";
+      html += `<tr><td><code>${esc(o)}</code></td><td>${esc(s.holder || "（无）")}${src}</td><td>${esc(s.custodian || "-")}</td><td>${esc(s.location || "-")}</td></tr>`;
+    }
+    html += "</table>";
+  }
+  html += "<h3>组织归属（join/leave 流水）</h3>";
+  if (!persons.length) html += `<div class="empty">没有 join/leave 流水。</div>`;
+  else {
+    html += "<table><tr><th>人</th><th>归属</th></tr>";
+    for (const p of persons) {
+      const acts = L.membership[p];
+      const txt = Object.entries(acts).map(([o, a]) => `${a === "join" ? "在" : "已离开"} ${o}`).join("；");
+      html += `<tr><td><code>${esc(p)}</code></td><td>${esc(txt)}</td></tr>`;
+    }
+    html += "</table>";
+  }
+  $("#main").innerHTML = html;
+}
+
+function render(view) {
+  if (view === "entries") renderEntries(null);
+  else if (view === "findings") renderFindings();
+  else if (view === "ledger") renderLedger();
+}
+
+boot().catch(e => { $("#main").innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>
