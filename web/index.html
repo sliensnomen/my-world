@@ -54,6 +54,26 @@ const REQUIRED_FALLBACK = {"transfer":["by","to","object"],"custody":["by","to",
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
+// 写接口可能挂 --token：从 sessionStorage 取，401 时问一次再重发；读接口不受影响。
+function authHeaders() {
+  const t = sessionStorage.getItem("wgp-token");
+  return t ? {Authorization: "Bearer " + t} : {};
+}
+async function postJSON(path, payload) {
+  const send = () => fetch(path, {method: "POST",
+    headers: {"Content-Type": "application/json", ...authHeaders()},
+    body: JSON.stringify(payload)});
+  let res = await send();
+  if (res.status === 401) {
+    const t = prompt("这个写接口要 token（服务端 --token 设置的那个）：");
+    if (t && t.trim()) {
+      sessionStorage.setItem("wgp-token", t.trim());
+      res = await send();
+    }
+  }
+  return res;
+}
+
 async function boot() {
   const res = await fetch("/api/world");
   WORLD = await res.json();
@@ -182,8 +202,7 @@ function renderEventForm() {
       const ids = inp.value.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
       if (ids.length) payload[inp.dataset.leg] = ids;
     });
-    const res = await fetch("/api/event", {method: "POST",
-      headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+    const res = await postJSON("/api/event", payload);
     const data = await res.json().catch(() => ({}));
     if (res.status === 201) {
       $("#f-msg").innerHTML = `<span style="color:var(--green)">记上了：${esc(data.id)}（审计通过）</span>`;
@@ -242,8 +261,7 @@ function renderTickets() {
         payload.status = "archived";
         payload.superseded_by = succ.trim() || null;
       }
-      const res = await fetch("/api/status", {method: "POST",
-        headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+      const res = await postJSON("/api/status", payload);
       const data = await res.json().catch(() => ({}));
       if (res.status === 200) {
         WORLD = await (await fetch("/api/world")).json();

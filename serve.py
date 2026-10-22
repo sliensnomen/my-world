@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """WGP HTTP 接口：把世界数据交给前端；默认只读，`--writable` 才开写。
 
-    python3 serve.py [世界目录] [--host 127.0.0.1] [--port 8000] [--pack econ] [--writable]
+    python3 serve.py [世界目录] [--host 127.0.0.1] [--port 8000] [--pack econ]
+                     [--writable [--token T] [--write-log PATH]]
 
 路由
     GET /                  一页说明（不是界面）
@@ -18,7 +19,8 @@
 规矩
     · 默认只读：任何非 GET/HEAD 一律 405；`--writable` 只开上面三条 POST。
     · 写请求只收同源页面发来的 `application/json`：跨源写（含表单式 simple POST）
-      一律拒绝。接口没有登录态，浏览器里的「同源」就是唯一凭据。
+      一律拒绝。默认只靠「同源」；`--token` 再加一道 Bearer 凭据，`--write-log`
+      把每次写的结果记成 JSONL（只记结果，不记 token/请求体）。
     · 每次请求重新读盘：Markdown 是唯一真相，改完文件刷新页面就是新数据。
     · 读不写盘、不留时间戳 —— 同一份数据两次请求字节一致。
 """
@@ -26,10 +28,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hmac
 import io
 import json
+import os
 import sys
 import threading
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
@@ -104,11 +109,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _json(self, code: int, obj) -> None:
+    def _json(self, code: int, obj, extra: dict | None = None) -> None:
         # backslashreplace 是最后一道保险：任何漏出去的代理字符都变成 `\udcff` 字面量，
         # 而不是让整个响应变成 0 字节（`export_world` 已经清洗过一层）。
         body = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8", "backslashreplace")
-        self._send(code, body, "application/json; charset=utf-8")
+        self._send(code, body, "application/json; charset=utf-8", extra)
 
     def _export(self) -> dict:
         return canonlint.export_world(self.server.wgp_root, self.server.wgp_packs,
@@ -149,6 +154,60 @@ class Handler(BaseHTTPRequestHandler):
         self._json(405, {"code": "read_only", "error": "只读接口：只能用 GET/HEAD",
                          "allow": "GET, HEAD, OPTIONS", "routes": ROUTES})
 
+    timeout = 30  # 客户端连着不發 body 时，读请求最多等这么久（防 slowloris 占线程）
+
+    def _token_ok(self) -> bool:
+        """--token 设置后，写请求要 `Authorization: Bearer <token>`；读接口不受影响。"""
+        want = getattr(self.server, "wgp_token", None)
+        if not want:
+            return True
+        hdr = self.headers.get("Authorization") or ""
+        got = hdr[7:].strip() if hdr.lower().startswith("bearer ") else ""
+        return hmac.compare_digest(got, want)
+
+    def _finish(self, action: str, code: int, obj,
+                extra: dict | None = None) -> None:
+        """统一出口：先写审计日志（成功/回滚/拒绝都记），再回 JSON。"""
+        self._audit_write(action, code, obj)
+        return self._json(code, obj, extra)
+
+    def _audit_write(self, action: str, code: int, obj) -> None:
+        """写请求一行 JSONL：时间、来源、动作、id、状态、踩到的规则。
+
+        只记「谁在何时改了什么结果」，不记 token、不记请求体。
+        """
+        path = getattr(self.server, "wgp_write_log", None)
+        if path is None:
+            return
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "remote": self.client_address[0] if self.client_address else None,
+            "action": action,
+            "id": None,
+            "status": code,
+        }
+        if isinstance(obj, dict):
+            eid = obj.get("id")
+            if isinstance(eid, str):
+                rec["id"] = eid
+        if rec["id"] is None:
+            fallback = getattr(self, "_req_id", None)
+            if isinstance(fallback, str):
+                rec["id"] = fallback
+            fs = obj.get("findings")
+            if isinstance(fs, list):
+                rules = sorted({f.get("rule") for f in fs
+                                if isinstance(f, dict) and f.get("rule")})
+                if rules:
+                    rec["rules"] = rules
+        line = json.dumps(rec, ensure_ascii=False)
+        with self.server.wgp_log_lock:
+            try:
+                with open(path, "a", encoding="utf-8") as fh:
+                    fh.write(line + "\n")
+            except OSError as e:  # 日志写不了不影响业务，但要让人看见
+                self.log_error("写审计日志失败：%s", e)
+
     def do_POST(self):  # noqa: N802
         """写端点（人机交互 Phase 2）：只有 `--writable` 才开；默认只读。
 
@@ -157,38 +216,54 @@ class Handler(BaseHTTPRequestHandler):
 
         写请求必须**同源 + application/json**：`text/plain` 的 simple POST 不触发
         预检，光靠 CORS 响应头挡不住（任意网页都能替用户写卡），所以在这里挡。
+        `--token` 再加一道 Bearer 凭据；`--write-log` 把每次写的结果记一行。
         """
+        path = unquote(urlparse(self.path).path)
+        self._req_id = None  # keep-alive 会复用 handler 实例，别把上一笔的 id 记进日志
+        action = {"/api/entry": "entry", "/api/event": "event",
+                  "/api/status": "status"}.get(path, "unknown")
         if not getattr(self.server, "wgp_writable", False):
             return self._readonly()
+        if not self._token_ok():
+            return self._finish(action, 401, {
+                "code": "unauthorized",
+                "error": "写请求需要 Authorization: Bearer <token>（服务端 --token 设置）",
+            }, extra={"WWW-Authenticate": 'Bearer realm="wgp"'})
         origin = self.headers.get("Origin")
         if origin and not self._same_origin(origin):
-            return self._json(403, {
+            return self._finish(action, 403, {
                 "code": "cross_origin",
                 "error": "跨源写请求被拒绝（只接受同源页面发来的请求）"})
         ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
         if ctype != "application/json":
-            return self._json(415, {
+            return self._finish(action, 415, {
                 "code": "unsupported_media_type",
                 "error": "写请求的 Content-Type 必须是 application/json",
                 "got": self.headers.get("Content-Type")})
+        # 读 body 在锁外：慢客户端（只发头、body 一点点挤）不能把写入口锁死。
+        data, err = self._read_json(action)
+        if err:
+            return err
+        self._req_id = data.get("id") if isinstance(data.get("id"), str) else None
         try:
-            # 写锁：审计回滚是「先写卡、再全库审、红就删」——不串行化的话，A 的回滚
-            # 会删掉 B 刚建好的卡（差集求的是「请求开始之后所有新文件」）。
+            # 写锁只包「写卡 + 全库审 + 回滚」这一段：审计回滚是差集删除，
+            # 不串行化的话 A 的回滚会删掉 B 刚建好的卡。
             with self.server.wgp_write_lock:
-                path = unquote(urlparse(self.path).path)
                 if path == "/api/entry":
-                    return self._post_card(event=False)
+                    return self._post_card(False, data, action)
                 if path == "/api/event":
-                    return self._post_card(event=True)
+                    return self._post_card(True, data, action)
                 if path == "/api/status":
-                    return self._post_status()
-                return self._json(404, {"error": f"没有这个路由: {path}", "routes": ROUTES})
+                    return self._post_status(data, action)
+                return self._finish(action, 404, {
+                    "error": f"没有这个路由: {path}", "routes": ROUTES})
         except (BrokenPipeError, ConnectionResetError):
             raise
         except Exception as e:  # noqa: BLE001 —— HTTP 边界：任何异常都变成 500，不许断连
             if not getattr(self, "_headers_buffer", None):
                 self.log_error("写请求内部错误：%s: %s", type(e).__name__, e)
-                return self._json(500, {"error": f"服务器内部错误（{type(e).__name__}）"})
+                return self._finish(action, 500, {
+                    "error": f"服务器内部错误（{type(e).__name__}）"})
             raise
 
     def _same_origin(self, origin: str) -> bool:
@@ -212,57 +287,60 @@ class Handler(BaseHTTPRequestHandler):
                              extra_known=self.server.wgp_extra_known,
                              packs=getattr(self.server, "wgp_packs", ()))
 
-    def _read_json(self):
+    def _read_json(self, action: str):
         raw_len = self.headers.get("Content-Length")
         try:
             length = int(raw_len or 0)
         except ValueError:
-            return None, self._json(400, {"error": f"Content-Length 非法: {raw_len!r}"})
+            self._finish(action, 400, {
+                "error": f"Content-Length 非法: {raw_len!r}"})
+            return None, True
         if length < 0 or length > _MAX_BODY:
-            return None, self._json(413, {"error": f"请求体过大（上限 {_MAX_BODY} 字节）"})
+            self._finish(action, 413, {
+                "error": f"请求体过大（上限 {_MAX_BODY} 字节）"})
+            return None, True
         try:
             data = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, TypeError) as e:
-            return None, self._json(400, {"error": f"JSON 解析失败: {e}"})
+            self._finish(action, 400, {"error": f"JSON 解析失败: {e}"})
+            return None, True
         if not isinstance(data, dict):
-            return None, self._json(400, {"error": "请求体必须是 JSON 对象"})
+            self._finish(action, 400, {"error": "请求体必须是 JSON 对象"})
+            return None, True
         return data, None
 
-    def _post_status(self):
+    def _post_status(self, data, action: str):
         """治理动作（人机交互 Phase 3）：升格（draft→trial→canon）/ 降级（archived）。
 
         与写卡同一条纪律：走 store 的行级写入 + 写完即审、红则回滚。
         """
-        data, err = self._read_json()
-        if err:
-            return err
         root = self.server.wgp_root
         entry_id = data.get("id")
         if not isinstance(entry_id, str) or not entry_id:
-            return self._json(400, {"error": "id 必须是非空字符串"})
+            return self._finish(action, 400, {"error": "id 必须是非空字符串"})
         updates: dict = {}
         if "status" in data:
             status = data["status"]
             if not isinstance(status, str) or status not in canonlint.VALID_STATUS:
-                return self._json(400, {
+                return self._finish(action, 400, {
                     "error": f"status={status!r} 非法，须为 "
                              f"{sorted(canonlint.VALID_STATUS)}"})
             updates["status"] = status
         if "superseded_by" in data:
             sup = data["superseded_by"]
             if sup is not None and not isinstance(sup, str):
-                return self._json(400, {"error": "superseded_by 必须是字符串或 null"})
+                return self._finish(action, 400, {"error": "superseded_by 必须是字符串或 null"})
             updates["superseded_by"] = sup
         if not updates:
-            return self._json(400, {"error": "必须给至少一个字段（status/superseded_by）"})
+            return self._finish(action, 400, {"error": "必须给至少一个字段（status/superseded_by）"})
         _all, index, _issues = canonlint.store.collect(root)
         target = index.get(entry_id)
         if target is None:
-            return self._json(404, {"error": f"条目 `{entry_id}` 不存在"})
+            return self._finish(action, 404, {"error": f"条目 `{entry_id}` 不存在"})
         old_bytes = target.path.read_bytes()
         rc, msg = canonlint.store.set_fields(root, entry_id, updates)
         if rc != 0:
-            return self._json(400, {"error": msg})
+            return self._finish(action, 400, {"error": msg})
         _all, _idx, findings, _reports = self._audit()
         errors = [f for f in findings if f.level == "error"]
         if errors:
@@ -270,48 +348,45 @@ class Handler(BaseHTTPRequestHandler):
                 # 原子恢复：回滚本身不能留下半张卡（以前是 write_bytes，断电就剩一半）
                 canonlint.store.restore_bytes(target.path, old_bytes)
             except OSError as e:
-                return self._json(500, {
+                return self._finish(action, 500, {
                     "error": f"审计不通过，但回滚失败：{e}",
                     "hint": f"请手工恢复 {target.path}"})
-            return self._json(422, {
+            return self._finish(action, 422, {
                 "error": "审计不通过，已回滚",
                 "findings": [{"rule": f.rule, "level": f.level,
                               "entry": f.entry, "message": f.message}
                              for f in errors]})
-        return self._json(200, {"ok": True, "id": entry_id, "updates": updates})
+        return self._finish(action, 200, {"ok": True, "id": entry_id, "updates": updates})
 
-    def _post_card(self, event: bool):
+    def _post_card(self, event: bool, data, action: str):
         root = self.server.wgp_root
-        data, err = self._read_json()
-        if err:
-            return err
         legs = ("when", "when_sort", "by", "to", "object", "from", "result",
                 "owns", "custody_of", "member_of")
         entry_id = data.get("id")
         if entry_id is not None and not isinstance(entry_id, str):
-            return self._json(400, {"error": "id 必须是字符串"})
+            return self._finish(action, 400, {"error": "id 必须是字符串"})
         author = data.get("author")
         if author is not None and not isinstance(author, str):
-            return self._json(400, {"error": "author 必须是字符串"})
+            return self._finish(action, 400, {"error": "author 必须是字符串"})
         if event:
             kind = data.get("event_kind")
             experimental = isinstance(kind, str) and kind.startswith("x-") and len(kind) > 2
             if not isinstance(kind, str) or (
                     kind not in canonlint.ledger.EVENT_KINDS and not experimental):
-                return self._json(400, {
+                return self._finish(action, 400, {
                     "error": f"event_kind={kind!r} 非法，须为 "
                              f"{sorted(canonlint.ledger.EVENT_KINDS)} 或 x- 开头的实验值"})
             type_ = "event"
             title = data.get("title") or f"{kind} 事件"
             if not isinstance(title, str):
-                return self._json(400, {"error": "title 必须是字符串"})
+                return self._finish(action, 400, {"error": "title 必须是字符串"})
             fields = {k: data[k] for k in legs if k in data}
             fields["event_kind"] = kind
         else:
             type_ = data.get("type")
             title = data.get("title")
             if not isinstance(type_, str) or not isinstance(title, str) or not type_ or not title:
-                return self._json(400, {"error": "写卡必须给字符串 type 与 title"})
+                return self._finish(action, 400, {"error": "写卡必须给字符串 type 与 title"})
             fields = {k: data[k] for k in legs + ("event_kind",) if k in data}
         out: dict = {}
         # cmd_new 会往 stdout 打「已建卡: …」；HTTP 客户端看不到服务器屏幕，
@@ -325,9 +400,9 @@ class Handler(BaseHTTPRequestHandler):
             # 否则服务器终端挂着 `承重墙条目？[y/N]:`，浏览器那头超时。
                 interactive=False, out=out)
         if rc == 1:
-            return self._json(409, {"error": f"id `{entry_id}` 已存在"})
+            return self._finish(action, 409, {"error": f"id `{entry_id}` 已存在"})
         if rc != 0:
-            return self._json(400, {"error": "参数非法（type/id 缺失或不合法）"})
+            return self._finish(action, 400, {"error": "参数非法（type/id 缺失或不合法）"})
         created = [out["path"]] if out.get("path") else []
         _all, _idx, findings, _reports = self._audit()
         errors = [f for f in findings if f.level == "error"]
@@ -339,12 +414,12 @@ class Handler(BaseHTTPRequestHandler):
                     p.unlink()
                 except OSError:
                     pass
-            return self._json(422, {
+            return self._finish(action, 422, {
                 "error": "审计不通过，已回滚",
                 "findings": [{"rule": f.rule, "level": f.level,
                               "entry": f.entry, "message": f.message}
                              for f in errors]})
-        return self._json(201, {"ok": True, "id": out.get("id", entry_id)})
+        return self._finish(action, 201, {"ok": True, "id": out.get("id", entry_id)})
 
     def do_OPTIONS(self):  # noqa: N802
         # 浏览器的 CORS 预检打的就是 OPTIONS。以前没有这个方法 → 501 + HTML 错误页，
@@ -359,7 +434,7 @@ class Handler(BaseHTTPRequestHandler):
         if origin:
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", methods)
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Max-Age", "86400")
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -465,7 +540,8 @@ code{{background:#f2f2f2;padding:.1em .3em;border-radius:3px}}td{{padding:.2rem 
 
 
 def make_server(root: Path, host: str, port: int, packs=(), extra_known=frozenset(),
-                quiet: bool = False, writable: bool = False) -> ThreadingHTTPServer:
+                quiet: bool = False, writable: bool = False,
+                token: str | None = None, write_log: Path | None = None) -> ThreadingHTTPServer:
     """起一个 server（不阻塞）。端口给 0 = 让系统随便挑一个空端口。"""
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.wgp_root = root.resolve()            # type: ignore[attr-defined]
@@ -475,13 +551,18 @@ def make_server(root: Path, host: str, port: int, packs=(), extra_known=frozense
     httpd.wgp_writable = writable              # type: ignore[attr-defined]
     # 写请求串行化：审计回滚是「写卡 → 全库审 → 红就删」，两个请求交错会互删新卡。
     httpd.wgp_write_lock = threading.Lock()    # type: ignore[attr-defined]
+    httpd.wgp_log_lock = threading.Lock()      # type: ignore[attr-defined]
+    httpd.wgp_token = token                    # type: ignore[attr-defined]
+    httpd.wgp_write_log = Path(write_log) if write_log else None  # type: ignore[attr-defined]
     httpd.daemon_threads = True
     return httpd
 
 
 def serve(root: Path, host: str, port: int, packs=(), extra_known=frozenset(),
-          quiet: bool = False, writable: bool = False) -> None:
-    httpd = make_server(root, host, port, packs, extra_known, quiet, writable)
+          quiet: bool = False, writable: bool = False,
+          token: str | None = None, write_log: Path | None = None) -> None:
+    httpd = make_server(root, host, port, packs, extra_known, quiet, writable,
+                        token=token, write_log=write_log)
     real_port = httpd.server_address[1]
     shown = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
     # flush=True：`--port 0` 常被管道/子进程用来读端口，缓冲着就等于没打印
@@ -490,6 +571,10 @@ def serve(root: Path, host: str, port: int, packs=(), extra_known=frozenset(),
     print(f"监听：{host}:{real_port}"
           + ("（所有网卡）" if shown != host else ""), flush=True)
     print(f"世界目录：{httpd.wgp_root}（改了 Markdown 刷新页面就是新数据）", flush=True)
+    if writable and token:
+        print("写接口凭据：Authorization: Bearer <--token>", flush=True)
+    if writable and write_log:
+        print(f"写审计日志：{httpd.wgp_write_log}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -512,6 +597,10 @@ def main(argv=None) -> int:
     ap.add_argument("--quiet", action="store_true", help="不打每行请求日志")
     ap.add_argument("--writable", action="store_true",
                     help="开写端点（POST /api/entry、/api/event；写完即审，红则回滚）")
+    ap.add_argument("--token", default=os.environ.get("WGP_TOKEN"),
+                    help="写请求要 Bearer token（也可用环境变量 WGP_TOKEN；不设 = 不验）")
+    ap.add_argument("--write-log", type=Path, default=None,
+                    help="把每次写请求的结果追加成 JSONL（时间/来源/动作/id/状态/规则）")
     a = ap.parse_args(argv)
 
     root = a.root.resolve()
@@ -524,7 +613,8 @@ def main(argv=None) -> int:
         print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）", file=sys.stderr)
         return 2
 
-    serve(root, a.host, a.port, packs, extra_known, a.quiet, a.writable)
+    serve(root, a.host, a.port, packs, extra_known, a.quiet, a.writable,
+          token=a.token, write_log=a.write_log)
     return 0
 
 

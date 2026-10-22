@@ -36,22 +36,26 @@ CRASH = ROOT / "tests" / "world-crash"        # 有 1 个读不出来的文件
 _SERVERS: dict = {}
 
 
-def server_for(world: Path, writable: bool = False) -> str:
+def server_for(world: Path, writable: bool = False, token: str | None = None,
+               write_log: Path | None = None) -> str:
     """每个世界起一个接口（端口让系统随便挑），复用。"""
-    key = f"{world}::w{int(writable)}"
+    key = f"{world}::w{int(writable)}::t{token}::l{write_log}"
     if key not in _SERVERS:
         httpd = serve.make_server(world, "127.0.0.1", 0, quiet=True,
-                                  writable=writable)
+                                  writable=writable, token=token,
+                                  write_log=write_log)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         _SERVERS[key] = f"http://127.0.0.1:{httpd.server_address[1]}"
     return _SERVERS[key]
 
 
-def post(url: str, payload: dict):
+def post(url: str, payload: dict, headers: dict | None = None):
     """POST 一个 JSON 对象，返回 (status, body, headers)。"""
+    h = {"Content-Type": "application/json"}
+    h.update(headers or {})
     req = urllib.request.Request(
         url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"}, method="POST")
+        headers=h, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=20) as res:
             return res.status, res.read(), dict(res.headers)
@@ -807,6 +811,108 @@ def check_并发写不互删():
             assert not (world / f"entries/events/bad-{i}.md").exists(), \
                 f"审计红了的 bad-{i} 没回滚"
 
+
+def check_写入口_token():
+    """--token：写端点要 Bearer；读端点不受影响；预检把 Authorization 列进允许头。"""
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        log = Path(td) / "writes.jsonl"
+        base = server_for(world, writable=True, token="s3cret", write_log=log)
+        payload = {"type": "location", "title": "港", "id": "port"}
+        code, body, _ = post(f"{base}/api/entry", payload)
+        assert code == 401, f"没带 token 应 401，实际 {code}：{body[:300]}"
+        code, body, _ = post(f"{base}/api/entry", payload,
+                             headers={"Authorization": "Bearer nope"})
+        assert code == 401, f"错 token 应 401，实际 {code}：{body[:300]}"
+        assert not (world / "entries/locations/port.md").exists(), \
+            "401 的请求不该写进世界"
+        code, body, _ = post(f"{base}/api/entry", payload,
+                             headers={"Authorization": "Bearer s3cret"})
+        assert code == 201, f"对 token 应 201，实际 {code}：{body[:300]}"
+        # 读端点不加 token 照常
+        code, body, _ = get(f"{base}/api/world")
+        assert code == 200, f"GET 不该被 token 拦：{code}"
+        # 预检必须允许 Authorization，否则浏览器带 token 的写请求过不了预检
+        req = urllib.request.Request(f"{base}/api/entry", method="OPTIONS",
+                                     headers={"Origin": base,
+                                              "Access-Control-Request-Method": "POST",
+                                              "Access-Control-Request-Headers": "authorization"})
+        with urllib.request.urlopen(req, timeout=20) as res:
+            allow_h = res.headers.get("Access-Control-Allow-Headers", "")
+        assert "Authorization" in allow_h, f"预检没允许 Authorization：{allow_h!r}"
+        # 页面自己会问 token 并用 Authorization 重发
+        code, page, _ = get(f"{base}/web/index.html")
+        assert b"Authorization" in page and b"wgp-token" in page, \
+            "web/index.html 还不会带 token"
+        assert b'postJSON("/api/event"' in page and b'postJSON("/api/status"' in page, \
+            "web 的两个写入口没走统一的重试封装"
+        # 日志里能查到 201，且不落 token 明文
+        text = log.read_text(encoding="utf-8")
+        recs = [json.loads(line) for line in text.splitlines() if line.strip()]
+        assert any(r["status"] == 201 and r["action"] == "entry" and r["id"] == "port"
+                   for r in recs), f"写日志缺 201 记录：{recs}"
+        assert "s3cret" not in text, "写日志里不该出现 token 明文"
+
+
+def check_慢请求体不挡写():
+    """读 body 必须在写锁之外：一个只发头不发 body 的客户端不能把写入口锁死。"""
+    import time
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        base = server_for(world, writable=True)
+        assert serve.Handler.timeout and serve.Handler.timeout <= 60, \
+            "Handler 没设连接读超时，慢客户端能永远占着线程"
+        u = urllib.parse.urlsplit(base)
+        slow = socket.create_connection((u.hostname, u.port), timeout=20)
+        try:
+            slow.sendall(
+                b"POST /api/event HTTP/1.1\r\n"
+                + f"Host: {u.hostname}:{u.port}\r\n".encode()
+                + b"Content-Type: application/json\r\n"
+                  b"Content-Length: 100\r\n\r\n")
+            time.sleep(0.3)  # 让慢请求先进处理器、握住（旧实现的）写锁
+            t0 = time.monotonic()
+            code, body, _ = post(f"{base}/api/entry",
+                                 {"type": "location", "title": "港", "id": "port"})
+            dt = time.monotonic() - t0
+        finally:
+            slow.close()
+        assert code == 201, f"慢请求体旁边写卡失败：{code} {body[:300]}"
+        assert dt < 2.0, f"写卡被慢请求体堵了 {dt:.1f}s（读 body 还在写锁里）"
+
+
+def check_写审计日志():
+    """--write-log：每次写请求一行 JSON（时间/动作/id/状态/规则），成功与回滚都记。"""
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        log = Path(td) / "writes.jsonl"
+        base = server_for(world, writable=True, write_log=log)
+        for eid, type_ in (("anna", "character"), ("bob", "character"),
+                           ("sword-x", "item")):
+            code, body, _ = post(f"{base}/api/entry",
+                                 {"type": type_, "title": eid, "id": eid})
+            assert code == 201, f"写 {eid} 失败：{code} {body[:300]}"
+        code, body, _ = post(f"{base}/api/event", {
+            "event_kind": "transfer", "id": "ev-ghost",
+            "by": ["anna"], "to": ["ghost-nobody"], "object": ["sword-x"],
+            "when": "元年", "when_sort": 1})
+        assert code == 422, f"悬空腿应 422，实际 {code}：{body[:300]}"
+        recs = [json.loads(line) for line in
+                log.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert recs, "写日志是空的"
+        for r in recs:
+            assert set(("ts", "remote", "action", "status")) <= set(r), f"日志字段缺：{r}"
+            assert r["remote"] == "127.0.0.1", f"remote 不对：{r}"
+        ok = [r for r in recs if r["action"] == "entry" and r["id"] == "anna"]
+        assert ok and ok[-1]["status"] == 201, f"成功写卡没记 201：{recs}"
+        bad = [r for r in recs if r["id"] == "ev-ghost"]
+        assert bad and bad[-1]["status"] == 422, f"回滚没记 422：{recs}"
+        assert "CA401" in bad[-1].get("rules", []), f"回滚日志没记规则：{bad[-1]}"
+
+
 CHECKS = [
     ("接口给的数据 = CLI 导出的数据", check_world_同_CLI_导出),
     ("两次请求一致，且不漏绝对路径", check_两次请求一致_且没有绝对路径),
@@ -836,6 +942,9 @@ CHECKS = [
     ("跨源写被挡、同源放行、预检列 POST", check_跨源写被挡_同源放行),
     ("坏请求给 4xx 而不是断连", check_坏请求不制造断连),
     ("并发写不互删（写锁 + 只回滚自己）", check_并发写不互删),
+    ("写端点要 token、预检允许 Authorization", check_写入口_token),
+    ("慢请求体不挡写（读 body 在锁外）", check_慢请求体不挡写),
+    ("写审计日志（成功与回滚都记）", check_写审计日志),
 ]
 
 
