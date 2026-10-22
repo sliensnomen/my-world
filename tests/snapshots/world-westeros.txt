@@ -20,7 +20,6 @@ exit=0
 [CA503] warning entries/night-watch-order.md: military 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
 [CA503] warning entries/the-north.md: political 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
 [CA503] warning entries/wight-army.md: military 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
-[CA102] info    entries/ev-ice-reforged.md: event_kind='x-wgp-transform' 为实验值（x- 前缀），已计入案例收集
 [CA108] info    entries/wight-army.md: kind='x-magic-logistics' 为实验值，已计入案例收集
 
 42 个条目 | 0 错误 | 21 警告

@@ -84,11 +84,11 @@ CORE_REQUIRED_FIELDS = ("id", "title", "type", "author", "date", "status",
 ANNOTATION_FIELDS = ("layer", "depends_on", "superseded_by")
 RELATIONS_FIELD = "relations"
 
-# 事件流水字段（协议 1.2/1.4/1.6）：存储层只认「有这些键」，词表与腿表是判定层的事。
+# 事件流水字段（协议 1.2/1.4/1.6/1.7）：存储层只认「有这些键」，词表与腿表是判定层的事。
 # custody_of（保管断言）与 member_of（组织归属断言）不是事件腿，但同属流水族字段面，
 # 一并登记在这里。
 EVENT_FIELDS = ("when", "when_sort", "event_kind", "by", "to", "object", "from",
-                "custody_of", "member_of")
+                "result", "custody_of", "member_of")
 
 # 能读的旧具名字段（`Entry.relations` 把它们归一化到同一视图）。
 # 契约 x-relation-source.aliases 列了十一个，这里读全十一个——收口完成（旧「已知漂移」关闭）。

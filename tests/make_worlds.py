@@ -555,15 +555,15 @@ leave 可以是单方面的（叛逃不需要守夜人同意）。这笔账的�
 不对称（单方面 vs 双向）就写在这笔账的注脚里。）""",
 "by:\n  - will-deserter\nfrom:\n  - night-watch-order\n")
 
-WE["ev-ice-reforged"] = evm("ev-ice-reforged", "x-wgp-transform", "301 AC", 301, """\
-泰温·兰尼斯特下令把寒冰熔了，铸成两把新剑。用 x-wgp-transform 记：
-object 是旧身份（寒冰），to 借来当'产物'用——守誓者与寡妇之嚎。
-这笔账暴露了 transform 转正前必须回答的问题：旧 id 的存在窗口
-该止于这笔（CA708 的注记就是为它写的），两个新 id 的窗口该始于
-这笔，但'承袭旧持有者与位置'要不要自动发生、result 要不要单独立
-一条腿，现在都没拍——先把账记下来，案例攒够再定词表。
-旧剑的账到熔炉为止，新剑的账从这里开头，两本账在这笔上交接。""",
-"object:\n  - ice-sword\nto:\n  - oathkeeper\n  - widows-wail\n")
+WE["ev-ice-reforged"] = evm("ev-ice-reforged", "transform", "301 AC", 301, """\
+泰温·兰尼斯特下令把寒冰熔了，铸成两把新剑。transform 的腿表就是从
+这笔账定型的：object 是旧身份（寒冰，存在窗口到此关闭），result 是
+新身份列表（守誓者与寡妇之嚎，各自的窗口从这里打开）——旧身份死、
+新身份生、物质延续。注意流水不替新身份接管旧账：两把新剑此时的
+持有者与位置账上没有，要记就再写一笔 transfer——v0 不猜。
+（backlog B1 的攒案例事件，协议 1.7 转正；它是 transform 这个词
+进词表的理由本身——先有账，后有名。）""",
+"object:\n  - ice-sword\nresult:\n  - oathkeeper\n  - widows-wail\n")
 
 
 def write_world(path: Path, entries: dict) -> None:

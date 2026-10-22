@@ -35,8 +35,8 @@ import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 
-PROTOCOL_VERSION = "1.6"   # 1.6：join/leave 转正 + member_of 断言与 CA712 对账（新增，按 §9.1 升 minor）
-CONTRACT_VERSION = "0.5"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
+PROTOCOL_VERSION = "1.7"   # 1.7：transform 转正，存在窗口在转化处交接（新增，按 §9.1 升 minor）
+CONTRACT_VERSION = "0.6"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
 
@@ -668,23 +668,23 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                 f"（派生状态按 id 序取 `{first}`；请统一到一张卡上断言，或用流水表达流转）"))
 
     # CA708: 客体的事件必须落在它自己的存在窗口里（create/birth 开窗，
-    # death/destroy 关窗；端点事件自身即边界，跳过）。缺 when_sort 的
-    # 边界不产生窗口、缺 when_sort 的事件不进流水——两头都 fail-open。
+    # death/destroy 关窗，transform 关旧窗开新窗；端点事件自身即边界，跳过）。
+    # 缺 when_sort 的边界不产生窗口、缺 when_sort 的事件不进流水——两头都 fail-open。
     windows = ledger.existence_windows(index)
     for e, v in events:
-        if v.kind in ("birth", "create", "death", "destroy"):
+        if v.kind in ("birth", "create", "death", "destroy", "transform"):
             continue  # 端点事件自身豁免
         for obj in v.legs.get("object", []):
             start, end = windows.get(obj, (None, None))
             if start is not None and v.when_sort < start:
                 findings.append(Finding(
                     "CA708", "warning", e.rel,
-                    f"不存在的东西在动弹：`{obj}` 在 when_sort={start:g} 才被造出来/出生，"
+                    f"不存在的东西在动弹：`{obj}` 在 when_sort={start:g} 才被造出来/出生/转化出来，"
                     f"本事件却在 when_sort={v.when_sort:g} 就拿它当客体"))
             elif end is not None and v.when_sort > end:
                 findings.append(Finding(
                     "CA708", "warning", e.rel,
-                    f"不存在的东西在动弹：`{obj}` 在 when_sort={end:g} 已 death/destroy，"
+                    f"不存在的东西在动弹：`{obj}` 在 when_sort={end:g} 已死亡/被毁/被转化，"
                     f"本事件却在更晚的 when_sort={v.when_sort:g} 拿它当客体"))
 
     # CA709: 手写 custody_of 断言与 custody 流水推出的最终保管人打架

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 EVENT_KINDS = {"transfer", "custody", "move", "create", "destroy",
-               "grant", "birth", "death", "join", "leave"}
+               "grant", "birth", "death", "join", "leave", "transform"}
 
 from dataclasses import dataclass  # noqa: E402
 import math  # noqa: E402
@@ -27,8 +27,11 @@ REQUIRED_LEGS: dict[str, tuple[str, ...]] = {
     # 不为「组织同意」单独立腿——v0 只记事实侧（人进了/出了）
     "join": ("by", "to"),
     "leave": ("by", "from"),
+    # transform（协议 1.7）：object 是旧身份（关窗），result 是新身份列表（开窗，
+    # 多值 = 一生多）。新 id 不自动继承旧 id 的持有者与位置——账接不接由作者写清
+    "transform": ("object", "result"),
 }
-LEG_FIELDS = ("by", "to", "object", "from")
+LEG_FIELDS = ("by", "to", "object", "from", "result")
 
 
 @dataclass
@@ -171,16 +174,26 @@ def derive_membership(index: dict[str, Entry]) -> dict[str, dict[str, str]]:
 def existence_windows(index: dict[str, Entry]) -> dict[str, tuple[float | None, float | None]]:
     """每个客体的存在窗口 (起点, 终点)：birth/create 开窗，death/destroy 关窗。
 
+    transform（协议 1.7）是窗口的交接点：旧身份（object）的窗口止于它，
+    每个新身份（result）的窗口始于它——旧身份死、新身份生，物质延续。
     只读有 when_sort 的完整事件（缺排序键的边界不产生边界——fail-open）。
-    同一端点出现多次取最早：先死先算。transform 之类的「旧身份死、新身份生」
-    将来进词表时，转化事件本身要登记为两个 id 各自的窗口边界（见设计文档）。
+    同一端点出现多次取最早：先死先算。
     """
     windows: dict[str, list] = {}
     for e, v in ordered_events(index):
-        for obj in v.legs.get("object", []):
-            w = windows.setdefault(obj, [None, None])
-            if v.kind in ("birth", "create"):
+        if v.kind in ("birth", "create"):
+            for obj in v.legs.get("object", []):
+                w = windows.setdefault(obj, [None, None])
                 w[0] = v.when_sort if w[0] is None else min(w[0], v.when_sort)
-            elif v.kind in ("death", "destroy"):
+        elif v.kind in ("death", "destroy"):
+            for obj in v.legs.get("object", []):
+                w = windows.setdefault(obj, [None, None])
                 w[1] = v.when_sort if w[1] is None else min(w[1], v.when_sort)
+        elif v.kind == "transform":
+            for obj in v.legs.get("object", []):
+                w = windows.setdefault(obj, [None, None])
+                w[1] = v.when_sort if w[1] is None else min(w[1], v.when_sort)
+            for new_id in v.legs.get("result", []):
+                w = windows.setdefault(new_id, [None, None])
+                w[0] = v.when_sort if w[0] is None else min(w[0], v.when_sort)
     return {k: (w[0], w[1]) for k, w in windows.items()}

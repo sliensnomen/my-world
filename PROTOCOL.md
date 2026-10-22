@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**39 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.6"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.7"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -67,6 +67,10 @@
 **v1.6 修订记录（2026-10-22，join/leave 转正）：**
 
 25. **`join`/`leave` 进 `event_kind` 词表 + `member_of` 断言 + CA712**。两个 x- 案例（琼恩入伍、威尔叛逃）攒够证据后转正：人写 `by` 腿（与 CA705 同一条腿，死人不能入伙），组织写 `to`（join）/`from`（leave）；不为「组织同意」单独立腿——v0 只记事实侧。新增断言字段 `member_of`（多值合法，一个人可以在多个组织，所以只有对账没有互搏）：卡上断言归属、流水里最后一个动作却是 `leave` 即 CA712（error）。`ledger` 子命令加「组织归属」段。
+
+**v1.7 修订记录（2026-10-22，transform 转正）：**
+
+26. **`transform` 进词表 + `result` 腿：存在窗口在转化处交接**。案例是寒冰熔成守誓者与寡妇之嚎（`ev-ice-reforged`）：`object` 是旧身份（窗口止于这笔），`result` 是新身份列表（各自的窗口始于这笔，多值 = 一生多）。CA708 在 1.4 记下的「隐含假设」就此兑现：客体 id 不再假设全程不变，转化事件本身即两个 id 各自的边界。**持有者与位置不自动继承**——新身份的账由作者另写事件补记，v0 不猜。
 
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
@@ -181,10 +185,11 @@ ai_assisted: false
 | `from` | 可选 | id 列表 | 事件腿（协议 1.4）：移动的起点，先记后查 |
 | `custody_of` | 可选 | id 列表 | 保管断言（协议 1.4）：本卡保管这些客体；与 `owns` 平行，受 CA709/CA710 对账 |
 | `member_of` | 可选 | id 列表 | 组织归属断言（协议 1.6）：本卡属于这些组织；多值合法，受 CA712 对账（流水里最后一个动作是 `leave` 即打架） |
+| `result` | 可选 | id 列表 | 事件腿（协议 1.7）：`transform` 的产物（新身份）；多值 = 一生多。旧身份（`object`）的存在窗口止于这笔，新身份的窗口始于这笔；持有者与位置不自动继承 |
 
 **扩展字段：** 实现可以添加任何 `x-` 前缀的自定义字段；不带前缀的未定义字段**必须**被审计器拒绝（CA106），防止私有字段渗透进协议。
 
-上表 31 个字段与 `world.schema.json` 的 `properties` 一一对应；其中 `relations` 是规范形，`canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`/`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 是兼容别名——两种写法进同一张边表再判定（§5.4）。`when`/`when_sort`/`event_kind`/`by`/`to`/`object` 六个是协议 1.2 的事件流水字段：契约只约束形状，词表、必填腿、时序与账平是判定层的事（§6.3 CA7xx）。
+上表 32 个字段与 `world.schema.json` 的 `properties` 一一对应；其中 `relations` 是规范形，`canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`/`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 是兼容别名——两种写法进同一张边表再判定（§5.4）。`when`/`when_sort`/`event_kind`/`by`/`to`/`object` 六个是协议 1.2 的事件流水字段：契约只约束形状，词表、必填腿、时序与账平是判定层的事（§6.3 CA7xx）。
 
 ### 2.3 引用语法
 
@@ -475,7 +480,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA705 | warning | 死人做活事：事件的 `by` 里有人在**严格更早**（`when_sort` 较小）的事件里已 `death`；同刻不算 |
 | CA706 | warning | 半截事件：`when` 与 `event_kind` 只给了一个。两个都给才是完整事件，都不给就是普通史料卡（协议 1.1 的世界在 1.2 下不红） |
 | CA707 | warning | `owns` 断言互搏：同一客体被多张卡断言持有。派生状态按 id 序取第一个只是「报告需要一个确定答案」，不是裁决；请统一到一张卡上断言，或改用流水表达流转。与有无流水无关 |
-| CA708 | warning | 不存在的东西在动弹：客体的事件落在它自己的存在窗口外——`create`/`birth` 开窗、`death`/`destroy` 关窗（取最早的边界；缺 `when_sort` 的边界不产生窗口）。端点事件自身豁免。CA705 管 `by` 腿，本条管 `object` 腿。隐含假设：客体 id 在窗口内不变——`transform` 进词表时转化事件本身即两个 id 各自的窗口边界，届时回来改这条 |
+| CA708 | warning | 不存在的东西在动弹：客体的事件落在它自己的存在窗口外——`create`/`birth` 开窗、`death`/`destroy` 关窗、`transform` 关旧窗开新窗（取最早的边界；缺 `when_sort` 的边界不产生窗口）。端点事件自身豁免。CA705 管 `by` 腿，本条管 `object` 腿 |
 | CA709 | error | 结论与流水打架（保管版）：手写 `custody_of` 断言与 custody 流水推出的最终保管人不一致。custody 不改变持有者、只改保管；多值受方与 CA704 同口径（最终那笔 `to` 列表里任一受方放行） |
 | CA710 | warning | `custody_of` 断言互搏：同一客体被多张卡断言保管（CA707 的保管版） |
 | CA711 | warning | 轨迹断裂：`move` 的 `from` 对不上链上当前位置（上一笔 `move` 的 `to`）。只查存在窗口内的 `move`（窗外归 CA708，不双报）；上一笔 `to` 多值则位置「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时当前位置在列表里即放行；缺 `from`/`when_sort` 不查 |
@@ -509,7 +514,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.6",
+  "protocol_version": "1.7",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

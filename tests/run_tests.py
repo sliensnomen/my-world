@@ -1590,6 +1590,70 @@ def check_member_of_reconciles_with_ledger() -> list[str]:
     return problems
 
 
+def check_transform_closes_and_opens_windows() -> list[str]:
+    """transform（协议 1.7）：旧身份死、新身份生——存在窗口在转化处交接。
+
+    object = 旧 id（关窗），result = 新 id 列表（开窗，多值 = 一生多）。
+    旧 id 之后被用 / 新 id 之前被用都报 CA708；transform 事件自身是边界，不报。
+    缺 result 腿报 CA702。新 id 不自动继承旧 id 的持有者与位置（v0 不猜）。
+    """
+    problems = []
+
+    def ev(id, kind, sort, legs):
+        return _card(id, f"when: 第{sort}年\nevent_kind: {kind}\nwhen_sort: {sort}\n{legs}"
+                     ).replace("type: location", "type: event")
+
+    cards = {
+        "old-sword": _card("old-sword", ""),
+        "new-sword": _card("new-sword", ""),
+        "keep-x": _card("keep-x", ""),
+        "ev-create": ev("ev-create", "create", 1, "object:\n  - old-sword\n"),
+        "ev-transform": ev("ev-transform", "transform", 5,
+                           "object:\n  - old-sword\nresult:\n  - new-sword\n"),
+        # 旧 id 在关窗之后被移动 → CA708
+        "ev-late": ev("ev-late", "move", 7, "object:\n  - old-sword\nto:\n  - keep-x\n"),
+        # 新 id 在开窗之前被移动 → CA708
+        "ev-early": ev("ev-early", "move", 3, "object:\n  - new-sword\nto:\n  - keep-x\n"),
+        # 新 id 在开窗之后被移动 → 不响
+        "ev-after": ev("ev-after", "move", 6, "object:\n  - new-sword\nto:\n  - keep-x\n"),
+        # 缺 result 腿 → CA702
+        "ev-bad": ev("ev-bad", "transform", 8, "object:\n  - old-sword\n"),
+    }
+    tmp, world = _temp_world("canonlint-transform-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"transform 世界把 traceback 写到了 stderr：\n{err}")
+        if "CA102" in out:
+            problems.append(f"transform 已是词表值，不该报 CA102：\n{out}")
+        for bad, why in (("ev-late", "旧 id 在 transform 之后被移动"),
+                         ("ev-early", "新 id 在 transform 之前被移动")):
+            if not any("[CA708]" in ln and f"{bad}.md" in ln for ln in out.splitlines()):
+                problems.append(f"{why} 却没报 CA708：\n{out}")
+        for good, why in (("ev-transform", "transform 事件自身即边界"),
+                          ("ev-after", "新 id 在开窗之后")):
+            if any("[CA708]" in ln and f"{good}.md" in ln for ln in out.splitlines()):
+                problems.append(f"{good}（{why}）不该报 CA708：\n{out}")
+        if not any("[CA702]" in ln and "ev-bad.md" in ln for ln in out.splitlines()):
+            problems.append(f"transform 缺 result 腿没报 CA702：\n{out}")
+    # 不自动继承：旧 id 有 owns 断言，transform 后新 id 的持有者是「无」而不是旧主
+    cards2 = {
+        "anna": _card("anna", "owns:\n  - old-sword\n"),
+        "old-sword": _card("old-sword", ""),
+        "new-sword": _card("new-sword", ""),
+        "ev-transform": ev("ev-transform", "transform", 5,
+                           "object:\n  - old-sword\nresult:\n  - new-sword\n"),
+    }
+    tmp, world = _temp_world("canonlint-transform-own-", cards2)
+    with tmp:
+        p = subprocess.run([PY, str(TOOL), "ledger", str(world)],
+                           cwd=ROOT, capture_output=True, text=True)
+        for ln in p.stdout.splitlines():
+            if ln.startswith("new-sword:") and "（无）" not in ln:
+                problems.append(f"新 id 自动继承了旧 id 的持有者（v0 裁决是不猜）：\n{p.stdout}")
+    return problems
+
+
 def check_ledger_bad_world_fires_every_rule() -> list[str]:
     """变异验证的骨架：world-ledger-bad 必须真的把 CA7xx 每条至少踩一次。
 
@@ -1711,6 +1775,7 @@ def main() -> int:
         ("轨迹断裂报 CA711（未定/多值放行、与 CA708 不双报）", check_trajectory_break_fires_ca711),
         ("join/leave 进词表、腿表参与 CA702", check_join_leave_are_vocabulary_kinds),
         ("member_of 断言与流水对账（CA712）+ 悬空/坏形状", check_member_of_reconciles_with_ledger),
+        ("transform 窗口交接：旧关新开、自身豁免、不自动继承", check_transform_closes_and_opens_windows),
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
     ]
