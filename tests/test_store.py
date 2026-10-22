@@ -1190,6 +1190,46 @@ def check_new_writes_event_cards():
         assert rc == 2, f"坏 event_kind 应当 exit 2，实际 {rc}：{out} {err}"
 
 
+def check_set_fields_does_line_level_updates():
+    """set_fields（人机交互 Phase 3）：行级最小改动 + 写完自检 + 拒绝写坏。
+
+    升格/降级按钮的存储底座：改 status/superseded_by 只动那一行；
+    重复键的卡拒绝改（YAML last-wins，改了等于没改）；非标量值拒绝。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        assert store.cmd_init(world, exe="canonlint") == 0
+        rc, out, err = run(["new", "location", "灰港", "--id", "grey-harbor",
+                            "--root", str(world)])
+        assert rc == 0, f"{out} {err}"
+        path = world / "entries/locations/grey-harbor.md"
+        before = path.read_text(encoding="utf-8")
+        rc, msg = store.set_fields(world, "grey-harbor", {"status": "trial"})
+        assert rc == 0, msg
+        got = store.parse_entry(path, world)
+        assert got.meta["status"] == "trial"
+        # 最小改动：除了 status 那一行，一个字节不动
+        after = path.read_text(encoding="utf-8")
+        assert after.replace("status: trial", "status: draft") == before
+        # superseded_by 原来就有（null）→ 整行替换；写坏值也要过自检
+        rc, msg = store.set_fields(world, "grey-harbor",
+                                   {"superseded_by": "new-harbor"})
+        assert rc == 0, msg
+        assert store.parse_entry(path, world).meta["superseded_by"] == "new-harbor"
+        # 不存在的条目 / 非标量值 / 坏字段名
+        rc, _ = store.set_fields(world, "no-such", {"status": "trial"})
+        assert rc == 1
+        rc, _ = store.set_fields(world, "grey-harbor", {"status": ["canon"]})
+        assert rc == 2
+        rc, _ = store.set_fields(world, "grey-harbor", {"Bad Key": "x"})
+        assert rc == 2
+        # 重复键的卡拒绝改（改了等于没改，CA112 的先修掉）
+        path.write_text(before.replace("status: draft", "status: draft\nstatus: canon"),
+                        encoding="utf-8")
+        rc, msg = store.set_fields(world, "grey-harbor", {"status": "trial"})
+        assert rc == 2 and "重复" in msg, msg
+
+
 CHECKS = (
     ("规范形与旧写法等价（三种关系）", check_canonical_equals_legacy),
     ("规范形的形状错误会出现在报告里", check_shape_errors_reach_the_report),
@@ -1215,6 +1255,7 @@ CHECKS = (
     ("new 写的是 YAML 不是字符串拼接（标题里的 # 与冒号）", check_new_writes_yaml_not_string_splicing),
     ("坏 YAML 是发现不是 traceback（深嵌套 / 重复键）", check_broken_yaml_is_a_finding_not_a_traceback),
     ("new/event 写出事件卡与断言字段（写入路径 Phase 0）", check_new_writes_event_cards),
+    ("set_fields 行级改字段 + 写完自检 + 拒绝写坏（Phase 3）", check_set_fields_does_line_level_updates),
 )
 
 

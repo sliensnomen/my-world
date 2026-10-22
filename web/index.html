@@ -43,6 +43,7 @@
     <button data-view="entries" class="active">台账</button>
     <button data-view="findings">审计</button>
     <button data-view="ledger">流水</button>
+    <button data-view="tickets">工单</button>
     <button data-view="event" id="nav-event" hidden>记账</button>
   </nav>
 </header>
@@ -198,10 +199,68 @@ function renderEventForm() {
   });
 }
 
+function renderTickets() {
+  // 仲裁工单：断言互搏与「结论和流水打架」自动生成（宪章第五条的客观兜底）
+  const RULES = ["CA704", "CA707", "CA709", "CA710", "CA712"];
+  const fs = WORLD.findings.filter(f => RULES.includes(f.rule));
+  const statusOf = {};
+  for (const e of WORLD.entries) if (e.id) statusOf[e.id] = e.status;
+  const idOf = (path) => {
+    const e = WORLD.entries.find(x => x.path === path);
+    return e ? e.id : null;
+  };
+  let html = `<h3>仲裁工单（互搏与对账不一致）</h3>`;
+  if (!fs.length) html += `<div class="empty">没有待仲裁的矛盾。</div>`;
+  else {
+    html += `<table><tr><th>规则</th><th>条目</th><th>问题</th><th>处置</th></tr>`;
+    for (const f of fs) {
+      const id = idOf(f.entry);
+      const st = statusOf[id] || "";
+      const next = {draft: "trial", trial: "canon"}[st];
+      let actions = "";
+      if (HEALTH && HEALTH.writable && id) {
+        if (next) actions += `<button data-act="status" data-id="${esc(id)}" data-st="${next}">升 ${next}</button> `;
+        actions += `<button data-act="archive" data-id="${esc(id)}">降级…</button>`;
+      }
+      html += `<tr><td><span class="badge ${f.level}">${f.rule}</span></td>
+        <td><code>${esc(f.entry)}</code><br><span class="muted">${esc(st)}</span></td>
+        <td>${esc(f.message)}</td><td class="findings-col">${actions}</td></tr>`;
+    }
+    html += "</table>";
+  }
+  html += `<p class="muted">治理纪律：升格/降级与写卡同一条路——写完即审，红则回滚；
+  降级必须给承接者（superseded_by），上诉窗口 72 小时按 git 最后一次提交计。</p>
+  <div id="f-msg"></div>`;
+  $("#main").innerHTML = html;
+  document.querySelectorAll("[data-act]").forEach(btn =>
+    btn.addEventListener("click", async () => {
+      const payload = {id: btn.dataset.id};
+      if (btn.dataset.act === "status") payload.status = btn.dataset.st;
+      else {
+        const succ = prompt(`降级 ${btn.dataset.id}：承接条目 id（留空 = 无承接者）`);
+        if (succ === null) return;
+        payload.status = "archived";
+        payload.superseded_by = succ.trim() || null;
+      }
+      const res = await fetch("/api/status", {method: "POST",
+        headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 200) {
+        $("#f-msg").innerHTML = `<span style="color:var(--green)">已更新 ${esc(payload.id)}</span>`;
+        WORLD = await (await fetch("/api/world")).json();
+        renderTickets();
+      } else {
+        $("#f-msg").innerHTML = `<span style="color:var(--red)">${esc(data.error || ("HTTP " + res.status))}</span>` +
+          (data.findings || []).map(f => `<p><span class="badge ${f.level}">${f.rule}</span> ${esc(f.message)}</p>`).join("");
+      }
+    }));
+}
+
 function render(view) {
   if (view === "entries") renderEntries(null);
   else if (view === "findings") renderFindings();
   else if (view === "ledger") renderLedger();
+  else if (view === "tickets") renderTickets();
   else if (view === "event") renderEventForm();
 }
 

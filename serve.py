@@ -153,17 +153,65 @@ class Handler(BaseHTTPRequestHandler):
             return self._post_card(event=False)
         if path == "/api/event":
             return self._post_card(event=True)
+        if path == "/api/status":
+            return self._post_status()
         return self._json(404, {"error": f"没有这个路由: {path}", "routes": ROUTES})
 
-    def _post_card(self, event: bool):
-        root = self.server.wgp_root
+    def _read_json(self):
         try:
             length = int(self.headers.get("Content-Length") or 0)
             data = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, TypeError) as e:
-            return self._json(400, {"error": f"JSON 解析失败: {e}"})
+            return None, self._json(400, {"error": f"JSON 解析失败: {e}"})
         if not isinstance(data, dict):
-            return self._json(400, {"error": "请求体必须是 JSON 对象"})
+            return None, self._json(400, {"error": "请求体必须是 JSON 对象"})
+        return data, None
+
+    def _post_status(self):
+        """治理动作（人机交互 Phase 3）：升格（draft→trial→canon）/ 降级（archived）。
+
+        与写卡同一条纪律：走 store 的行级写入 + 写完即审、红则回滚。
+        """
+        data, err = self._read_json()
+        if err:
+            return err
+        root = self.server.wgp_root
+        entry_id = data.get("id")
+        updates: dict = {}
+        if "status" in data:
+            if data["status"] not in canonlint.VALID_STATUS:
+                return self._json(400, {
+                    "error": f"status={data['status']!r} 非法，须为 "
+                             f"{sorted(canonlint.VALID_STATUS)}"})
+            updates["status"] = data["status"]
+        if "superseded_by" in data:
+            updates["superseded_by"] = data["superseded_by"]
+        if not entry_id or not updates:
+            return self._json(400, {"error": "必须给 id 与至少一个字段（status/superseded_by）"})
+        _all, index, _issues = canonlint.store.collect(root)
+        target = index.get(entry_id)
+        if target is None:
+            return self._json(404, {"error": f"条目 `{entry_id}` 不存在"})
+        old_bytes = target.path.read_bytes()
+        rc, msg = canonlint.store.set_fields(root, entry_id, updates)
+        if rc != 0:
+            return self._json(400, {"error": msg})
+        _all, _idx, findings, _reports = canonlint.run(root, 0.85, [])
+        errors = [f for f in findings if f.level == "error"]
+        if errors:
+            target.path.write_bytes(old_bytes)
+            return self._json(422, {
+                "error": "审计不通过，已回滚",
+                "findings": [{"rule": f.rule, "level": f.level,
+                              "entry": f.entry, "message": f.message}
+                             for f in errors]})
+        return self._json(200, {"ok": True, "id": entry_id, "updates": updates})
+
+    def _post_card(self, event: bool):
+        root = self.server.wgp_root
+        data, err = self._read_json()
+        if err:
+            return err
         legs = ("when", "when_sort", "by", "to", "object", "from", "result",
                 "owns", "custody_of", "member_of")
         if event:
@@ -231,11 +279,21 @@ class Handler(BaseHTTPRequestHandler):
             })
         edges = [r for r in data["relations"]
                  if r["source"] == entry_id or r["target"] == entry_id]
+        last_change = None
+        try:  # 上诉窗口要有个时间锚：git 里这张卡的最后一次提交（best-effort）
+            import subprocess
+            p = subprocess.run(
+                ["git", "log", "-1", "--format=%cI", "--", entry["path"]],
+                cwd=self.server.wgp_root, capture_output=True, text=True, timeout=5)
+            last_change = p.stdout.strip() or None
+        except Exception:  # noqa: BLE001 —— 没有 git 或超时都不影响主数据
+            last_change = None
         return self._json(200, {
             "protocol_version": data["protocol_version"],
             "contract_version": data["contract_version"],
             "entry": entry,
             "relations": edges,
+            "last_change": last_change,
         })
 
     def _raw(self, rel: str) -> None:

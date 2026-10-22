@@ -511,3 +511,54 @@ def cmd_link(root: Path, src: str, dst: str, kind: str, critical: bool,
               "（注释与键序可能变化）")
     print("记得跑 canonlint 检查这条边是否合法（层级方向/环/状态）")
     return 0
+
+
+def set_fields(root: Path, entry_id: str, updates: dict) -> tuple[int, str]:
+    """改一个条目的标量字段（如 `status` / `superseded_by`）：行级最小改动。
+
+    只收标量值（str / None / bool / 数字）——列表与映射会让「整行替换」丢掉
+    多行内容，那种改动请先想清楚再来加。返回 (退出码, 人读的消息)；
+    写完重解析自检：新 meta 必须 == 旧 meta + updates，不一致就拒绝写盘。
+    """
+    for key, value in updates.items():
+        if not re.fullmatch(r"[a-z0-9_-]+", str(key)):
+            return 2, f"字段名 {key!r} 非法（字段名可带下划线，id 词法不管这个）"
+        if value is not None and not isinstance(value, (str, bool, int, float)):
+            return 2, f"字段 {key!r} 的值只支持标量（str/bool/数字/null）"
+    all_entries, index, _ = collect(root)
+    if entry_id not in index:
+        for x in all_entries:
+            if x.parse_error and x.path.stem == entry_id:
+                return 1, f"条目 `{entry_id}` 存在但解析失败：{x.parse_error}"
+        return 1, f"条目 `{entry_id}` 不存在"
+    e = index[entry_id]
+    with _world_lock(root):
+        text, bom, nl = _read_file(e.path)
+        m = FRONTMATTER_RE.match(text)
+        if m is None:
+            return 2, "该条目没有可解析的 frontmatter，请手动编辑"
+        before = parse_text(text, e.rel)
+        if before.duplicate_keys:
+            return 2, (f"这张卡的 frontmatter 有重复字段 "
+                       f"{sorted(set(before.duplicate_keys))}：先修掉重复再改")
+        fm = m.group(1)
+        for key, value in updates.items():
+            line = yaml.safe_dump({key: value}, allow_unicode=True,
+                                  default_flow_style=False).strip()
+            pattern = re.compile(rf"^{re.escape(key)}\s*:.*$", re.M)
+            if pattern.search(fm):
+                fm = pattern.sub(line, fm, count=1)
+            else:
+                fm = fm.rstrip("\r\n") + nl + line
+        candidate = _splice(text, m, fm)
+        want = dict(before.meta)
+        want.update(updates)
+        got = parse_text(candidate, e.rel)
+        if got.meta != want:
+            return 2, ("写入自检失败（改后的内容与预期不一致），拒绝写入磁盘；"
+                       "请手动编辑这张卡")
+        try:
+            _atomic_write(e.path, bom + candidate)
+        except OSError as err:
+            return 2, f"写入失败：{err}"
+    return 0, f"已更新 {entry_id}：{updates}"

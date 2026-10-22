@@ -576,6 +576,53 @@ def check_可写模式的写入与审计回滚():
         assert code == 400, f"坏 kind 应 400，实际 {code}"
 
 
+def check_治理端点的升格降级与回滚():
+    """POST /api/status（人机交互 Phase 3）：升格/降级走行级写入 + 写完即审。
+
+    升格 draft→trial→canon 绿灯放行；降级 archived 且无承接者、仍被 canon_refs
+    引用 → CA405 error → 422 且文件被回滚（治理动作不能把世界写红）。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        base = server_for(world, writable=True)
+        for eid in ("old-lore", "reader-card"):
+            code, body, _ = post(f"{base}/api/entry",
+                                 {"type": "event", "title": eid, "id": eid})
+            assert code == 201, f"写 {eid} 失败：{code} {body[:300]}"
+        # reader-card 引用 old-lore（canon_refs）
+        code, body, _ = post(f"{base}/api/entry",
+                             {"type": "event", "title": "引用者", "id": "ref-1"})
+        assert code == 201, body[:300]
+        # 升格：draft → trial → canon 一路绿灯
+        for st in ("trial", "canon"):
+            code, body, _ = post(f"{base}/api/status",
+                                 {"id": "old-lore", "status": st})
+            assert code == 200, f"升格到 {st} 失败：{code} {body[:300]}"
+        # 降级但还被人引用、又不给承接者 → CA405 → 422 回滚
+        path = world / "entries/events/old-lore.md"
+        ref_path = world / "entries/events/ref-1.md"
+        ref_path.write_text(ref_path.read_text(encoding="utf-8").replace(
+            "canon_refs: []", "canon_refs:\n  - old-lore"), encoding="utf-8")
+        before = path.read_bytes()
+        code, body, _ = post(f"{base}/api/status",
+                             {"id": "old-lore", "status": "archived"})
+        assert code == 422, f"无承接者的降级应 422，实际 {code}：{body[:300]}"
+        assert path.read_bytes() == before, "CA405 红了的降级没被回滚"
+        # 没人引用、有承接者的降级 → 放行（降级处置完整的合法形态）
+        code, body, _ = post(f"{base}/api/entry",
+                             {"type": "event", "title": "承接者", "id": "new-lore"})
+        assert code == 201, body[:300]
+        code, body, _ = post(f"{base}/api/status",
+                             {"id": "reader-card", "status": "archived",
+                              "superseded_by": "new-lore"})
+        assert code == 200, f"无人引用 + 有承接者的降级应放行：{code} {body[:300]}"
+        # 不存在的条目 → 404
+        code, body, _ = post(f"{base}/api/status",
+                             {"id": "ghost", "status": "trial"})
+        assert code == 404, f"未知条目应 404，实际 {code}"
+
+
 CHECKS = [
     ("接口给的数据 = CLI 导出的数据", check_world_同_CLI_导出),
     ("两次请求一致，且不漏绝对路径", check_两次请求一致_且没有绝对路径),
@@ -600,6 +647,7 @@ CHECKS = [
     ("导出透出事件字段与派生状态（B6）", check_导出透出事件字段与派生状态),
     ("只读界面被伺候且指向数据源（Phase 1）", check_只读界面被伺候且指向数据源),
     ("可写模式的写入与审计回滚（Phase 2）", check_可写模式的写入与审计回滚),
+    ("治理端点的升格降级与回滚（Phase 3）", check_治理端点的升格降级与回滚),
 ]
 
 
