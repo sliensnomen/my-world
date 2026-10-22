@@ -36,14 +36,27 @@ CRASH = ROOT / "tests" / "world-crash"        # 有 1 个读不出来的文件
 _SERVERS: dict = {}
 
 
-def server_for(world: Path) -> str:
+def server_for(world: Path, writable: bool = False) -> str:
     """每个世界起一个接口（端口让系统随便挑），复用。"""
-    key = str(world)
+    key = f"{world}::w{int(writable)}"
     if key not in _SERVERS:
-        httpd = serve.make_server(world, "127.0.0.1", 0, quiet=True)
+        httpd = serve.make_server(world, "127.0.0.1", 0, quiet=True,
+                                  writable=writable)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         _SERVERS[key] = f"http://127.0.0.1:{httpd.server_address[1]}"
     return _SERVERS[key]
+
+
+def post(url: str, payload: dict):
+    """POST 一个 JSON 对象，返回 (status, body, headers)。"""
+    req = urllib.request.Request(
+        url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as res:
+            return res.status, res.read(), dict(res.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), dict(e.headers)
 
 
 def get(url: str, method: str = "GET"):
@@ -515,6 +528,54 @@ def check_只读界面被伺候且指向数据源():
         f"/web/index.html 没被正确伺候：{code}"
 
 
+def check_可写模式的写入与审计回滚():
+    """serve --writable（人机交互 Phase 2）：POST 写卡与记账，审计红则回滚。
+
+    默认只读（POST 一律 405）；开了 --writable：写卡 → 出现在 /api/world；
+    记账 → 悬空腿让审计变红 → 422 且刚写的文件被回滚（世界不留残骸）。
+    /api/health 要告诉前端它可写、每种 event_kind 要哪些腿。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        # 只读模式下 POST 依然 405
+        code, body, _ = post(f"{server_for(world)}/api/event",
+                             {"event_kind": "transfer"})
+        assert code == 405, f"只读模式 POST 应 405，实际 {code}：{body[:200]}"
+        base = server_for(world, writable=True)
+        code, body, _ = get(f"{base}/api/health")
+        health = json.loads(body)
+        assert health["writable"] is True, f"health 没说可写：{health}"
+        assert health["required_legs"]["transfer"] == ["by", "to", "object"], \
+            f"required_legs 不对：{health['required_legs']}"
+        # 写三张卡
+        for eid, type_ in (("anna", "character"), ("bob", "character"),
+                           ("sword-x", "item")):
+            code, body, _ = post(f"{base}/api/entry",
+                                 {"type": type_, "title": eid, "id": eid})
+            assert code == 201, f"写 {eid} 失败：{code} {body[:300]}"
+        # 记一笔账：腿都指向真卡 → 201，且能在 /api/world 里看到
+        code, body, _ = post(f"{base}/api/event", {
+            "event_kind": "transfer", "id": "ev-1", "title": "剑易手",
+            "by": ["anna"], "to": ["bob"], "object": ["sword-x"],
+            "when": "元年", "when_sort": 1})
+        assert code == 201, f"记账失败：{code} {body[:300]}"
+        data = json.loads(get(f"{base}/api/world")[1])
+        ev = next((d for d in data["entries"] if d["id"] == "ev-1"), None)
+        assert ev and ev["event_kind"] == "transfer", f"ev-1 没进导出：{ev}"
+        # 悬空腿 → 审计红 → 422，且文件被回滚
+        code, body, _ = post(f"{base}/api/event", {
+            "event_kind": "transfer", "id": "ev-ghost",
+            "by": ["anna"], "to": ["ghost-nobody"], "object": ["sword-x"],
+            "when": "二年", "when_sort": 2})
+        assert code == 422, f"悬空腿应 422，实际 {code}：{body[:300]}"
+        assert not (world / "entries/events/ev-ghost.md").exists(), \
+            "审计红了的卡没被回滚"
+        # 坏 kind → 400
+        code, body, _ = post(f"{base}/api/event", {"event_kind": "explode"})
+        assert code == 400, f"坏 kind 应 400，实际 {code}"
+
+
 CHECKS = [
     ("接口给的数据 = CLI 导出的数据", check_world_同_CLI_导出),
     ("两次请求一致，且不漏绝对路径", check_两次请求一致_且没有绝对路径),
@@ -538,6 +599,7 @@ CHECKS = [
     ("字段说明覆盖真实导出的每个字段", check_字段说明覆盖真实导出的每个字段),
     ("导出透出事件字段与派生状态（B6）", check_导出透出事件字段与派生状态),
     ("只读界面被伺候且指向数据源（Phase 1）", check_只读界面被伺候且指向数据源),
+    ("可写模式的写入与审计回滚（Phase 2）", check_可写模式的写入与审计回滚),
 ]
 
 

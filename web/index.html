@@ -43,17 +43,21 @@
     <button data-view="entries" class="active">台账</button>
     <button data-view="findings">审计</button>
     <button data-view="ledger">流水</button>
+    <button data-view="event" id="nav-event" hidden>记账</button>
   </nav>
 </header>
 <main id="main"></main>
 <script>
-let WORLD = null;
+let WORLD = null, HEALTH = null;
+const REQUIRED_FALLBACK = {"transfer":["by","to","object"],"custody":["by","to","object"],"grant":["by","to","object"],"move":["object","to"],"create":["object"],"destroy":["object"],"birth":["object"],"death":["object"],"join":["by","to"],"leave":["by","from"],"transform":["object","result"]};
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 async function boot() {
   const res = await fetch("/api/world");
   WORLD = await res.json();
+  try { HEALTH = await (await fetch("/api/health")).json(); } catch (e) { HEALTH = null; }
+  if (HEALTH && HEALTH.writable) $("#nav-event").hidden = false;
   const c = WORLD.counts;
   $("#meta").textContent =
     `${c.entries} 条目 | ${c.errors} 错误 | ${c.warnings} 警告 | 协议 ${WORLD.protocol_version} / 契约 ${WORLD.contract_version}`;
@@ -140,10 +144,65 @@ function renderLedger() {
   $("#main").innerHTML = html;
 }
 
+function renderEventForm() {
+  const legs = (HEALTH && HEALTH.required_legs) || REQUIRED_FALLBACK;
+  const kinds = Object.keys(legs).sort();
+  let html = `<h3>记一笔流水</h3>
+  <table style="max-width:640px">
+    <tr><td>种类</td><td><select id="f-kind">${kinds.map(k=>`<option>${k}</option>`).join("")}</select></td></tr>
+    <tr><td>id（可空，自动起名）</td><td><input id="f-id" placeholder="ev-例：ev-sword-01"></td></tr>
+    <tr><td>标题（可空）</td><td><input id="f-title"></td></tr>
+    <tr><td>时间（故事内，自由文本）</td><td><input id="f-when" placeholder="例：第三纪 245 年"></td></tr>
+    <tr><td>排序键（数字，可空）</td><td><input id="f-when-sort" type="number"></td></tr>
+  </table>
+  <div id="f-legs"></div>
+  <p><button id="f-submit" style="padding:6px 20px">提交</button>
+  <span id="f-msg" style="margin-left:8px"></span></p>
+  <div id="f-findings"></div>`;
+  $("#main").innerHTML = html;
+  const drawLegs = () => {
+    const kind = $("#f-kind").value;
+    const req = legs[kind] || [];
+    const opt = ["by","to","object","from","result"].filter(l => !req.includes(l));
+    $("#f-legs").innerHTML = `<table style="max-width:640px">` +
+      req.map(l => `<tr><td><b>${l}</b>（必填）</td><td><input data-leg="${l}" placeholder="id，多个用逗号隔开"></td></tr>`).join("") +
+      opt.map(l => `<tr><td>${l}（可选）</td><td><input data-leg="${l}" placeholder="id，多个用逗号隔开"></td></tr>`).join("") +
+      `</table>`;
+  };
+  $("#f-kind").addEventListener("change", drawLegs);
+  drawLegs();
+  $("#f-submit").addEventListener("click", async () => {
+    const payload = {event_kind: $("#f-kind").value};
+    if ($("#f-id").value.trim()) payload.id = $("#f-id").value.trim();
+    if ($("#f-title").value.trim()) payload.title = $("#f-title").value.trim();
+    if ($("#f-when").value.trim()) payload.when = $("#f-when").value.trim();
+    if ($("#f-when-sort").value !== "") payload.when_sort = Number($("#f-when-sort").value);
+    document.querySelectorAll("[data-leg]").forEach(inp => {
+      const ids = inp.value.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+      if (ids.length) payload[inp.dataset.leg] = ids;
+    });
+    const res = await fetch("/api/event", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 201) {
+      $("#f-msg").innerHTML = `<span style="color:var(--green)">记上了：${esc(data.id)}（审计通过）</span>`;
+      $("#f-findings").innerHTML = "";
+      WORLD = await (await fetch("/api/world")).json();
+      const c = WORLD.counts;
+      $("#meta").textContent = `${c.entries} 条目 | ${c.errors} 错误 | ${c.warnings} 警告 | 协议 ${WORLD.protocol_version} / 契约 ${WORLD.contract_version}`;
+    } else {
+      $("#f-msg").innerHTML = `<span style="color:var(--red)">${esc(data.error || ("HTTP " + res.status))}</span>`;
+      $("#f-findings").innerHTML = (data.findings || []).map(f =>
+        `<p><span class="badge ${f.level}">${f.rule}</span> ${esc(f.message)}</p>`).join("");
+    }
+  });
+}
+
 function render(view) {
   if (view === "entries") renderEntries(null);
   else if (view === "findings") renderFindings();
   else if (view === "ledger") renderLedger();
+  else if (view === "event") renderEventForm();
 }
 
 boot().catch(e => { $("#main").innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; });

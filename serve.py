@@ -119,6 +119,9 @@ class Handler(BaseHTTPRequestHandler):
                 "protocol_version": data["protocol_version"],
                 "contract_version": data["contract_version"],
                 "counts": data["counts"],
+                "writable": bool(getattr(self.server, "wgp_writable", False)),
+                "required_legs": {k: list(v)
+                                  for k, v in canonlint.ledger.REQUIRED_LEGS.items()},
             })
         if path == "/api/world":
             return self._json(200, self._export())
@@ -137,6 +140,69 @@ class Handler(BaseHTTPRequestHandler):
         self._json(405, {"code": "read_only", "error": "只读接口：只能用 GET/HEAD",
                          "allow": "GET, HEAD, OPTIONS", "routes": ROUTES})
 
+    def do_POST(self):  # noqa: N802
+        """写端点（人机交互 Phase 2）：只有 `--writable` 才开；默认只读。
+
+        纪律与 pre-commit 钩子同源：先走 store 的写入路径，再跑审计——
+        有 error 就回滚刚写的文件并回 422（钩子语义延伸到 HTTP）。
+        """
+        if not getattr(self.server, "wgp_writable", False):
+            return self._readonly()
+        path = unquote(urlparse(self.path).path)
+        if path == "/api/entry":
+            return self._post_card(event=False)
+        if path == "/api/event":
+            return self._post_card(event=True)
+        return self._json(404, {"error": f"没有这个路由: {path}", "routes": ROUTES})
+
+    def _post_card(self, event: bool):
+        root = self.server.wgp_root
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            data = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, TypeError) as e:
+            return self._json(400, {"error": f"JSON 解析失败: {e}"})
+        if not isinstance(data, dict):
+            return self._json(400, {"error": "请求体必须是 JSON 对象"})
+        legs = ("when", "when_sort", "by", "to", "object", "from", "result",
+                "owns", "custody_of", "member_of")
+        if event:
+            kind = data.get("event_kind")
+            if kind not in canonlint.ledger.EVENT_KINDS:
+                return self._json(400, {
+                    "error": f"event_kind={kind!r} 非法，须为 "
+                             f"{sorted(canonlint.ledger.EVENT_KINDS)}"})
+            type_ = "event"
+            title = data.get("title") or f"{kind} 事件"
+            fields = {k: data[k] for k in legs if k in data}
+            fields["event_kind"] = kind
+        else:
+            type_ = data.get("type")
+            title = data.get("title")
+            if not type_ or not title:
+                return self._json(400, {"error": "写卡必须给 type 与 title"})
+            fields = {k: data[k] for k in legs + ("event_kind",) if k in data}
+        before = set(root.rglob("*.md"))
+        rc = canonlint.store.cmd_new(root, type_, title, data.get("id"),
+                                     author=data.get("author"),
+                                     fields=fields,
+                                     layer_choices=canonlint.LAYERS)
+        if rc == 1:
+            return self._json(409, {"error": f"id `{data.get('id')}` 已存在"})
+        if rc != 0:
+            return self._json(400, {"error": "参数非法（type/id 缺失或不合法）"})
+        _all, _idx, findings, _reports = canonlint.run(root, 0.85, [])
+        errors = [f for f in findings if f.level == "error"]
+        if errors:
+            for p in set(root.rglob("*.md")) - before:
+                p.unlink()
+            return self._json(422, {
+                "error": "审计不通过，已回滚",
+                "findings": [{"rule": f.rule, "level": f.level,
+                              "entry": f.entry, "message": f.message}
+                             for f in errors]})
+        return self._json(201, {"ok": True, "id": data.get("id")})
+
     def do_OPTIONS(self):  # noqa: N802
         # 浏览器的 CORS 预检打的就是 OPTIONS。以前没有这个方法 → 501 + HTML 错误页，
         # 预检失败，前端连 GET 都发不出去。
@@ -149,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    do_POST = do_PUT = do_DELETE = do_PATCH = _readonly
+    do_PUT = do_DELETE = do_PATCH = _readonly  # do_POST 在上面：--writable 时才开
 
     # ---- 各个出口 -------------------------------------------------------
 
@@ -237,24 +303,26 @@ code{{background:#f2f2f2;padding:.1em .3em;border-radius:3px}}td{{padding:.2rem 
 
 
 def make_server(root: Path, host: str, port: int, packs=(), extra_known=frozenset(),
-                quiet: bool = False) -> ThreadingHTTPServer:
+                quiet: bool = False, writable: bool = False) -> ThreadingHTTPServer:
     """起一个 server（不阻塞）。端口给 0 = 让系统随便挑一个空端口。"""
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.wgp_root = root.resolve()            # type: ignore[attr-defined]
     httpd.wgp_packs = tuple(packs)             # type: ignore[attr-defined]
     httpd.wgp_extra_known = extra_known        # type: ignore[attr-defined]
     httpd.quiet = quiet                        # type: ignore[attr-defined]
+    httpd.wgp_writable = writable              # type: ignore[attr-defined]
     httpd.daemon_threads = True
     return httpd
 
 
 def serve(root: Path, host: str, port: int, packs=(), extra_known=frozenset(),
-          quiet: bool = False) -> None:
-    httpd = make_server(root, host, port, packs, extra_known, quiet)
+          quiet: bool = False, writable: bool = False) -> None:
+    httpd = make_server(root, host, port, packs, extra_known, quiet, writable)
     real_port = httpd.server_address[1]
     shown = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
     # flush=True：`--port 0` 常被管道/子进程用来读端口，缓冲着就等于没打印
-    print(f"WGP 只读接口就绪：http://{shown}:{real_port}/api/world", flush=True)
+    mode = "读写接口（--writable）" if writable else "只读接口"
+    print(f"WGP {mode}就绪：http://{shown}:{real_port}/api/world", flush=True)
     print(f"监听：{host}:{real_port}"
           + ("（所有网卡）" if shown != host else ""), flush=True)
     print(f"世界目录：{httpd.wgp_root}（改了 Markdown 刷新页面就是新数据）", flush=True)
@@ -278,6 +346,8 @@ def main(argv=None) -> int:
     ap.add_argument("--pack", action="append", default=[], choices=["econ"],
                     help="启用协议扩展包（econ = WGP-econ 数值系统，CA6xx）")
     ap.add_argument("--quiet", action="store_true", help="不打每行请求日志")
+    ap.add_argument("--writable", action="store_true",
+                    help="开写端点（POST /api/entry、/api/event；写完即审，红则回滚）")
     a = ap.parse_args(argv)
 
     root = a.root.resolve()
@@ -290,7 +360,7 @@ def main(argv=None) -> int:
         print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）", file=sys.stderr)
         return 2
 
-    serve(root, a.host, a.port, packs, extra_known, a.quiet)
+    serve(root, a.host, a.port, packs, extra_known, a.quiet, a.writable)
     return 0
 
 
