@@ -32,9 +32,12 @@ canonlint 要求 `depends_on` 对象式且 `kind`/`critical` 给全，classlint 
 ### 改完必须跑的命令
 
 ```sh
-python3 tests/run_tests.py        # 10 个世界夹具 + 36 项检查，输出与快照逐字节比对
-python3 tests/test_schema.py      # 契约与代码常量不漂移
-python3 tests/test_store.py       # 存储层边界（包括本文件的规矩）
+python3 tests/run_tests.py            # 15 种快照跑法 + 意图断言，共 62 项检查
+python3 tests/test_schema.py          # 契约与代码常量不漂移（12 项）
+python3 tests/test_store.py           # 存储层边界，包括本文件的规矩（26 项）
+python3 tests/test_serve.py           # 接口与前端数据合同（31 项）
+python3 tests/test_docs.py            # 文档数字、链接与总索引（15 项）
+python3 classlint/tests/run_tests.py  # classlint 的 18 个夹具世界
 ```
 
 `tests/run_tests.py` 里的快照（`tests/snapshots/`）是**逐字节**的：存储层重构不允许
@@ -48,7 +51,7 @@ python3 tests/test_store.py       # 存储层边界（包括本文件的规矩�
 2. `world.schema.json`：加进 `properties`；若属于严格档，同步 `x-strict-required`。
 3. `canonlint.py`：若它也要被严格规则检查（比如词表），再把词表加进 `x-strict-vocabulary`
    并在 `check_structure` 里加判定。
-4. 跑三个测试。`tests/test_schema.py` 会在两张表不一致时直接报红。
+4. 跑六套测试。`tests/test_schema.py` 会在两张表不一致时直接报红。
 
 **加一个条目目录**（比如 `drafts/`）
 
@@ -71,8 +74,9 @@ python3 tests/test_store.py       # 存储层边界（包括本文件的规矩�
 
 **改 id 语法**
 
-只改 `store/model.py` 的 `ID_RE`。它会同时影响解析（`depends_on[].id`）、
-规则（CA105）和写入（`new --id`）——这是有意为之：id 语法是格式的一部分。
+只改 `store/parse.py` 的 `ID_RE`；`store/model.py` 与 `store/__init__.py` 负责转发，
+不要在别处再写一份。它会同时影响解析（`depends_on[].id`）、规则（CA105）和写入
+（`new --id`）——这是有意为之：id 语法是格式的一部分。
 
 ---
 

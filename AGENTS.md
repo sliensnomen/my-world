@@ -24,6 +24,7 @@ canonlint：世界观治理协议（WGP）参考实现。判定层在 `canonlint
   `tests/test_docs.py`、`classlint/tests/run_tests.py`。
 - `tests/test_docs.py` 把文档数字钉在代码上：数字不符时**以实测为准修文档**，
   不许改测试迁就文档。
+- 新增、删除或改变项目文档状态时，同步 `docs/README.md`；`tests/test_docs.py` 会对账。
 
 ## 变异手术与还原（血泪教训，2026-10-20）
 

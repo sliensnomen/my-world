@@ -24,6 +24,7 @@ DOCS = (
     "README.md",
     "CONTRIBUTING.md",
     "docs/协作流程.md",
+    "docs/README.md",
     "PROTOCOL.md",
     "PROTOCOL-ECON.md",
     "项目文书.md",
@@ -42,8 +43,94 @@ ECON_SRC = (ROOT / "econ.py",)
 CL_SRC = (ROOT / "classlint/classlint.py",)
 WORKFLOW = ROOT / ".github/workflows/canonlint.yml"
 
+DOCUMENT_CATEGORIES = {"权威契约", "使用参考", "设计路线", "评审过程", "案例与对外", "授权与治理"}
+DOCUMENT_STATUSES = {"现行", "草案", "历史", "模板", "案例", "授权"}
+
 CN_DIGIT = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
             "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def project_document_paths() -> set[str]:
+    paths = set(ROOT.glob("*.md"))
+    paths.add(ROOT / "LICENSE")
+    for pattern in ("docs/**/*.md", "store/*.md", "classlint/*.md",
+                    "classlint/tests/*/README.md"):
+        paths.update(ROOT.glob(pattern))
+    return {p.relative_to(ROOT).as_posix() for p in paths if p.is_file()}
+
+
+DOCUMENT_INDEX_HEADER = "| 文档 | 分类 | 状态 | 摘要 | 权威与更新触发 |"
+DOCUMENT_INDEX_SEPARATOR = "|---|---|---|---|---|"
+
+
+def parse_document_index_text(text: str, index: Path) -> list[tuple[str, str, str]]:
+    lines = text.splitlines()
+    assert lines.count(DOCUMENT_INDEX_HEADER) == 1, \
+        f"{index} 必须有且只有一行全量文档表头"
+    start = lines.index(DOCUMENT_INDEX_HEADER)
+    assert start + 1 < len(lines) and lines[start + 1] == DOCUMENT_INDEX_SEPARATOR, \
+        f"{index}:{start + 2} 缺少五列分隔行"
+    pattern = re.compile(
+        r"\| (\[[^]]+\]\([^)]+\)) \| ([^|]+?) \| ([^|]+?) \| ([^|]+?) \| ([^|]+?) \|")
+    rows: list[tuple[str, str, str]] = []
+    for offset in range(start + 2, len(lines)):
+        line = lines[offset]
+        if not line.strip() or not line.startswith("|"):
+            break
+        match = pattern.fullmatch(line)
+        assert match, f"{index}:{offset + 1} 不是合法的五列文档登记行"
+        link = re.fullmatch(r"\[([^]]+)\]\(([^)]+)\)", match.group(1))
+        assert link, f"{index}:{offset + 1} 第一列不是 Markdown 链接"
+        target = (index.parent / link.group(2)).resolve()
+        try:
+            rel = target.relative_to(ROOT).as_posix()
+        except ValueError:
+            raise AssertionError(f"索引指向仓库外：{link.group(2)}")
+        rows.append((rel, match.group(2).strip(), match.group(3).strip()))
+    assert rows, f"{index} 的全量文档表没有登记行"
+    return rows
+
+
+def document_index_rows() -> list[tuple[str, str, str]]:
+    index = ROOT / "docs/README.md"
+    return parse_document_index_text(index.read_text(encoding="utf-8"), index)
+
+
+def check_document_index_covers_all():
+    rows = document_index_rows()
+    assert rows, "docs/README.md 没有可解析的五列文档登记行"
+    paths = [path for path, _category, _status in rows]
+    duplicates = sorted({path for path in paths if paths.count(path) > 1})
+    assert not duplicates, f"文档在总索引里重复登记：{duplicates}"
+    for path, category, status in rows:
+        assert (ROOT / path).is_file(), f"索引目标不存在：{path}"
+        assert category in DOCUMENT_CATEGORIES, f"{path} 的分类非法：{category}"
+        assert status in DOCUMENT_STATUSES, f"{path} 的状态非法：{status}"
+    discovered = project_document_paths()
+    indexed = set(paths)
+    missing = sorted(discovered - indexed)
+    extra = sorted(indexed - discovered)
+    assert not missing, f"项目文档未登记到 docs/README.md：{missing}"
+    assert not extra, f"总索引登记了发现范围之外的文档：{extra}"
+
+    header = "| 文档 | 分类 | 状态 | 摘要 | 权威与更新触发 |"
+    separator = "|---|---|---|---|---|"
+    row = "| [README.md](../README.md) | 使用参考 | 现行 | 项目入口 | 实测变化时同步 |"
+    valid = f"{header}\n{separator}\n{row}\n"
+    assert len(parse_document_index_text(valid, ROOT / "docs/README.md")) == 1
+    malformed = {
+        "缺少表头": f"{row}\n",
+        "六列表头": ("| 文档 | 分类 | 状态 | 摘要 | 权威 | 额外 |\n"
+                   "|---|---|---|---|---|---|\n" + row + "\n"),
+        "六列重复行": valid + row[:-2] + " | 额外 |\n",
+    }
+    for label, text in malformed.items():
+        try:
+            parse_document_index_text(text, ROOT / "docs/README.md")
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError(f"坏表格被静默接受：{label}")
 
 
 def doc(name: str) -> str:
@@ -100,6 +187,16 @@ def check_rule_ids_match_code():
         extra = sorted(set(rows) - code)
         assert not missing, f"{name} 的 {prefix} 规则表少了代码会发射的编号：{missing}"
         assert not extra, f"{name} 的 {prefix} 规则表有代码里不存在的编号：{extra}"
+
+    summary = doc("docs/判定规则总表.md")
+    for prefix, sources in (("CA", (*CORE_SRC, *ECON_SRC)), ("CL", CL_SRC), ("PE", CL_SRC)):
+        rows = rule_table_ids(summary, prefix)
+        code = rule_ids_in_code(prefix, sources)
+        assert len(rows) == len(set(rows)), f"判定规则总表的 {prefix} 编号有重复"
+        missing = sorted(code - set(rows))
+        extra = sorted(set(rows) - code)
+        assert not missing, f"判定规则总表少了代码会发射的 {prefix} 编号：{missing}"
+        assert not extra, f"判定规则总表有代码里不存在的 {prefix} 编号：{extra}"
 
 
 def check_rule_counts_match_code():
@@ -399,6 +496,7 @@ CHECKS = (
     ("每个测试脚本都有 CI 在跑", check_ci_covers_every_test_script),
     ("init 的钩子不含 --strict（与文档一致）", check_hook_has_no_strict),
     ("文档里的协议版本号与代码一致", check_version_strings_match_code),
+    ("全部项目文档都在总索引里分类且可追踪", check_document_index_covers_all),
 )
 
 
