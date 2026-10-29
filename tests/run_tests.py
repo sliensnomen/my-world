@@ -1654,6 +1654,136 @@ def check_transform_closes_and_opens_windows() -> list[str]:
     return problems
 
 
+def check_modify_preserves_identity_and_state() -> list[str]:
+    """modify（协议 1.9）：同 id 变化，不动窗口、持有、保管或位置。"""
+    problems = []
+
+    def ev(eid: str, kind: str, sort: float | None, legs: str) -> str:
+        sort_line = f"when_sort: {sort}\n" if sort is not None else ""
+        return _card(
+            eid, f"when: 第{sort}年\nevent_kind: {kind}\n{sort_line}{legs}"
+        ).replace("type: location", "type: event")
+
+    def findings(world: Path) -> list[dict]:
+        _code, out, err = _judge(world, "--json")
+        if err:
+            problems.append(f"modify 世界把 traceback 写到了 stderr：\n{err}")
+        try:
+            return json.loads(out)["findings"]
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            problems.append(f"modify 世界的 JSON 审计输出不可读：{exc}\n{out}")
+            return []
+
+    def hit(items: list[dict], rule: str, entry: str) -> bool:
+        return any(f["rule"] == rule and Path(f["entry"]).name == f"{entry}.md"
+                   for f in items)
+
+    def rules_for(items: list[dict], entry: str) -> set[str]:
+        return {f["rule"] for f in items if f["entry"] == f"entries/{entry}.md"}
+
+    cards = {
+        "relic": _card("relic", ""),
+        "owner": _card("owner", "owns:\n  - relic\n"),
+        "keeper": _card("keeper", "custody_of:\n  - relic\n"),
+        "old-place": _card("old-place", ""),
+        "ev-create": ev("ev-create", "create", 1, "object:\n  - relic\n"),
+        "ev-custody": ev("ev-custody", "custody", 2,
+                         "by:\n  - owner\nto:\n  - keeper\nobject:\n  - relic\n"),
+        "ev-move": ev("ev-move", "move", 2,
+                      "object:\n  - relic\nto:\n  - old-place\n"),
+        "ev-modify": ev("ev-modify", "modify", 3, "object:\n  - relic\n"),
+        "ev-unsorted": ev("ev-unsorted", "modify", None, "object:\n  - relic\n"),
+    }
+    tmp, world = _temp_world("canonlint-modify-ok-", cards)
+    with tmp:
+        items = findings(world)
+        for rule in ("CA102", "CA702", "CA708"):
+            for entry in ("ev-modify", "ev-unsorted"):
+                if hit(items, rule, entry):
+                    problems.append(f"合法 {entry} 不该报 {rule}：{items}")
+        code, out, err = run_case(["ledger", str(world)])
+        expected = "relic: 持有者 owner（来自 `owner`） | 保管 keeper | 位置 old-place"
+        if code != 0 or err or expected not in out:
+            problems.append(f"modify 改变了既有派生状态：\n{out}{err}")
+        if "4 笔完整事件" not in out:
+            problems.append(f"缺 when_sort 的 modify 混进了有序流水：\n{out}")
+
+    cards = {
+        "relic": _card("relic", ""),
+        "person": _card("person", ""),
+        "ev-early": ev("ev-early", "modify", 0, "object:\n  - relic\n"),
+        "ev-death": ev("ev-death", "death", 1, "object:\n  - person\n"),
+        "ev-same": ev("ev-same", "modify", 1,
+                      "by:\n  - person\nobject:\n  - relic\n"),
+        "ev-late-actor": ev("ev-late-actor", "modify", 2,
+                            "by:\n  - person\nobject:\n  - relic\n"),
+        "ev-create": ev("ev-create", "create", 3, "object:\n  - relic\n"),
+        "ev-destroy": ev("ev-destroy", "destroy", 4, "object:\n  - relic\n"),
+        "ev-after": ev("ev-after", "modify", 5, "object:\n  - relic\n"),
+        "ev-missing": ev("ev-missing", "modify", 6, ""),
+        "ev-shape": ev("ev-shape", "modify", 7, "object: relic\n"),
+        "ev-ghost": ev("ev-ghost", "modify", 8, "object:\n  - ghost\n"),
+    }
+    tmp, world = _temp_world("canonlint-modify-bad-", cards)
+    with tmp:
+        items = findings(world)
+        for entry in ("ev-early", "ev-after"):
+            if not hit(items, "CA708", entry):
+                problems.append(f"{entry} 落在存在窗口外却没报 CA708：{items}")
+        if hit(items, "CA705", "ev-same"):
+            problems.append(f"与 death 同刻的 modify 不该报 CA705：{items}")
+        if not hit(items, "CA705", "ev-late-actor"):
+            problems.append(f"严格晚于 death 的 modify 没报 CA705：{items}")
+        for entry, expected_rules in (("ev-missing", {"CA702"}),
+                                      ("ev-shape", {"CA109"}),
+                                      ("ev-ghost", {"CA401"})):
+            actual_rules = rules_for(items, entry)
+            if actual_rules != expected_rules:
+                problems.append(
+                    f"{entry} 应只报 {sorted(expected_rules)}，实际 {sorted(actual_rules)}")
+
+    cards = {
+        "old-relic": _card("old-relic", ""),
+        "new-relic": _card("new-relic", ""),
+        "keep": _card("keep", ""),
+        "ev-modify-result": ev(
+            "ev-modify-result", "modify", 3,
+            "object:\n  - old-relic\nresult:\n  - new-relic\n"),
+        "ev-move-old": ev("ev-move-old", "move", 4,
+                          "object:\n  - old-relic\nto:\n  - keep\n"),
+        "ev-move-new": ev("ev-move-new", "move", 4,
+                          "object:\n  - new-relic\nto:\n  - keep\n"),
+        "ev-create-new": ev("ev-create-new", "create", 5,
+                            "object:\n  - new-relic\n"),
+    }
+    tmp, world = _temp_world("canonlint-modify-result-", cards)
+    with tmp:
+        items = findings(world)
+        if not hit(items, "CA708", "ev-move-new"):
+            problems.append(f"modify 的 result 被误当成开窗边界：{items}")
+        if hit(items, "CA708", "ev-modify-result"):
+            problems.append(f"modify 自身不该成为存在窗口边界：{items}")
+        if hit(items, "CA708", "ev-move-old"):
+            problems.append(f"modify 被误当成旧 id 的关窗边界：{items}")
+
+    tmp, world = _temp_world("canonlint-modify-cli-", {"relic": _card("relic", "")})
+    with tmp:
+        p = subprocess.run(
+            [PY, str(TOOL), "event", "modify", "局部改建",
+             "--root", str(world), "--id", "ev-cli",
+             "--when", "元年", "--when-sort", "1", "--object", "relic"],
+            cwd=ROOT, capture_output=True, text=True)
+        if p.returncode != 0:
+            problems.append(f"event modify 应能建卡，实际 exit={p.returncode}：{p.stderr or p.stdout}")
+        if not (world / "entries" / "events" / "ev-cli.md").is_file():
+            problems.append("event modify 没有写出 entries/events/ev-cli.md")
+        items = findings(world)
+        for rule in ("CA102", "CA702", "CA708"):
+            if hit(items, rule, "ev-cli"):
+                problems.append(f"CLI 建出的合法 modify 不该报 {rule}：{items}")
+    return problems
+
+
 def check_ledger_bad_world_fires_every_rule() -> list[str]:
     """变异验证的骨架：world-ledger-bad 必须真的把 CA7xx 每条至少踩一次。
 
@@ -1968,6 +2098,8 @@ def main() -> int:
         ("join/leave 进词表、腿表参与 CA702", check_join_leave_are_vocabulary_kinds),
         ("member_of 断言与流水对账（CA712）+ 悬空/坏形状", check_member_of_reconciles_with_ledger),
         ("transform 窗口交接：旧关新开、自身豁免、不自动继承", check_transform_closes_and_opens_windows),
+        ("modify 同 id 变化：不动窗口/状态，复用通用规则与 CLI",
+         check_modify_preserves_identity_and_state),
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
         ("同刻事件不按 id 定序（CA704/709/711/712 改名不翻转）", check_same_instant_id_order_is_not_history),

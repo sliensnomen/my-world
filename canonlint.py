@@ -35,9 +35,8 @@ import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 
-PROTOCOL_VERSION = "1.8"   # 1.8：同刻事件不排序（CA704/709/711/712 不再按 id 订正误）；
-                           #      事件字段只许在 type: event；CA705 覆盖 death 事件自身
-CONTRACT_VERSION = "0.6"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
+PROTOCOL_VERSION = "1.9"   # 1.9：modify 转正；同一 id 内变化，不动窗口与派生状态
+CONTRACT_VERSION = "0.7"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
 
@@ -700,6 +699,7 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
 
     # CA708: 客体的事件必须落在它自己的存在窗口里（create/birth 开窗，
     # death/destroy 关窗，transform 关旧窗开新窗；端点事件自身即边界，跳过）。
+    # modify 是普通客体事件，只受窗口约束，不改变窗口。
     # 缺 when_sort 的边界不产生窗口、缺 when_sort 的事件不进流水——两头都 fail-open。
     windows = ledger.existence_windows(index)
     for e, v in events:

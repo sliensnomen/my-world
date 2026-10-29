@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 EVENT_KINDS = {"transfer", "custody", "move", "create", "destroy",
-               "grant", "birth", "death", "join", "leave", "transform"}
+               "grant", "birth", "death", "join", "leave", "transform", "modify"}
 
 from dataclasses import dataclass  # noqa: E402
 import math  # noqa: E402
@@ -30,6 +30,8 @@ REQUIRED_LEGS: dict[str, tuple[str, ...]] = {
     # transform（协议 1.7）：object 是旧身份（关窗），result 是新身份列表（开窗，
     # 多值 = 一生多）。新 id 不自动继承旧 id 的持有者与位置——账接不接由作者写清
     "transform": ("object", "result"),
+    # modify（协议 1.9）：同一 id 内的变化；不动存在窗口和派生状态，by 可选。
+    "modify": ("object",),
 }
 LEG_FIELDS = ("by", "to", "object", "from", "result")
 

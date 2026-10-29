@@ -1,5 +1,5 @@
 exit=1
-[CA102] error   entries/ev-bad-kind.md: event_kind='teleport' 非法，须为 ['birth', 'create', 'custody', 'death', 'destroy', 'grant', 'join', 'leave', 'move', 'transfer', 'transform']（实验值须形如 `x-<命名空间>-<名称>`）
+[CA102] error   entries/ev-bad-kind.md: event_kind='teleport' 非法，须为 ['birth', 'create', 'custody', 'death', 'destroy', 'grant', 'join', 'leave', 'modify', 'move', 'transfer', 'transform']（实验值须形如 `x-<命名空间>-<名称>`）
 [CA401] error   entries/ev-ghost.md: to 引用指向不存在的 id `ghost-place`
 [CA702] error   entries/ev-missing-leg.md: transfer 事件缺腿 `to`（必填：['by', 'to', 'object']）——账不平
 [CA704] error   entries/house-a.md: 结论与流水打架：卡上断言 owns `castle-x`，但流水推出的最终持有者是 `house-b`（来自 `ev-castle-to-b`）

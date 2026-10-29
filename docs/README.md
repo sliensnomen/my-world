@@ -53,5 +53,7 @@
 | [docs/代码评审报告-事件流水与可写接口.md](代码评审报告-事件流水与可写接口.md) | 评审过程 | 历史 | 协议 1.7 时期事件与写接口评审 | 后续修复见提交史，不改写 verdict |
 | [docs/superpowers/plans/2026-10-19-event-ledger.md](superpowers/plans/2026-10-19-event-ledger.md) | 设计路线 | 历史 | 协议 1.2 事件流水的已执行计划 | 历史留档，不批量补勾或改成 1.8 |
 | [docs/superpowers/specs/2026-10-24-works-layer-design.md](superpowers/specs/2026-10-24-works-layer-design.md) | 设计路线 | 草案 | 作品层视图、时间窗与分支设计 | 未实现，待作者拍板后再更新 |
+| [docs/superpowers/specs/2026-10-28-modify-event-design.md](superpowers/specs/2026-10-28-modify-event-design.md) | 设计路线 | 现行 | modify 同身份变化的事件语义与规则复用设计 | 已实施，后续 modify 语义变化时同步 |
+| [docs/superpowers/plans/2026-10-28-modify-event.md](superpowers/plans/2026-10-28-modify-event.md) | 设计路线 | 历史 | modify 事件的红绿实施与全量验收计划 | 已执行，保留红绿验证与验收记录 |
 | [docs/superpowers/specs/2026-10-28-documentation-governance-design.md](superpowers/specs/2026-10-28-documentation-governance-design.md) | 设计路线 | 现行 | 本轮文档治理的已确认设计规格 | 已实施，后续文档政策变化时同步 |
 | [docs/superpowers/plans/2026-10-28-documentation-governance.md](superpowers/plans/2026-10-28-documentation-governance.md) | 设计路线 | 历史 | 本轮文档治理的逐步实施计划 | 已执行，保留红绿验证与验收记录 |

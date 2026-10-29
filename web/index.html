@@ -50,7 +50,7 @@
 <main id="main"></main>
 <script>
 let WORLD = null, HEALTH = null;
-const REQUIRED_FALLBACK = {"transfer":["by","to","object"],"custody":["by","to","object"],"grant":["by","to","object"],"move":["object","to"],"create":["object"],"destroy":["object"],"birth":["object"],"death":["object"],"join":["by","to"],"leave":["by","from"],"transform":["object","result"]};
+const REQUIRED_FALLBACK = {"transfer":["by","to","object"],"custody":["by","to","object"],"grant":["by","to","object"],"move":["object","to"],"create":["object"],"destroy":["object"],"birth":["object"],"death":["object"],"join":["by","to"],"leave":["by","from"],"transform":["object","result"],"modify":["object"]};
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 

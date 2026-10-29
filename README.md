@@ -71,14 +71,14 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
    其余叙述是当时的意图。与代码不一致时**以代码为准**。
 4. **`项目文书.md` / `classlint/项目文书.md`** —— 定位与路线图，属于「想法」，不是契约。
 
-`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与项数（39 条 CA、8 条 CL、6 条 PE、五套检查的 62 + 12 + 26 + 31 + 15、18 个 classlint 夹具），以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
+`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与项数（39 条 CA、8 条 CL、6 条 PE、五套检查的 63 + 12 + 26 + 31 + 15、18 个 classlint 夹具），以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
 它**不**是全文校验：层数、字段数、示例世界的条目数、退出码说明这些没被钉住，改代码时请顺手 `grep` 一遍文档。
 
 ## 现状（不吹）
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
 - ✅ **能判**：39 条 CA 规则（结构 / 引用 / 承重链条 / 事件流水 / 重复 / 影响报告）+ CL1xx + PE001–PE005 + PE009
-- ✅ **有回归网**：`tests/` 五套（62 + 12 + 26 + 31 + 15 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
+- ✅ **有回归网**：`tests/` 五套（63 + 12 + 26 + 31 + 15 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ✅ **界面 v0.2**：`web/index.html`（台账 / 审计 / 流水三视图 + 记账表单 + 升格/降级工单，零依赖零构建，`serve.py` 同源伺候）；默认只读，`--writable` 时界面才显示写入口
 - ✅ **可写 HTTP 入口（Phase 2/3）**：`POST /api/entry`（写卡）、`POST /api/event`（记账）、`POST /api/status`（升格/降级）；写完即审、红则回滚，写请求串行化，只收同源 `application/json`；可选 `--token`  bearer 凭据与 `--write-log` 审计日志（见 `docs/接口说明.md`）
@@ -98,8 +98,8 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
    （AI 判定器**永不进退出码、永不自动写入**）
 3. **作品层**：世界 = 事实（只存一次），作品（小说 / 剧本 / 跑团）= 视图（带时间段与视角）
 4. **酒馆适配器**：`adapters/st/` 读写世界书与角色卡 V2/V3，我们的关系图住 `x-` 命名空间
-5. **事件流水下一轮**：`modify` 与携带推导（`transform`/`join`/`leave` 已在协议 1.6/1.7 转正）
-   ——候选与「动它之前要回答什么」都在 [docs/事件流水设计.md](docs/事件流水设计.md) §4 的 backlog 里
+5. **事件流水后续**：携带推导等待容器卡触发；`modify` 已在协议 1.9 转正
+   ——触发条件与「动它之前要回答什么」都在 [docs/事件流水设计.md](docs/事件流水设计.md) §4 的 backlog 里
 
 ## 参与贡献
 

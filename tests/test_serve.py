@@ -524,6 +524,11 @@ def check_只读界面被伺候且指向数据源():
     text = page.read_text(encoding="utf-8")
     for marker in ("/api/world", "台账", "审计", "流水", "派生状态"):
         assert marker in text, f"web/index.html 少了 {marker!r}"
+    fallback_match = re.search(r"const REQUIRED_FALLBACK = (\{.*\});", text)
+    assert fallback_match, "web/index.html 缺少可解析的 REQUIRED_FALLBACK"
+    fallback = json.loads(fallback_match.group(1))
+    expected = {kind: list(legs) for kind, legs in canonlint.ledger.REQUIRED_LEGS.items()}
+    assert fallback == expected, f"前端 fallback 腿表与共享词表不一致：{fallback} != {expected}"
     assert "cdn" not in text and "unpkg" not in text and "jsdelivr" not in text, \
         "界面引了外链框架（约定是零依赖、零构建）"
     base = server_for(WORLD)
