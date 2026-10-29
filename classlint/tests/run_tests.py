@@ -6,6 +6,7 @@
 """
 import contextlib
 import io
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -344,6 +345,130 @@ def check_disabled_rules_change_exit_code() -> int:
     return failures
 
 
+def _mentions_world(td: str, body: str, registry: str | None = None) -> Path:
+    world = Path(td) / "w"
+    (world / "codex").mkdir(parents=True)
+    (world / "classlint.yaml").write_text(
+        "name: mentions\nclasslint: \"0.1\"\nrules: {}\n", encoding="utf-8")
+    (world / "codex" / "gray-harbor.md").write_text(
+        "---\nid: gray-harbor\ntitle: 灰港\ntype: faction\n"
+        f"controls: [tenant]\nextracts: [tenant]\n---\n{body}\n", encoding="utf-8")
+    (world / "codex" / "tenant.md").write_text(
+        "---\nid: tenant\ntitle: 佃户\ntype: faction\n---\n正文。\n", encoding="utf-8")
+    if registry is not None:
+        (world / "codex" / "entities.yaml").write_text(registry, encoding="utf-8")
+    return world
+
+
+def _check_json(world: Path) -> tuple[int, dict]:
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = classlint.cmd_check(world, True, [])
+    return code, json.loads(out.getvalue())
+
+
+def check_entity_mentions_in_json() -> int:
+    failures = 0
+
+    def expect(condition, message):
+        nonlocal failures
+        if not condition:
+            print(f"FAIL {message}")
+            failures += 1
+
+    body = ("灰港城先征税，灰港随后跟进，灰港城再次争议。\n"
+            "```\n灰港\n```\nharbor Harbor harbor-master harbormaster gray-harbor")
+    registry = "entities:\n  gray-harbor:\n    aliases: [灰港, 灰港城, harbor]\n"
+    with tempfile.TemporaryDirectory() as td:
+        world = _mentions_world(td, body)
+        code, baseline = _check_json(world)
+        expect(code == 0, f"缺 entities.yaml 应兼容，exit={code}")
+        expect(all(e["mentions"] == [] for e in baseline["entries"]),
+               f"缺注册表时 mentions 应全为空：{baseline['entries']}")
+        baseline_text = io.StringIO()
+        with contextlib.redirect_stdout(baseline_text):
+            classlint.cmd_check(world, False, [])
+        baseline_graph = io.StringIO()
+        with contextlib.redirect_stdout(baseline_graph):
+            classlint.cmd_graph(world, "json")
+        baseline_graph_data = json.loads(baseline_graph.getvalue())
+        (world / "codex" / "entities.yaml").write_text(registry, encoding="utf-8")
+        code, data = _check_json(world)
+        expect(code == 0, f"合法别名表应通过，exit={code}")
+        expect(data["findings"] == baseline["findings"],
+               f"别名识别改变了 CL/PE findings：{data['findings']} != {baseline['findings']}")
+        gray = next(e for e in data["entries"] if e["id"] == "gray-harbor")
+        expected = [
+            {"entity": "gray-harbor", "alias": "灰港城", "count": 2},
+            {"entity": "gray-harbor", "alias": "灰港", "count": 2},
+            {"entity": "gray-harbor", "alias": "harbor", "count": 1},
+        ]
+        expect(gray["mentions"] == expected,
+               f"最长匹配/边界/计数/排序不对：{gray['mentions']} != {expected}")
+        tenant = next(e for e in data["entries"] if e["id"] == "tenant")
+        expect(tenant["mentions"] == [], f"无匹配正文应为空：{tenant['mentions']}")
+        baseline_meta = {e["id"]: e["meta"] for e in baseline["entries"]}
+        after_meta = {e["id"]: e["meta"] for e in data["entries"]}
+        expect(after_meta == baseline_meta, "别名识别改变了 frontmatter 关系或元数据")
+        text = io.StringIO()
+        with contextlib.redirect_stdout(text):
+            classlint.cmd_check(world, False, [])
+        expect(text.getvalue() == baseline_text.getvalue(),
+               f"文本输出被正文提及改变：{text.getvalue()} != {baseline_text.getvalue()}")
+        graph = io.StringIO()
+        with contextlib.redirect_stdout(graph):
+            classlint.cmd_graph(world, "json")
+        graph_data = json.loads(graph.getvalue())
+        expect(graph_data == baseline_graph_data,
+               f"graph 被别名改变：{graph_data} != {baseline_graph_data}")
+    with tempfile.TemporaryDirectory() as td:
+        world = _mentions_world(td, "没有注册别名。", "entities: {}\n")
+        code, data = _check_json(world)
+        expect(code == 0 and all(e["mentions"] == [] for e in data["entries"]),
+               "空注册表应输出空 mentions")
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        with contextlib.redirect_stdout(io.StringIO()):
+            init_code = classlint.cmd_init(world)
+        expect(init_code == 0, f"classlint init 应成功，exit={init_code}")
+        code, data = _check_json(world)
+        expect(code == 0 and data["entries"] == [],
+               f"init 生成的 entities.yaml 必须可读：exit={code}")
+    if not failures:
+        print("PASS 正文别名进入 check --json（计数/边界/兼容/不改变判定）")
+    return failures
+
+
+def check_entity_registry_errors_are_config_errors() -> int:
+    failures = 0
+    bad = {
+        "未知稳定 id": "entities:\n  ghost:\n    aliases: [灰港]\n",
+        "非法稳定 id": "entities:\n  Bad_ID:\n    aliases: [灰港]\n",
+        "重复别名": "entities:\n  gray-harbor:\n    aliases: [灰港, 灰港]\n",
+        "跨实体重复别名": "entities:\n  gray-harbor:\n    aliases: [灰港]\n  tenant:\n    aliases: [灰港]\n",
+        "空别名": "entities:\n  gray-harbor:\n    aliases: ['']\n",
+        "非字符串别名": "entities:\n  gray-harbor:\n    aliases: [1]\n",
+        "实体记录非映射": "entities:\n  gray-harbor: []\n",
+        "aliases 非列表": "entities:\n  gray-harbor:\n    aliases: 灰港\n",
+        "entities 非映射": "entities: []\n",
+        "顶层非映射": "- entities\n",
+        "坏 YAML": "entities: [\n",
+    }
+    for name, registry in bad.items():
+        with tempfile.TemporaryDirectory() as td:
+            world = _mentions_world(td, "灰港", registry)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = classlint.cmd_check(world, True, [])
+            if code != 2 or "entities.yaml" not in err.getvalue() or out.getvalue():
+                print(f"FAIL {name} 应是干净的配置错误：exit={code}, "
+                      f"stdout={out.getvalue()!r}, stderr={err.getvalue()!r}")
+                failures += 1
+    if not failures:
+        print("PASS entities.yaml 的坏形状/冲突全部是退出码 2")
+    return failures
+
+
 def _legit_world(td: str, king: str, pope: str, tradition: str = "") -> Path:
     world = Path(td)
     (world / "codex").mkdir(parents=True, exist_ok=True)
@@ -449,6 +574,8 @@ def main() -> int:
     failures += check_shadowed_entries_are_still_judged()
     failures += check_disabled_rules_change_exit_code()
     failures += check_legitimacy_forms_are_indistinguishable()
+    failures += check_entity_mentions_in_json()
+    failures += check_entity_registry_errors_are_config_errors()
     extra = set(EXPECTED) - set(worlds)
     for name in sorted(extra):
         print(f"FAIL {name}: EXPECTED 登记了期望但夹具目录不存在")

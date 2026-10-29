@@ -41,11 +41,13 @@ python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | `classlint_version` | string | 本工具版本（当前 `"0.1"`）。与 WGP 的 `protocol_version` 不是一回事 |
-| `entries` | 对象列表 | 每个条目：`id`（解析不出时为 `null`）、`path`（相对世界根的路径）、`meta`（frontmatter 原样）、`body_chars`（正文字数） |
+| `entries` | 对象列表 | 每个条目：`id`（解析不出时为 `null`）、`path`（相对世界根的路径）、`meta`（frontmatter 原样）、`body_chars`（正文字数）、`mentions`（正文别名报告） |
 | `findings` | 对象列表 | 每条发现：`rule`（`CL1xx` / `PE0xx`）、`level`（`error` / `warning`）、`entry`（条目文件路径；仓库级为 `null`）、`message` |
 | `reports` | 对象列表 | 报告级输出，**永不进退出码**；目前是 `--impact` 的 `{subject, downstream}` 受影响队列 |
 | `rules_disabled` | 字符串列表 | 被 `rules: off` 关掉的规则编号；空列表 = 全规则在跑 |
 | `judgement_complete` | bool | `true` = 本次判定覆盖全部规则；有规则被关时为 `false`（此时退出码 3，除非 `--accept-disabled-rules`） |
+
+`mentions` 是正文别名报告：`{entity, alias, count}`。别名来自 `codex/entities.yaml`；缺文件或没有匹配时为 `[]`。匹配区分大小写、最长别名优先且不重叠，英文/数字别名要求词边界。它是只读报告，不改变 findings、CL/PE 判定、文本输出或 graph；坏注册表返回退出码 2。
 
 `--impact ID...` 只改 `reports`：不改 `findings`，也不改退出码。
 

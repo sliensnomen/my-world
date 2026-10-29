@@ -128,6 +128,7 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 五值定集（v1.1
 
 - **关系图**：`classlint graph <仓库> [--format dot|json]`——节点 = 条目，边 = 契约列过的全部关系（本层判的七种 + `canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`）；DOT 可直接喂 Graphviz，JSON 供任意前端消费。
 - **影响报告**：`classlint check <仓库> --impact ID...`——指定条目的 `depends_on` 反向传递闭包（"改 A 炸 B"的待复核队列），参考 WGP 的 CA504。**不含主体自身**：环会把主体带回自己的下游，而「改 A 会炸 A」是环的结论（由结构规则报），不是影响报告的结论——与 CA504 同口径。
+- **正文提及报告**：`check --json` 的每个条目带 `mentions: [{entity, alias, count}]`，把 `codex/entities.yaml` 注册的别名映射到稳定 id。匹配区分大小写、最长优先且不重叠，英文/数字别名要求词边界；缺文件或无匹配为 `[]`。只读正文，不改原文、findings、CL/PE、文本输出或 graph；坏注册表是配置错误（退出码 2）。
 - **`--json` 的字段**（`classlint_version` / `entries` / `findings` / `reports` / `rules_disabled` / `judgement_complete`）以实际输出为准，逐字段说明见 `classlint/README.md` 的「`--json` 输出字段」一节。
 
 **无传递违规原则：** 只判直接边。A 抽取 B、B 的供养断裂并不使 A 连带违规；间接影响是**影响报告**（`--impact`，§3.4）的职责——它已实现，只报直接依赖的反向闭包，不改变任何判定结论。

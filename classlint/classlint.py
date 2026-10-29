@@ -92,12 +92,12 @@ rules: {{}}                # PE 规则开关（CL 结构规则不可关），如
 
 ENTITIES_SKELETON = """\
 # 实体注册表：稳定 ID 与别名。
-# 条目正文可用别名指代实体，审计时统一解析到这里的稳定 ID（别名解析待实现）。
+# 条目正文可用别名指代实体，审计时统一解析到这里的稳定 ID（正文提及见 check --json 的 mentions）。
 # 格式：
 # entities:
 #   gray-harbor:           # 稳定 ID（= 条目 frontmatter 的 id）
 #     aliases: [灰港, 灰港城]
-entities: {{}}
+entities: {}
 """
 
 WORLD_DIRS = [
@@ -465,6 +465,78 @@ def pe009(world: World, emit) -> None:
 
 
 
+def load_entity_aliases(root: Path, index: dict[str, Entry]) -> dict[str, str]:
+    path = root / "codex" / "entities.yaml"
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise ConfigError(f"{path} 解析失败: {exc}")
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path} 顶层必须是映射")
+    entities = data.get("entities", {})
+    if entities is None:
+        entities = {}
+    if not isinstance(entities, dict):
+        raise ConfigError(f"{path} 的 entities 必须是映射")
+    aliases: dict[str, str] = {}
+    for stable_id, record in entities.items():
+        if not isinstance(stable_id, str) or not ID_RE.match(stable_id):
+            raise ConfigError(f"{path} 的稳定 id 非法: {stable_id!r}")
+        if stable_id not in index:
+            raise ConfigError(f"{path} 的稳定 id `{stable_id}` 没有对应条目卡")
+        if not isinstance(record, dict):
+            raise ConfigError(f"{path} 的 `{stable_id}` 记录必须是映射")
+        raw = record.get("aliases", [])
+        if not isinstance(raw, list):
+            raise ConfigError(f"{path} 的 `{stable_id}.aliases` 必须是列表")
+        for alias in raw:
+            if not isinstance(alias, str) or not alias.strip():
+                raise ConfigError(f"{path} 的 `{stable_id}.aliases` 含空或非字符串别名: {alias!r}")
+            if alias in aliases:
+                raise ConfigError(f"{path} 的别名 `{alias}` 重复注册")
+            aliases[alias] = stable_id
+    return aliases
+
+
+def body_mentions(body: str, aliases: dict[str, str]) -> list[dict]:
+    if not aliases or not body:
+        return []
+
+    def ascii_word(char: str) -> bool:
+        return char.isascii() and (char.isalnum() or char == "_")
+
+    def boundary(char: str) -> bool:
+        return ascii_word(char) or char == "-"
+
+    ordered_aliases = sorted(aliases, key=lambda value: (-len(value), value))
+    counts: dict[tuple[str, str], int] = {}
+    first: dict[tuple[str, str], int] = {}
+    position = 0
+    while position < len(body):
+        for alias in ordered_aliases:
+            if not body.startswith(alias, position):
+                continue
+            end = position + len(alias)
+            if ascii_word(alias[0]) and position > 0 and boundary(body[position - 1]):
+                continue
+            if ascii_word(alias[-1]) and end < len(body) and boundary(body[end]):
+                continue
+            key = (aliases[alias], alias)
+            counts[key] = counts.get(key, 0) + 1
+            first.setdefault(key, position)
+            position = end
+            break
+        else:
+            position += 1
+    ordered = sorted(counts, key=lambda key: (first[key], key[0], key[1]))
+    return [{"entity": entity, "alias": alias, "count": counts[(entity, alias)]}
+            for entity, alias in ordered]
+
+
 def load_config(root: Path) -> dict:
     """读 classlint.yaml。rules: {PE00x: off} 可关 PE 规则；CL 结构规则不可关。"""
     cfg_path = root / "classlint.yaml"
@@ -633,6 +705,7 @@ def cmd_check(root: Path, as_json: bool, impact_ids: list[str],
         return 2
     try:
         entries, index, findings, disabled = run_checks(root)
+        aliases = load_entity_aliases(root, index)
     except ConfigError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -647,7 +720,8 @@ def cmd_check(root: Path, as_json: bool, impact_ids: list[str],
             "classlint_version": VERSION,
             "entries": [
                 {"id": e.id, "path": e.rel, "meta": dict(e.meta),
-                 "body_chars": len(e.body.strip())}
+                 "body_chars": len(e.body.strip()),
+                 "mentions": body_mentions(e.body, aliases)}
                 for e in entries if not e.parse_error
             ],
             "findings": [{"rule": f.rule, "level": f.level, "entry": f.entry,
