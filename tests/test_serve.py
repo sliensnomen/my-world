@@ -28,6 +28,9 @@ sys.path.insert(0, str(ROOT))
 
 import canonlint  # noqa: E402
 import serve  # noqa: E402
+from judges.compare import (  # noqa: E402
+    assert_http_equal, assert_log_equal, normalized_http_result,
+)
 
 WORLD = ROOT / "tests" / "world-arrakis"      # 22 个条目、24 条边、没有坏文件
 BAD = ROOT / "tests" / "world-bad"            # 有 2 条悬空边
@@ -888,6 +891,71 @@ def check_慢请求体不挡写():
         assert dt < 2.0, f"写卡被慢请求体堵了 {dt:.1f}s（读 body 还在写锁里）"
 
 
+def check_http_date_不进入比较() -> None:
+    """HTTP 双跑：Date 不同可接受，其余语义字段必须相等。"""
+    base = server_for(WORLD)
+    status1, body1, headers1 = get(base + "/api/world")
+    status2, body2, headers2 = get(base + "/api/world")
+    norm1 = normalized_http_result(status1, body1, headers1)
+    norm2 = normalized_http_result(status2, body2, headers2)
+    assert_http_equal(norm1, norm2)
+    h1 = dict(headers1)
+    h2 = dict(headers2)
+    h1["Date"] = "Mon, 01 Jan 2024 00:00:00 GMT"
+    h2["Date"] = "Tue, 02 Jan 2024 00:00:00 GMT"
+    assert_http_equal(normalized_http_result(status1, body1, h1),
+                      normalized_http_result(status2, body2, h2))
+
+
+def check_http_语义差异会被抓住() -> None:
+    """HTTP 比较包络：status、body、语义头部任一不同必须 FAIL。"""
+    base = server_for(WORLD)
+    world_status, world_body, world_headers = get(base + "/api/world")
+    entry_status, entry_body, entry_headers = get(base + "/api/entry/bene-gesserit")
+    norm_world = normalized_http_result(world_status, world_body, world_headers)
+    norm_entry = normalized_http_result(entry_status, entry_body, entry_headers)
+    caught = False
+    try:
+        assert_http_equal(norm_world, norm_entry)
+    except AssertionError:
+        caught = True
+    assert caught, "不同路由的 HTTP 结果应被比较器抓住"
+    bad_headers = dict(world_headers)
+    bad_headers["Content-Type"] = "text/plain"
+    caught = False
+    try:
+        assert_http_equal(norm_world,
+                          normalized_http_result(world_status, world_body, bad_headers))
+    except AssertionError:
+        caught = True
+    assert caught, "语义头部变化应被比较器抓住"
+    caught = False
+    try:
+        assert_http_equal(norm_world,
+                          normalized_http_result(world_status, b"changed body", world_headers))
+    except AssertionError:
+        caught = True
+    assert caught, "body 变化应被比较器抓住"
+
+
+def check_log_时间戳由固定时钟归一化() -> None:
+    """审计日志：只有 ts 不同时由注入时钟处理，其他字段不同必须 FAIL。"""
+    fixed = "2026-10-30T00:00:00Z"
+    rec_a = {"ts": "2026-10-29T12:00:00Z", "action": "entry",
+             "status": 201, "id": "port"}
+    rec_b = {"ts": "2026-10-30T08:00:00Z", "action": "entry",
+             "status": 201, "id": "port"}
+    assert_log_equal(rec_a, rec_b, fixed)
+    rec_diff = {"ts": "2026-10-30T08:00:00Z", "action": "event",
+                "status": 201, "id": "port"}
+    caught = False
+    try:
+        assert_log_equal(rec_a, rec_diff, fixed)
+    except AssertionError:
+        caught = True
+    assert caught, "ts 以外的字段不同应被比较器抓住"
+
+
 def check_写审计日志():
     """--write-log：每次写请求一行 JSON（时间/动作/id/状态/规则），成功与回滚都记。"""
     with tempfile.TemporaryDirectory() as td:
@@ -950,6 +1018,9 @@ CHECKS = [
     ("写端点要 token、预检允许 Authorization", check_写入口_token),
     ("慢请求体不挡写（读 body 在锁外）", check_慢请求体不挡写),
     ("写审计日志（成功与回滚都记）", check_写审计日志),
+    ("HTTP Date 不进入比较", check_http_date_不进入比较),
+    ("HTTP 语义差异会被抓住", check_http_语义差异会被抓住),
+    ("log 时间戳由固定时钟归一化", check_log_时间戳由固定时钟归一化),
 ]
 
 

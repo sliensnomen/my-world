@@ -27,6 +27,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
+sys.path.insert(0, str(ROOT))
+
+from judges.compare import assert_cli_equal, normalized_cli_result
 SNAPS = HERE / "snapshots"
 TOOL = ROOT / "canonlint.py"
 PY = sys.executable
@@ -2020,6 +2023,42 @@ def check_auto_id_when_slug_is_empty() -> list[str]:
     return problems
 
 
+def check_cli_normalization_and_root_masking() -> list[str]:
+    """CLI 双跑：临时根路径统一为 <WORLD>，其他字节不变；不同判定能被抓住。"""
+    problems = []
+    tmp, world = _temp_world("canonlint-compare-",
+                             {"a": _card("a", "canon_refs: [ghost-x]\n")})
+    with tmp:
+        code, out, err = _judge(world)
+        norm = normalized_cli_result(code, out, err, world)
+        code2, out2, err2 = _judge(world)
+        norm2 = normalized_cli_result(code2, out2, err2, world)
+        try:
+            assert_cli_equal(norm, norm2)
+        except AssertionError as e:
+            problems.append(f"同一世界两次 CLI 结果应相等：{e}")
+        tmp2, world2 = _temp_world("canonlint-compare2-",
+                                   {"a": _card("a", "canon_refs: [ghost-x]\n")})
+        with tmp2:
+            code3, out3, err3 = _judge(world2)
+            norm3 = normalized_cli_result(code3, out3, err3, world2)
+            try:
+                assert_cli_equal(norm, norm3)
+            except AssertionError as e:
+                problems.append(f"不同临时根路径规范化后应相等：{e}")
+        tmp3, world3 = _temp_world("canonlint-compare3-",
+                                   {"a": _card("a", "canon_refs: [ghost-y]\n")})
+        with tmp3:
+            code4, out4, err4 = _judge(world3)
+            norm4 = normalized_cli_result(code4, out4, err4, world3)
+            try:
+                assert_cli_equal(norm, norm4)
+                problems.append("不同判定结果应被比较器抓住")
+            except AssertionError:
+                pass
+    return problems
+
+
 def main() -> int:
     update = "--update" in sys.argv[1:]
     failures: list[str] = []
@@ -2107,6 +2146,8 @@ def main() -> int:
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),
         ("id 省略 + 中文标题自动起名 <type>-<序号>", check_auto_id_when_slug_is_empty),
+        ("CLI 双跑：临时根路径归一化且不同判定能被抓住",
+         check_cli_normalization_and_root_masking),
     ]
     for label, check in extras:
         problems = check()

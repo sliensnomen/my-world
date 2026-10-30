@@ -14,6 +14,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import classlint  # noqa: E402
 
+from judges.compare import finding_tuple  # noqa: E402
+
 TESTS = Path(__file__).resolve().parent
 
 # 期望判定：(规则编号, 级别, 条目路径)。空列表 = 全绿。
@@ -439,6 +441,28 @@ def check_entity_mentions_in_json() -> int:
     return failures
 
 
+def check_finding_order_matters() -> int:
+    """Finding 顺序是判定的一部分：仅交换顺序必须不等，排序后必须相等。"""
+    failures = 0
+    try:
+        a = classlint.Finding("PE001", "error", "codex/a.md", "msg a")
+        b = classlint.Finding("PE002", "warning", "codex/b.md", "msg b")
+        raw_a = [finding_tuple(f) for f in [a, b]]
+        raw_b = [finding_tuple(f) for f in [b, a]]
+        if raw_a == raw_b:
+            print("FAIL Finding 顺序：仅交换顺序后仍相等")
+            failures += 1
+        elif sorted(raw_a) != sorted(raw_b):
+            print("FAIL Finding 顺序：排序后不相等")
+            failures += 1
+        else:
+            print("PASS Finding 顺序：原始序列不等，排序后相等")
+    except Exception as e:
+        print(f"FAIL Finding 顺序断言异常：{e}")
+        failures += 1
+    return failures
+
+
 def check_entity_registry_errors_are_config_errors() -> int:
     failures = 0
     bad = {
@@ -576,6 +600,7 @@ def main() -> int:
     failures += check_legitimacy_forms_are_indistinguishable()
     failures += check_entity_mentions_in_json()
     failures += check_entity_registry_errors_are_config_errors()
+    failures += check_finding_order_matters()
     extra = set(EXPECTED) - set(worlds)
     for name in sorted(extra):
         print(f"FAIL {name}: EXPECTED 登记了期望但夹具目录不存在")
