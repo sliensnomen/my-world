@@ -920,6 +920,14 @@ def check_http_语义差异会被抓住() -> None:
     except AssertionError:
         caught = True
     assert caught, "不同路由的 HTTP 结果应被比较器抓住"
+    # status-only negative control：只改状态码，body/headers 不变
+    caught = False
+    try:
+        assert_http_equal(norm_world,
+                          normalized_http_result(999, world_body, world_headers))
+    except AssertionError:
+        caught = True
+    assert caught, "status 变化应被比较器抓住"
     bad_headers = dict(world_headers)
     bad_headers["Content-Type"] = "text/plain"
     caught = False
