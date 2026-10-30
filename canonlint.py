@@ -1113,9 +1113,9 @@ def export_world(root: Path, packs=(), impact=(), extra_known=frozenset(),
 
 
 def _load_packs(names: list[str]):
-    """扩展包加载。返回 (Pack 或旧模块列表, 扩展字段集)。"""
+    """加载判定包，返回 (Pack 或旧模块列表, 扩展字段集)。"""
     if load_backend() == "registry":
-        registry = select_packs("canonlint", names)
+        registry = select_packs("canonlint", ["core-ca", *names])
         return list(registry.selected), registry.ca106_fields
 
     packs: list = []
@@ -1162,6 +1162,15 @@ def _apply_packs(packs, index: dict, findings: list[Finding]) -> None:
                         findings.append(Finding(rule, level, rel, msg)))
 
 
+def _apply_core_ca(pack: Pack, all_entries, index, issues,
+                   known_fields, findings: list[Finding]) -> None:
+    from judges.ca.pack import apply_core_ca
+
+    apply_core_ca(
+        pack, all_entries, index, issues, known_fields,
+        lambda rule, level, rel, msg: findings.append(Finding(rule, level, rel, msg)))
+
+
 # ---- 主流程 --------------------------------------------------------------
 
 
@@ -1173,20 +1182,28 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
     扩展包，serve 的写后审计不应用——同一个世界「读时合法、写时非法」。
     """
     all_entries, index, issues = store.collect(root)
-    # 存储层报的形状问题（今天只有 id 重复 CA114）升级成报告项
-    findings = [Finding(i.rule, "error", i.rel, i.message) for i in issues]
     known = KNOWN_FIELDS | extra_known
+    core_ca = next((p for p in packs
+                    if isinstance(p, Pack) and p.name == "core-ca"), None)
+    findings: list[Finding] = []
 
-    for e in all_entries:
-        check_structure(e, findings, known)
-        check_content(e, findings)
+    if core_ca is not None:
+        _apply_core_ca(core_ca, all_entries, index, issues, known, findings)
+    else:
+        # 存储层报的形状问题（今天只有 id 重复 CA114）升级成报告项
+        findings.extend(Finding(i.rule, "error", i.rel, i.message) for i in issues)
+        for e in all_entries:
+            check_structure(e, findings, known)
+            check_content(e, findings)
     check_refs(all_entries, index, findings)
     check_chain(index, findings)
     for e in all_entries:
         check_events(e, findings)
     check_ledger(index, findings)
     check_duplicates(index, dup_threshold, findings)
-    _apply_packs(packs, index, findings)
+    extension_packs = [p for p in packs
+                       if not (isinstance(p, Pack) and p.name == "core-ca")]
+    _apply_packs(extension_packs, index, findings)
 
     reports = impact_report(index, impact_ids) if impact_ids else []
     return all_entries, index, findings, reports

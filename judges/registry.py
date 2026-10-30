@@ -17,7 +17,10 @@ class RegistryError(ValueError):
 _VALID_SCOPES = frozenset({"entry", "world"})
 _VALID_ENTRY_DOMAINS = frozenset({"all_entries", "all_parseable", "index_parseable"})
 _VALID_LEVELS = frozenset({"error", "warning", "info"})
-_PACK_MODULES = {("canonlint", "econ"): "judges.econ_pack"}
+_PACK_MODULES = {
+    ("canonlint", "core-ca"): "judges.ca.pack",
+    ("canonlint", "econ"): "judges.econ_pack",
+}
 _MODULE_CACHE = {}
 
 
