@@ -2059,6 +2059,230 @@ def check_cli_normalization_and_root_masking() -> list[str]:
     return problems
 
 
+def check_registry_loading_matrix() -> list[str]:
+    """Registry 元数据与后端配置必须在任何规则执行前 fail-fast。"""
+    problems = []
+    try:
+        from dataclasses import FrozenInstanceError
+        from judges.model import Pack, Rule
+        from judges.registry import Registry, RegistryError, load_backend, select_packs
+    except ImportError as e:
+        return [f"Registry 类型应可导入：{e}"]
+
+    def noop(meta, rel, add):
+        return None
+
+    def make_rule(rule_id="CA601", pack="p", scope="entry",
+                  entry_domain="index_parseable", default_level="error",
+                  levels=frozenset({"error"}), order=1):
+        return Rule(id=rule_id, pack=pack, scope=scope, entry_domain=entry_domain,
+                    check=noop, default_level=default_level,
+                    levels=levels, order=order)
+
+    def make_pack(name="p", fields=frozenset(), rules=None):
+        if rules is None:
+            rules = (make_rule(pack=name),)
+        return Pack(name=name, version="1", engine="canonlint",
+                    ca106_fields=fields, rules=rules)
+
+    def expect_error(label, operation):
+        try:
+            operation()
+        except RegistryError:
+            return
+        except Exception as e:
+            problems.append(f"{label}：应抛 RegistryError，实际 {type(e).__name__}: {e}")
+            return
+        problems.append(f"{label}：应抛 RegistryError，实际被接受")
+
+    duplicate_order = make_pack(rules=(
+        make_rule(rule_id="CA601", order=1),
+        make_rule(rule_id="CA602", order=1),
+    ))
+    expect_error("重复包内 order", lambda: Registry(
+        {duplicate_order.name: duplicate_order}, (duplicate_order,)))
+
+    first = make_pack(name="first", rules=(make_rule(pack="first"),))
+    second = make_pack(name="second", rules=(make_rule(pack="second"),))
+    expect_error("当前选择集重复规则 id", lambda: Registry(
+        {first.name: first, second.name: second}, (first, second)))
+
+    first_fields = make_pack(name="first-fields", fields=frozenset({"figures"}),
+                             rules=(make_rule(pack="first-fields"),))
+    second_fields = make_pack(name="second-fields", fields=frozenset({"figures"}),
+                              rules=(make_rule(rule_id="CA602", pack="second-fields"),))
+    expect_error("当前选择集重复 ca106_fields", lambda: Registry(
+        {first_fields.name: first_fields, second_fields.name: second_fields},
+        (first_fields, second_fields)))
+
+    for label, rule in (
+        ("非法 scope", make_rule(scope="both")),
+        ("非法 entry_domain", make_rule(entry_domain="visible")),
+        ("非法 level", make_rule(default_level="fatal", levels=frozenset({"fatal"}))),
+        ("default_level 不在 levels", make_rule(
+            default_level="warning", levels=frozenset({"error"}))),
+    ):
+        pack = make_pack(rules=(rule,))
+        expect_error(label, lambda pack=pack: Registry({pack.name: pack}, (pack,)))
+
+    expect_error("未知 Pack", lambda: select_packs("canonlint", ["missing"]))
+    expect_error("非法 WGP_JUDGE_BACKEND",
+                 lambda: load_backend({"WGP_JUDGE_BACKEND": "future"}))
+    if load_backend({}) != "legacy":
+        problems.append("缺省 WGP_JUDGE_BACKEND 必须选择 legacy")
+    if load_backend({"WGP_JUDGE_BACKEND": "registry"}) != "registry":
+        problems.append("显式 WGP_JUDGE_BACKEND=registry 应选择 registry")
+
+    rule = make_rule()
+    pack = make_pack()
+    registry = Registry({pack.name: pack}, (pack,))
+    for label, operation in (
+        ("Rule 不可变", lambda: setattr(rule, "id", "CA999")),
+        ("Pack 不可变", lambda: setattr(pack, "name", "changed")),
+        ("Registry 不可变", lambda: setattr(registry, "selected", ())),
+    ):
+        try:
+            operation()
+        except FrozenInstanceError:
+            pass
+        except Exception as e:
+            problems.append(f"{label}：应抛 FrozenInstanceError，实际 {type(e).__name__}")
+        else:
+            problems.append(f"{label}：字段仍可改写")
+    try:
+        registry.packs["other"] = pack
+        problems.append("Registry.packs 的映射仍可改写")
+    except TypeError:
+        pass
+
+    for rule_id in ("CA102", "CA108"):
+        levels = frozenset({"error", "info"})
+        dual = make_rule(rule_id=rule_id, levels=levels)
+        pack = make_pack(rules=(dual,))
+        actual = Registry({pack.name: pack}, (pack,)).selected[0].rules[0].levels
+        if actual != levels:
+            problems.append(f"{rule_id} 的 levels 应保留 {{error, info}}，实际 {actual}")
+
+    p = subprocess.run([PY, str(TOOL), "tests/world-econ"], cwd=ROOT,
+                       capture_output=True, text=True,
+                       env=dict(os.environ, WGP_JUDGE_BACKEND="future"))
+    if p.returncode != 2 or p.stdout or "WGP_JUDGE_BACKEND" not in p.stderr:
+        problems.append("非法后端应在审计前 exit 2 且指明环境变量："
+                        f"exit={p.returncode}, stdout={p.stdout!r}, stderr={p.stderr!r}")
+    return problems
+
+
+def check_registry_caches_econ_module_but_keeps_duplicate_selection() -> list[str]:
+    """重复选择 econ 只导入一次模块，但选择列表保留两次。"""
+    try:
+        from unittest import mock
+        import judges.registry as registry_module
+        from judges.registry import select_packs
+    except ImportError as e:
+        return [f"Registry 加载器应可导入：{e}"]
+    problems = []
+    registry_module._MODULE_CACHE.clear()
+    real_import = registry_module.importlib.import_module
+    with mock.patch.object(registry_module.importlib, "import_module",
+                           wraps=real_import) as importer:
+        selected = select_packs("canonlint", ["econ", "econ"])
+        select_packs("canonlint", ["econ"])
+        if importer.call_count != 1:
+            problems.append(f"重复选择/重复加载应只导入 econ 一次，实际 {importer.call_count} 次")
+    if len(selected.selected) != 2 or selected.selected[0] is not selected.selected[1]:
+        problems.append("重复显式 --pack econ 必须保留两个指向同一 Pack 的选择项")
+    return problems
+
+
+def check_registry_econ_dual_run() -> list[str]:
+    """legacy/registry 的原始 Finding、出口 Finding 与 CLI 字节必须一致。"""
+    problems = []
+    try:
+        from unittest import mock
+        import canonlint
+        from judges.compare import finding_tuple
+        from judges.registry import load_backend
+    except ImportError as e:
+        return [f"econ 双跑依赖应可导入：{e}"]
+    world = ROOT / "tests" / "world-econ"
+
+    def raw_findings(backend, names):
+        with mock.patch.dict(os.environ, {"WGP_JUDGE_BACKEND": backend}):
+            if load_backend() != backend:
+                raise AssertionError(f"后端选择错误：{backend}")
+            packs, extra_known = canonlint._load_packs(names)
+        return canonlint.run(world, 0.85, [], extra_known=extra_known, packs=packs)[2]
+
+    for names in ([], ["econ"], ["econ", "econ"]):
+        label = "+".join(names) or "default"
+        legacy = raw_findings("legacy", names)
+        registry = raw_findings("registry", names)
+        legacy_raw = [finding_tuple(f) for f in legacy]
+        registry_raw = [finding_tuple(f) for f in registry]
+        if legacy_raw != registry_raw:
+            problems.append(f"{label}：原始 Finding 双跑不同\n旧 {legacy_raw!r}\n新 {registry_raw!r}")
+        order = lambda f: (canonlint.LEVEL_ORDER.get(f.level, 3), f.rule, f.entry)
+        legacy_final = [finding_tuple(f) for f in sorted(legacy, key=order)]
+        registry_final = [finding_tuple(f) for f in sorted(registry, key=order)]
+        if legacy_final != registry_final:
+            problems.append(f"{label}：出口 Finding 双跑不同")
+        if names == ["econ", "econ"]:
+            single = [finding_tuple(f) for f in raw_findings("registry", ["econ"])
+                      if f.rule in ("CA601", "CA602")]
+            doubled = [finding_tuple(f) for f in registry if f.rule in ("CA601", "CA602")]
+            if doubled != single * 2:
+                problems.append("重复 --pack econ 的 CA601/602 应原样执行两次")
+
+        results = []
+        for backend in ("legacy", "registry"):
+            p = subprocess.run([PY, str(TOOL), str(world), *sum(
+                (["--pack", name] for name in names), [])], cwd=ROOT,
+                capture_output=True, text=True,
+                env=dict(os.environ, WGP_JUDGE_BACKEND=backend))
+            results.append(normalized_cli_result(p.returncode, p.stdout, p.stderr, world))
+        try:
+            assert_cli_equal(results[0], results[1])
+        except AssertionError as e:
+            problems.append(f"{label}：{e}")
+    return problems
+
+
+def check_registry_econ_skips_shadowed_entries() -> list[str]:
+    """econ 只查 index_parseable：首条入索引，重复 id 的后者不得发 CA601。"""
+    try:
+        from judges.registry import load_backend
+    except ImportError as e:
+        return [f"Registry 后端选择应可导入：{e}"]
+    first_figures = (
+        "figures:\n"
+        "  population: {value: 1000, unit: 人}\n"
+        "  military_size: {value: 100, unit: 人}\n"
+    )
+    tmp, world = _temp_world("canonlint-registry-shadow-", {
+        "first": _card("dup-id", first_figures),
+        "second": _card("dup-id", "figures: 7\n"),
+    })
+    problems = []
+    with tmp:
+        results = {}
+        for backend in ("legacy", "registry"):
+            if load_backend({"WGP_JUDGE_BACKEND": backend}) != backend:
+                problems.append(f"后端选择错误：{backend}")
+            p = subprocess.run([PY, str(TOOL), str(world), "--pack", "econ"], cwd=ROOT,
+                               capture_output=True, text=True,
+                               env=dict(os.environ, WGP_JUDGE_BACKEND=backend))
+            results[backend] = normalized_cli_result(p.returncode, p.stdout, p.stderr, world)
+            if "[CA601]" in p.stdout or "entries/second.md: figures" in p.stdout:
+                problems.append(f"{backend}：被遮蔽条目不应发 CA601/602：\n{p.stdout}")
+            if "[CA602]" not in p.stdout or "entries/first.md" not in p.stdout:
+                problems.append(f"{backend}：入索引条目仍应执行 econ：\n{p.stdout}")
+        try:
+            assert_cli_equal(results["legacy"], results["registry"])
+        except AssertionError as e:
+            problems.append(str(e))
+    return problems
+
+
 def main() -> int:
     update = "--update" in sys.argv[1:]
     failures: list[str] = []
@@ -2148,6 +2372,12 @@ def main() -> int:
         ("id 省略 + 中文标题自动起名 <type>-<序号>", check_auto_id_when_slug_is_empty),
         ("CLI 双跑：临时根路径归一化且不同判定能被抓住",
          check_cli_normalization_and_root_masking),
+        ("Registry 加载失败矩阵、不可变元数据与后端选择", check_registry_loading_matrix),
+        ("econ 模块只加载一次且重复选择保留两次",
+         check_registry_caches_econ_module_but_keeps_duplicate_selection),
+        ("econ 双跑：原始/出口 Finding 与 CLI 完全一致", check_registry_econ_dual_run),
+        ("econ 只遍历 index_parseable（不审被遮蔽条目）",
+         check_registry_econ_skips_shadowed_entries),
     ]
     for label, check in extras:
         problems = check()

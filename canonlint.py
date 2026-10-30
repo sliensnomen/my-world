@@ -34,6 +34,8 @@ except ImportError:  # 环境错误，不是逻辑分支
 import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
+from judges.model import Pack
+from judges.registry import RegistryError, load_backend, select_packs
 
 PROTOCOL_VERSION = "1.9"   # 1.9：modify 转正；同一 id 内变化，不动窗口与派生状态
 CONTRACT_VERSION = "0.7"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
@@ -1111,7 +1113,11 @@ def export_world(root: Path, packs=(), impact=(), extra_known=frozenset(),
 
 
 def _load_packs(names: list[str]):
-    """扩展包加载。返回 (pack 模块列表, 扩展字段集)；不可用时返回 (None, None)。"""
+    """扩展包加载。返回 (Pack 或旧模块列表, 扩展字段集)。"""
+    if load_backend() == "registry":
+        registry = select_packs("canonlint", names)
+        return list(registry.selected), registry.ca106_fields
+
     packs: list = []
     extra_known: frozenset[str] = frozenset()
     for name in names:
@@ -1126,8 +1132,28 @@ def _load_packs(names: list[str]):
     return packs, extra_known
 
 
+def _apply_registry_pack(pack: Pack, index: dict, findings: list[Finding]) -> None:
+    for e in index.values():
+        if e.parse_error:
+            continue
+        for rule in sorted(pack.rules, key=lambda r: r.order):
+            if rule.scope != "entry" or rule.entry_domain != "index_parseable":
+                raise RegistryError(f"canonlint 当前不能调度规则 {rule.id}")
+
+            def add(level, msg, rule=rule, rel=e.rel):
+                level = rule.default_level if level is None else level
+                if level not in rule.levels:
+                    raise RegistryError(f"规则 {rule.id} 发出未登记级别: {level!r}")
+                findings.append(Finding(rule.id, level, rel, msg))
+
+            rule.check(e.meta, e.rel, add)
+
+
 def _apply_packs(packs, index: dict, findings: list[Finding]) -> None:
     for pack in packs:
+        if isinstance(pack, Pack):
+            _apply_registry_pack(pack, index, findings)
+            continue
         for e in index.values():
             if not e.parse_error:
                 pack.check_entry(
@@ -1273,7 +1299,11 @@ def main() -> int:
             if not root.is_dir():
                 print(f"error: {root} 不是目录", file=sys.stderr)
                 return 2
-            packs, extra_known = _load_packs(a.pack)
+            try:
+                packs, extra_known = _load_packs(a.pack)
+            except RegistryError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 2
             if packs is None:
                 print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）",
                       file=sys.stderr)
@@ -1326,7 +1356,11 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    packs, extra_known = _load_packs(args.pack)
+    try:
+        packs, extra_known = _load_packs(args.pack)
+    except RegistryError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     if packs is None:
         print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）",
               file=sys.stderr)
