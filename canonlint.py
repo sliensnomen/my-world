@@ -1163,12 +1163,19 @@ def _apply_packs(packs, index: dict, findings: list[Finding]) -> None:
 
 
 def _apply_core_ca(pack: Pack, all_entries, index, issues,
-                   known_fields, findings: list[Finding]) -> None:
+                   known_fields, findings: list[Finding], dup_threshold: float) -> None:
     from judges.ca.pack import apply_core_ca
 
     apply_core_ca(
         pack, all_entries, index, issues, known_fields,
-        lambda rule, level, rel, msg: findings.append(Finding(rule, level, rel, msg)))
+        lambda rule, level, rel, msg: findings.append(Finding(rule, level, rel, msg)),
+        dup_threshold=dup_threshold)
+
+
+def _apply_core_ca_reports(pack: Pack, index: dict, impact_ids: list[str]):
+    from judges.ca.pack import apply_core_ca_reports
+
+    return apply_core_ca_reports(pack, index, impact_ids)
 
 
 # ---- 主流程 --------------------------------------------------------------
@@ -1188,24 +1195,29 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
     findings: list[Finding] = []
 
     if core_ca is not None:
-        _apply_core_ca(core_ca, all_entries, index, issues, known, findings)
+        _apply_core_ca(core_ca, all_entries, index, issues, known, findings, dup_threshold)
     else:
         # 存储层报的形状问题（今天只有 id 重复 CA114）升级成报告项
         findings.extend(Finding(i.rule, "error", i.rel, i.message) for i in issues)
         for e in all_entries:
             check_structure(e, findings, known)
             check_content(e, findings)
-    check_refs(all_entries, index, findings)
-    check_chain(index, findings)
-    for e in all_entries:
-        check_events(e, findings)
-    check_ledger(index, findings)
-    check_duplicates(index, dup_threshold, findings)
+        check_refs(all_entries, index, findings)
+        check_chain(index, findings)
+        for e in all_entries:
+            check_events(e, findings)
+        check_ledger(index, findings)
+        check_duplicates(index, dup_threshold, findings)
     extension_packs = [p for p in packs
                        if not (isinstance(p, Pack) and p.name == "core-ca")]
     _apply_packs(extension_packs, index, findings)
 
-    reports = impact_report(index, impact_ids) if impact_ids else []
+    if not impact_ids:
+        reports = []
+    elif core_ca is not None:
+        reports = _apply_core_ca_reports(core_ca, index, impact_ids)
+    else:
+        reports = impact_report(index, impact_ids)
     return all_entries, index, findings, reports
 
 
