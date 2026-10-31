@@ -102,9 +102,9 @@ def _validate_rule(rule: Rule) -> None:
 
 
 def load_backend(env=None) -> str:
-    """读取判定后端；缺省保持 legacy，非法值在任何审计前失败。"""
+    """读取判定后端；缺省使用 registry，非法值在任何审计前失败。"""
     env = os.environ if env is None else env
-    backend = env.get("WGP_JUDGE_BACKEND", "legacy")
+    backend = env.get("WGP_JUDGE_BACKEND", "registry")
     if backend not in ("legacy", "registry"):
         raise RegistryError(
             f"WGP_JUDGE_BACKEND={backend!r} 非法，只接受 legacy 或 registry")

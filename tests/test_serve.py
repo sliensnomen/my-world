@@ -994,7 +994,32 @@ def check_写审计日志():
         assert "CA401" in bad[-1].get("rules", []), f"回滚日志没记规则：{bad[-1]}"
 
 
+def check_非法后端在审计与绑定前失败():
+    """非法 WGP_JUDGE_BACKEND 必须干净 exit 2，不能审计、绑定或输出部分结果。"""
+    import contextlib
+    import io
+    from unittest import mock
+
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with mock.patch.dict(os.environ, {"WGP_JUDGE_BACKEND": "future"}), \
+                mock.patch.object(canonlint, "run") as audit, \
+                mock.patch.object(serve, "ThreadingHTTPServer") as bind, \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = serve.main([str(WORLD), "--port", "0"])
+    except Exception as exc:
+        raise AssertionError(
+            f"非法后端应返回退出码 2，却抛出 {type(exc).__name__}: {exc}") from exc
+    assert code == 2, f"非法后端应 exit 2，实际 {code}"
+    assert not out.getvalue(), f"非法后端不应输出部分结果：{out.getvalue()!r}"
+    assert "WGP_JUDGE_BACKEND" in err.getvalue(), f"错误应指明环境变量：{err.getvalue()!r}"
+    assert "Traceback" not in err.getvalue(), f"配置错误不应泄漏 traceback：{err.getvalue()!r}"
+    audit.assert_not_called()
+    bind.assert_not_called()
+
+
 CHECKS = [
+    ("非法后端在审计与绑定前 exit 2", check_非法后端在审计与绑定前失败),
     ("接口给的数据 = CLI 导出的数据", check_world_同_CLI_导出),
     ("两次请求一致，且不漏绝对路径", check_两次请求一致_且没有绝对路径),
     ("单个条目接口（含进边和出边）", check_单个条目接口),

@@ -1113,7 +1113,7 @@ def export_world(root: Path, packs=(), impact=(), extra_known=frozenset(),
 
 
 def _load_packs(names: list[str]):
-    """加载判定包，返回 (Pack 或旧模块列表, 扩展字段集)。"""
+    """按统一后端选择加载判定包，返回 (Pack 或旧模块列表, 扩展字段集)。"""
     if load_backend() == "registry":
         registry = select_packs("canonlint", ["core-ca", *names])
         return list(registry.selected), registry.ca106_fields

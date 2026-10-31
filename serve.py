@@ -608,7 +608,11 @@ def main(argv=None) -> int:
         print(f"error: {root} 不是目录", file=sys.stderr)
         return 2
 
-    packs, extra_known = canonlint._load_packs(a.pack)
+    try:
+        packs, extra_known = canonlint._load_packs(a.pack)
+    except canonlint.RegistryError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     if packs is None:
         print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）", file=sys.stderr)
         return 2

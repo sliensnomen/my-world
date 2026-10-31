@@ -2128,8 +2128,10 @@ def check_registry_loading_matrix() -> list[str]:
     expect_error("未知 Pack", lambda: select_packs("canonlint", ["missing"]))
     expect_error("非法 WGP_JUDGE_BACKEND",
                  lambda: load_backend({"WGP_JUDGE_BACKEND": "future"}))
-    if load_backend({}) != "legacy":
-        problems.append("缺省 WGP_JUDGE_BACKEND 必须选择 legacy")
+    if load_backend({}) != "registry":
+        problems.append("缺省 WGP_JUDGE_BACKEND 必须选择 registry")
+    if load_backend({"WGP_JUDGE_BACKEND": "legacy"}) != "legacy":
+        problems.append("显式 WGP_JUDGE_BACKEND=legacy 应选择 legacy 回退")
     if load_backend({"WGP_JUDGE_BACKEND": "registry"}) != "registry":
         problems.append("显式 WGP_JUDGE_BACKEND=registry 应选择 registry")
 

@@ -37,16 +37,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: canonlint 夹具回归（逐字节快照 + 崩溃守卫 + CA504 只读性）
-        run: python3 tests/run_tests.py
-      - name: 世界文件契约（good 语料必须合规、坏样本必须判红、词表必须与代码一致）
-        run: python3 tests/test_schema.py
-      - name: 存储层边界（存储不认识理论、规范形与旧写法等价、写入路径可读回）
-        run: python3 tests/test_store.py
-      - name: 接口与解析器（接口数据 = CLI 导出、坏文件不崩、只读、不能穿越目录、JS 解析器）
-        run: python3 tests/test_serve.py
-      - name: 文档一致性（规则编号 / 数字 / 路径 / 命令 / 检查名必须与代码一致）
-        run: python3 tests/test_docs.py
+      # 每条命令都跑两个后端；不增加 matrix 维度，保留分支保护依赖的四个检查名。
+      - name: canonlint 夹具回归（registry + legacy：逐字节快照 + 崩溃守卫 + CA504 只读性）
+        run: for backend in registry legacy; do WGP_JUDGE_BACKEND=$backend python3 tests/run_tests.py || exit $?; done
+      - name: 世界文件契约（registry + legacy：good 语料必须合规、坏样本必须判红、词表必须与代码一致）
+        run: for backend in registry legacy; do WGP_JUDGE_BACKEND=$backend python3 tests/test_schema.py || exit $?; done
+      - name: 存储层边界（registry + legacy：存储不认识理论、规范形与旧写法等价、写入路径可读回）
+        run: for backend in registry legacy; do WGP_JUDGE_BACKEND=$backend python3 tests/test_store.py || exit $?; done
+      - name: 接口与解析器（registry + legacy：接口数据 = CLI 导出、坏文件不崩、只读、不能穿越目录、JS 解析器）
+        run: for backend in registry legacy; do WGP_JUDGE_BACKEND=$backend python3 tests/test_serve.py || exit $?; done
+      - name: 文档一致性（registry + legacy：规则编号 / 数字 / 路径 / 命令 / 检查名必须与代码一致）
+        run: for backend in registry legacy; do WGP_JUDGE_BACKEND=$backend python3 tests/test_docs.py || exit $?; done
 
   classlint:
     runs-on: ubuntu-latest
@@ -59,5 +60,5 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install pyyaml
-      - name: classlint 夹具回归（钉死的期望值三元组）
-        run: python3 classlint/tests/run_tests.py
+      - name: classlint 夹具回归（registry + legacy：钉死的期望值三元组）
+        run: for backend in registry legacy; do WGP_JUDGE_BACKEND=$backend python3 classlint/tests/run_tests.py || exit $?; done

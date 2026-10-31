@@ -587,7 +587,7 @@ def _run_checks_registry(root: Path, cfg: dict):
 
 def run_checks(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding], set[str]]:
     """引擎主流程：解析 → 结构规则 → 建模型 → 引用存在性 → 跑启用的 PE 规则。
-    返回 (全部条目, id 索引, 发现, 被关闭的规则)；缺省仍走 legacy。"""
+    返回 (全部条目, id 索引, 发现, 被关闭的规则)；缺省走 Registry，可显式回退 legacy。"""
     from judges.registry import RegistryError, load_backend
 
     try:

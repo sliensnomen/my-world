@@ -51,6 +51,7 @@
 | [docs/代码评审报告-测试.md](代码评审报告-测试.md) | 评审过程 | 历史 | 测试名实一致性与 CI 评审 | 以评审锚点为准，不改写 verdict |
 | [docs/代码评审报告-对账.md](代码评审报告-对账.md) | 评审过程 | 历史 | 契约、代码、测试、文档四方对账 | 以评审锚点为准，修复记录保留原貌 |
 | [docs/代码评审报告-事件流水与可写接口.md](代码评审报告-事件流水与可写接口.md) | 评审过程 | 历史 | 协议 1.7 时期事件与写接口评审 | 后续修复见提交史，不改写 verdict |
+| [docs/代码评审报告-判定器注册表.md](代码评审报告-判定器注册表.md) | 评审过程 | 草案 | CA/CL/PE/econ 双跑验收、Registry 原子切换与独立评审准备 | 独立评审、用户签核与发布周期状态变化时同步；未完成前不得删除 legacy |
 | [docs/superpowers/plans/2026-10-19-event-ledger.md](superpowers/plans/2026-10-19-event-ledger.md) | 设计路线 | 历史 | 协议 1.2 事件流水的已执行计划 | 历史留档，不批量补勾或改成 1.8 |
 | [docs/superpowers/specs/2026-10-24-works-layer-design.md](superpowers/specs/2026-10-24-works-layer-design.md) | 设计路线 | 草案 | 作品层视图、时间窗与分支设计 | 未实现，待作者拍板后再更新 |
 | [docs/superpowers/specs/2026-10-28-modify-event-design.md](superpowers/specs/2026-10-28-modify-event-design.md) | 设计路线 | 现行 | modify 同身份变化的事件语义与规则复用设计 | 已实施，后续 modify 语义变化时同步 |
