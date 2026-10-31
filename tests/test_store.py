@@ -935,7 +935,8 @@ def check_both_engines_share_one_parser():
     # 导入白名单：读卡需要的模块 store/parse.py 已经提供了，classlint 不该再拉解析器
     # 依赖（`re` / `yaml` 尤其——它们正是「再抄一份」的原料）。多进来一个就得解释。
     allowed_imports = {"__future__", "argparse", "json", "subprocess", "sys", "tempfile",
-                       "unicodedata", "dataclasses", "functools", "pathlib", "yaml", "store"}
+                       "unicodedata", "dataclasses", "functools", "pathlib", "yaml", "store",
+                       "judges"}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:

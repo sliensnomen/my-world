@@ -562,10 +562,42 @@ def load_config(root: Path) -> dict:
     return {"disabled": disabled}
 
 
+def _run_checks_registry(root: Path, cfg: dict):
+    from judges.cl.pack import apply_core_cl
+    from judges.cl.structure import scan
+    from judges.pe.pack import apply_pe
+    from judges.registry import RegistryError, select_packs
+
+    try:
+        registry = select_packs("classlint", ["core-cl", "pe"])
+    except RegistryError as exc:
+        raise ConfigError(str(exc)) from exc
+    core_cl, pe = registry.selected
+    entries, index = scan(root, parse_entry, ENTRY_ROOT, SKIP_DIRS)
+    world = World(entries, index)
+    findings: list[Finding] = []
+
+    def emit(rule, level, entry, message):
+        findings.append(Finding(rule, level, entry, message))
+
+    apply_core_cl(core_cl, entries, index, world, KNOWN_FIELDS, emit)
+    apply_pe(pe, world, cfg["disabled"], emit)
+    return entries, index, findings, cfg["disabled"]
+
+
 def run_checks(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding], set[str]]:
     """引擎主流程：解析 → 结构规则 → 建模型 → 引用存在性 → 跑启用的 PE 规则。
-    返回 (全部条目, id 索引, 发现, 被关闭的规则)。"""
+    返回 (全部条目, id 索引, 发现, 被关闭的规则)；缺省仍走 legacy。"""
+    from judges.registry import RegistryError, load_backend
+
+    try:
+        backend = load_backend()
+    except RegistryError as exc:
+        raise ConfigError(str(exc)) from exc
     cfg = load_config(root)
+    if backend == "registry":
+        return _run_checks_registry(root, cfg)
+
     entries, index, findings = collect(root)
     world = World(entries, index)
 

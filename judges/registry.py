@@ -20,6 +20,8 @@ _VALID_LEVELS = frozenset({"error", "warning", "info"})
 _PACK_MODULES = {
     ("canonlint", "core-ca"): "judges.ca.pack",
     ("canonlint", "econ"): "judges.econ_pack",
+    ("classlint", "core-cl"): "judges.cl.pack",
+    ("classlint", "pe"): "judges.pe.pack",
 }
 _MODULE_CACHE = {}
 
