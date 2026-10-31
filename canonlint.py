@@ -35,7 +35,7 @@ import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 from judges.model import Pack
-from judges.registry import RegistryError, load_backend, select_packs
+from judges.registry import PackImportError, RegistryError, load_backend, select_packs
 
 PROTOCOL_VERSION = "1.9"   # 1.9：modify 转正；同一 id 内变化，不动窗口与派生状态
 CONTRACT_VERSION = "0.7"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
@@ -912,18 +912,27 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
     return reports
 
 
-def ledger_report(root: Path) -> int:
+def ledger_report(root: Path, packs=()) -> int:
     """`canonlint ledger <世界>`：打印派生状态与没算平的地方。
 
     与 --impact 同一条纪律：report 级输出，永不进退出码、永不写盘。
-    「没算平的」复用 check_ledger 的判据（CA703/CA704/CA705），
+    「没算平的」复用所选后端的判据（CA703/CA704/CA705），
     报告与门禁不许各说一套。
     """
     all_entries, index, _issues = store.collect(root)
     events = ledger.ordered_events(index)
     states = ledger.derive_state(index)
     findings: list[Finding] = []
-    check_ledger(index, findings)
+    core_ca = next((p for p in packs
+                    if isinstance(p, Pack) and p.name == "core-ca"), None)
+    if core_ca is not None:
+        from judges.ca.pack import apply_core_ca_ledger
+
+        apply_core_ca_ledger(
+            core_ca, index,
+            lambda rule, level, rel, msg: findings.append(Finding(rule, level, rel, msg)))
+    else:
+        check_ledger(index, findings)
     n_entries = sum(1 for e in all_entries if not e.parse_error)
     print(f"{n_entries} 个条目 | {len(events)} 笔完整事件（有 when_sort 才进流水）")
     print("\n== 派生状态（期初断言 + 流水）==")
@@ -1115,7 +1124,12 @@ def export_world(root: Path, packs=(), impact=(), extra_known=frozenset(),
 def _load_packs(names: list[str]):
     """按统一后端选择加载判定包，返回 (Pack 或旧模块列表, 扩展字段集)。"""
     if load_backend() == "registry":
-        registry = select_packs("canonlint", ["core-ca", *names])
+        try:
+            registry = select_packs("canonlint", ["core-ca", *names])
+        except PackImportError as e:
+            if (e.engine, e.name) == ("canonlint", "econ"):
+                return None, None
+            raise
         return list(registry.selected), registry.ca106_fields
 
     packs: list = []
@@ -1352,7 +1366,12 @@ def main() -> int:
             if not root.is_dir():
                 print(f"error: {root} 不是目录", file=sys.stderr)
                 return 2
-            return ledger_report(root)
+            try:
+                packs, _extra_known = _load_packs([])
+                return ledger_report(root, packs)
+            except RegistryError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 2
 
     ap = argparse.ArgumentParser(
         description=f"canonlint — WGP 协议参考实现 v{PROTOCOL_VERSION}",

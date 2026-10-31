@@ -58,5 +58,7 @@
 | [docs/superpowers/plans/2026-10-28-modify-event.md](superpowers/plans/2026-10-28-modify-event.md) | 设计路线 | 历史 | modify 事件的红绿实施与全量验收计划 | 已执行，保留红绿验证与验收记录 |
 | [docs/superpowers/specs/2026-10-29-classlint-entity-mentions-design.md](superpowers/specs/2026-10-29-classlint-entity-mentions-design.md) | 设计路线 | 现行 | classlint 正文别名识别、注册表校验与 JSON mentions 设计 | 已实施，后续 mentions 语义变化时同步 |
 | [docs/superpowers/plans/2026-10-29-classlint-entity-mentions.md](superpowers/plans/2026-10-29-classlint-entity-mentions.md) | 设计路线 | 历史 | classlint 正文别名识别的红绿实施与验收计划 | 已执行，保留红绿验证与验收记录 |
+| [docs/superpowers/specs/2026-10-30-judge-registry-design.md](superpowers/specs/2026-10-30-judge-registry-design.md) | 设计路线 | 现行 | CA/CL/PE/econ 判定器注册表、双跑迁移与回退设计 | 设计已确认，实施与验收状态变化时同步 |
+| [docs/superpowers/plans/2026-10-30-judge-registry.md](superpowers/plans/2026-10-30-judge-registry.md) | 设计路线 | 草案 | 判定器注册表的分期迁移、双跑与原子切换计划 | 执行时逐项勾选，完成后转为历史 |
 | [docs/superpowers/specs/2026-10-28-documentation-governance-design.md](superpowers/specs/2026-10-28-documentation-governance-design.md) | 设计路线 | 现行 | 本轮文档治理的已确认设计规格 | 已实施，后续文档政策变化时同步 |
 | [docs/superpowers/plans/2026-10-28-documentation-governance.md](superpowers/plans/2026-10-28-documentation-governance.md) | 设计路线 | 历史 | 本轮文档治理的逐步实施计划 | 已执行，保留红绿验证与验收记录 |

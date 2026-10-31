@@ -784,6 +784,27 @@ def check_registry_cl_pe_dual_run() -> int:
                        "rules: off 必须保留 rules_disabled 与 judgement_complete=false")
 
     with tempfile.TemporaryDirectory() as td:
+        world = _probe_world(td, "depends_on:\n  - weather\n", "rules:\n  PE005: off\n")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, {"WGP_JUDGE_BACKEND": "registry"}), \
+                mock.patch.object(classlint, "RULES", {}), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = classlint.cmd_check(world, True, [])
+        expect(code == 3 and not err.getvalue(),
+               f"Registry 不得用 legacy RULES 校验 PE Pack：exit={code}, stderr={err.getvalue()!r}")
+        payload = json.loads(out.getvalue()) if out.getvalue() else {}
+        expect(payload.get("rules_disabled") == ["PE005"]
+               and payload.get("judgement_complete") is False,
+               "legacy RULES 为空时仍须保留 PE005 disabled 与 judgement_complete=false")
+        for bad_rule in ("PE999", "CL100"):
+            (world / "classlint.yaml").write_text(
+                f"name: probe\nrules:\n  {bad_rule}: off\n", encoding="utf-8")
+            result = _capture_backend(world, "registry",
+                                      lambda: classlint.cmd_check(world, True, []))
+            expect(result[0] == 2 and not result[1] and "未知规则编号" in result[2],
+                   f"Registry/{bad_rule} 应由所选 PE Pack 拒绝：{result}")
+
+    with tempfile.TemporaryDirectory() as td:
         world = _mentions_world(
             td, "灰港城先征税，灰港随后跟进，灰港城再次争议。",
             "entities:\n  gray-harbor:\n    aliases: [灰港, 灰港城]\n")

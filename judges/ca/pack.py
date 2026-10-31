@@ -220,6 +220,27 @@ def apply_core_ca(pack: Pack, all_entries, index, issues, known_fields, emit,
     duplicates.apply(run_world, dup_threshold)
 
 
+def apply_core_ca_ledger(pack: Pack, index, emit) -> None:
+    """只执行 ledger 报告所需的 core-ca 流水规则，保持既有族内顺序。"""
+    rules = {rule.id: rule for rule in pack.rules}
+    world = {"all_entries": list(index.values()), "index": index, "issues": []}
+
+    def run_world(rule_id):
+        rule = rules[rule_id]
+        if rule.scope != "world":
+            raise RegistryError(f"core-ca 不能在流水日程调度规则 {rule.id}")
+
+        def adapted_emit(level, rel, message):
+            actual_level = rule.default_level if level is None else level
+            if actual_level not in rule.levels:
+                raise RegistryError(f"规则 {rule.id} 发出未登记级别: {actual_level!r}")
+            emit(rule.id, actual_level, rel, message)
+
+        return rule.check(world, adapted_emit)
+
+    ca_ledger.apply(run_world)
+
+
 def apply_core_ca_reports(pack: Pack, index, subjects):
     rule = next(rule for rule in pack.rules if rule.id == "CA504")
 

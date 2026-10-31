@@ -14,6 +14,15 @@ class RegistryError(ValueError):
     """规则包或后端配置无效。"""
 
 
+class PackImportError(RegistryError):
+    """规则包模块导入失败，保留包名供调用方映射既有错误。"""
+
+    def __init__(self, engine: str, name: str, detail: str):
+        self.engine = engine
+        self.name = name
+        super().__init__(f"Pack {engine}/{name} 加载失败: {detail}")
+
+
 _VALID_SCOPES = frozenset({"entry", "world"})
 _VALID_ENTRY_DOMAINS = frozenset({"all_entries", "all_parseable", "index_parseable"})
 _VALID_LEVELS = frozenset({"error", "warning", "info"})
@@ -124,7 +133,7 @@ def select_packs(engine: str, names) -> Registry:
             try:
                 _MODULE_CACHE[key] = importlib.import_module(module_name)
             except ImportError as e:
-                raise RegistryError(f"Pack {engine}/{name} 加载失败: {e}") from e
+                raise PackImportError(engine, name, str(e)) from e
         pack = getattr(_MODULE_CACHE[key], "PACK", None)
         if not isinstance(pack, Pack):
             raise RegistryError(f"Pack {engine}/{name} 未提供有效的 PACK 元数据")

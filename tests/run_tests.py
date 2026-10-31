@@ -1828,6 +1828,45 @@ def check_ledger_command_is_readonly_report() -> list[str]:
              for p in sorted(world.rglob("*")) if p.is_file()}
     if before != after:
         problems.append("ledger 子命令改动了世界目录（只读纪律被破坏）")
+
+    import contextlib
+    import io
+    from unittest import mock
+    import canonlint
+
+    results = {}
+    for backend in ("legacy", "registry"):
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.dict(
+                    os.environ, {"WGP_JUDGE_BACKEND": backend}))
+                stack.enter_context(mock.patch.object(
+                    sys, "argv", ["canonlint", "ledger", str(world)]))
+                if backend == "registry":
+                    stack.enter_context(mock.patch.object(
+                        canonlint, "check_ledger",
+                        side_effect=AssertionError("Registry ledger 不得调用 legacy check_ledger")))
+                stack.enter_context(contextlib.redirect_stdout(out))
+                stack.enter_context(contextlib.redirect_stderr(err))
+                code = canonlint.main()
+        except Exception as exc:
+            problems.append(f"ledger/{backend} 双跑异常：{type(exc).__name__}: {exc}")
+            continue
+        results[backend] = normalized_cli_result(code, out.getvalue(), err.getvalue(), world)
+    if len(results) == 2:
+        try:
+            assert_cli_equal(results["legacy"], results["registry"])
+        except AssertionError as e:
+            problems.append(f"ledger 子命令双后端报告不同：{e}")
+
+    p = subprocess.run([PY, str(TOOL), "ledger", "tests/world-ledger"],
+                       cwd=ROOT, capture_output=True, text=True,
+                       env=dict(os.environ, WGP_JUDGE_BACKEND="future"))
+    if (p.returncode != 2 or p.stdout or "WGP_JUDGE_BACKEND" not in p.stderr
+            or "Traceback" in p.stderr):
+        problems.append("ledger 非法后端应在报告前 exit 2 且无 stdout："
+                        f"exit={p.returncode}, stdout={p.stdout!r}, stderr={p.stderr!r}")
     return problems
 
 
@@ -2171,6 +2210,30 @@ def check_registry_loading_matrix() -> list[str]:
     if p.returncode != 2 or p.stdout or "WGP_JUDGE_BACKEND" not in p.stderr:
         problems.append("非法后端应在审计前 exit 2 且指明环境变量："
                         f"exit={p.returncode}, stdout={p.stdout!r}, stderr={p.stderr!r}")
+
+    with tempfile.TemporaryDirectory(prefix="canonlint-broken-econ-") as tmp:
+        broken_tool = Path(tmp) / "canonlint.py"
+        broken_tool.write_bytes(TOOL.read_bytes())
+        (Path(tmp) / "econ.py").write_text(
+            'raise ImportError("simulated: econ 不可用")\n', encoding="utf-8")
+        results = {}
+        for backend in ("legacy", "registry"):
+            p = subprocess.run(
+                [PY, str(broken_tool), "tests/world-econ", "--pack", "econ"],
+                cwd=ROOT, capture_output=True, text=True,
+                env=dict(os.environ, PYTHONPATH=os.pathsep.join((tmp, str(ROOT))),
+                         WGP_JUDGE_BACKEND=backend))
+            results[backend] = normalized_cli_result(
+                p.returncode, p.stdout, p.stderr, HERE / "world-econ")
+        try:
+            assert_cli_equal(results["legacy"], results["registry"])
+        except AssertionError as e:
+            problems.append(f"econ 不可用时双后端错误合同不同：{e}")
+        expected = "error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）\n"
+        for backend, (code, stdout, stderr) in results.items():
+            if code != 2 or stdout or stderr != expected:
+                problems.append(f"{backend}/econ 不可用应保留既有错误："
+                                f"exit={code}, stdout={stdout!r}, stderr={stderr!r}")
     return problems
 
 
