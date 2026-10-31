@@ -15,7 +15,6 @@
 
 | 文档 | 分类 | 状态 | 摘要 | 权威与更新触发 |
 |---|---|---|---|---|
-| [AGENTS.md](../AGENTS.md) | 授权与治理 | 现行 | 仓库工程纪律与代理工作规矩 | 工程流程变化时同步 |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | 使用参考 | 现行 | 新贡献者的改动路径与验证要求 | 测试、CI、协作流程变化时同步 |
 | [LICENSE](../LICENSE) | 授权与治理 | 授权 | 代码 MIT 授权 | 授权政策变化时才改 |
 | [LICENSE-PROTOCOL.md](../LICENSE-PROTOCOL.md) | 授权与治理 | 授权 | 协议文本 CC BY 4.0 授权 | 授权政策变化时才改 |
