@@ -51,6 +51,8 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 
 `serve.py` 另有 `--quiet`（不打每行请求日志）与 `--pack econ`（让 CA6xx 一起进 JSON，与 canonlint 侧同一面旗）。
 
+判定器默认使用 Registry：`core-ca`、`core-cl`、`pe` 负责核心规则，`econ` 仍由 `--pack econ` 显式启用。CLI 与 serve 共用同一后端和 Pack 加载入口；紧急回退时在原命令前加 `WGP_JUDGE_BACKEND=legacy`。非法后端值属于环境错误，在审计或端口绑定前以退出码 2 失败，不会输出部分审计结果。legacy 目前保留作回退，尚未经过 Registry 默认运行一个发布周期的删除签核。
+
 退出码：canonlint `0` 通过 · `1` 有 error（`--strict` 时 warning 也算）· `2` 用法/环境错误（例如没装 pyyaml，或 `--dup-threshold` 不在 `(0, 1]` 内）。classlint 另有 `3`：PE 规则被 `rules: off` 关掉时，判定不是「全规则通过」，退出码 3；确认是有意关闭的，加 `--accept-disabled-rules` 才回到 0（见 `classlint/PROTOCOL.md` §4）。
 三个开关的边界都钉在 `tests/run_tests.py` 里：`--strict` **只改退出码不改判定**（同一份数据两种模式的 findings 逐字相同）；`--dup-threshold` 越界是用法错误、且它真的是旋钮（放宽到 0.99 会消音 CA201）；`--impact` 给悬空主体出空下游、主体不进自己的下游、报告不影响退出码。
 `report` 级别的发现（CA504 影响报告、`graph`）**永不进退出码**。
@@ -71,19 +73,19 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
    其余叙述是当时的意图。与代码不一致时**以代码为准**。
 4. **`项目文书.md` / `classlint/项目文书.md`** —— 定位与路线图，属于「想法」，不是契约。
 
-`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与项数（39 条 CA、8 条 CL、6 条 PE、五套检查的 63 + 12 + 26 + 31 + 15、18 个 classlint 夹具），以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
+`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与项数（39 条 CA、8 条 CL、6 条 PE、五套检查的 68 + 12 + 26 + 35 + 15、18 个 classlint 夹具），以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
 它**不**是全文校验：层数、字段数、示例世界的条目数、退出码说明这些没被钉住，改代码时请顺手 `grep` 一遍文档。
 
 ## 现状（不吹）
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
 - ✅ **能判**：39 条 CA 规则（结构 / 引用 / 承重链条 / 事件流水 / 重复 / 影响报告）+ CL1xx + PE001–PE005 + PE009
-- ✅ **有回归网**：`tests/` 五套（63 + 12 + 26 + 31 + 15 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
+- ✅ **有回归网**：`tests/` 五套（68 + 12 + 26 + 35 + 15 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ✅ **界面 v0.2**：`web/index.html`（台账 / 审计 / 流水三视图 + 记账表单 + 升格/降级工单，零依赖零构建，`serve.py` 同源伺候）；默认只读，`--writable` 时界面才显示写入口
 - ✅ **可写 HTTP 入口（Phase 2/3）**：`POST /api/entry`（写卡）、`POST /api/event`（记账）、`POST /api/status`（升格/降级）；写完即审、红则回滚，写请求串行化，只收同源 `application/json`；可选 `--token`  bearer 凭据与 `--write-log` 审计日志（见 `docs/接口说明.md`）
 - ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）
-- ⬜ **classlint 还没按「存 / 判」拆** —— 读卡那一半**已经合并**：id 语法、frontmatter 切分、契约词表与关系名归一化只剩 `store/parse.py` 一份，`classlint` 只转发（`tests/test_store.py` 的结构锁 + 行为锁守着，抄回去就红）。剩下没动的是**判定**那一半：classlint 仍是一个独立可执行文件，不是可插拔的规则包；而且它现在 `import store.parse`，**必须和仓库一起用、从仓库根调用**——不能单独拷走 `classlint/classlint.py`（`classlint/README.md` 的「用法」写的就是这个）；且它自己的字段政策与 canonlint 有一处真实分歧（`depends_on` 收裸字符串，canonlint 要求 `{id, kind, critical}`）
+- ✅ **classlint 的判定包已拆出** —— `core-cl` 与 `pe` 默认经 Registry 执行，扫描/建索引与逐规则判定分离；legacy 仍保留回退。读卡也只有 `store/parse.py` 一份（`tests/test_store.py` 的结构锁 + 行为锁守着）。classlint 仍是仓库内独立可执行文件，**必须和仓库一起用、从仓库根调用**，不能单独拷走 `classlint/classlint.py`；它自己的字段政策与 canonlint 有一处真实分歧（`depends_on` 收裸字符串，canonlint 要求 `{id, kind, critical}`）
 - ⚠️ 三个真实世界（魔戒 / 冰火 / 沙丘）是**演示**不是证据：它们的 warning 几乎全是 CA104（正文不到
   200 字）这类篇幅噪声，不是工具 bug，也不是世界观有毛病；拿它们当「全绿基准」是误会
 - ✅ **全绿基准是 `tests/world-clean`（结构）与 `tests/world-ledger`（流水）**：默认与 `--strict`
@@ -92,13 +94,11 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 
 ## 下一步（方向已定，未实现）
 
-1. **判定器注册表**：把 CA / PE 规则变成可插拔的包，缺注解就记 info 跳过，沿用 `econ.py` 的
-   `KNOWN_FIELDS + check_entry(meta, rel, add)` 契约
-2. **链与判定**：`chain --from <id> --to <id>` 选头选尾取一条链，`--judge ca|pe|ai` 选判定器
+1. **链与判定**：`chain --from <id> --to <id>` 选头选尾取一条链，`--judge ca|pe|ai` 选判定器
    （AI 判定器**永不进退出码、永不自动写入**）
-3. **作品层**：世界 = 事实（只存一次），作品（小说 / 剧本 / 跑团）= 视图（带时间段与视角）
-4. **酒馆适配器**：`adapters/st/` 读写世界书与角色卡 V2/V3，我们的关系图住 `x-` 命名空间
-5. **事件流水后续**：携带推导等待容器卡触发；`modify` 已在协议 1.9 转正
+2. **作品层**：世界 = 事实（只存一次），作品（小说 / 剧本 / 跑团）= 视图（带时间段与视角）
+3. **酒馆适配器**：`adapters/st/` 读写世界书与角色卡 V2/V3，我们的关系图住 `x-` 命名空间
+4. **事件流水后续**：携带推导等待容器卡触发；`modify` 已在协议 1.9 转正
    ——触发条件与「动它之前要回答什么」都在 [docs/事件流水设计.md](docs/事件流水设计.md) §4 的 backlog 里
 
 ## 参与贡献

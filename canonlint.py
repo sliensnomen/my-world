@@ -34,6 +34,8 @@ except ImportError:  # 环境错误，不是逻辑分支
 import store  # 存储层：模型 / 解析 / 布局 / 写入
 from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
+from judges.model import Pack
+from judges.registry import PackImportError, RegistryError, load_backend, select_packs
 
 PROTOCOL_VERSION = "1.9"   # 1.9：modify 转正；同一 id 内变化，不动窗口与派生状态
 CONTRACT_VERSION = "0.7"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
@@ -910,18 +912,27 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
     return reports
 
 
-def ledger_report(root: Path) -> int:
+def ledger_report(root: Path, packs=()) -> int:
     """`canonlint ledger <世界>`：打印派生状态与没算平的地方。
 
     与 --impact 同一条纪律：report 级输出，永不进退出码、永不写盘。
-    「没算平的」复用 check_ledger 的判据（CA703/CA704/CA705），
+    「没算平的」复用所选后端的判据（CA703/CA704/CA705），
     报告与门禁不许各说一套。
     """
     all_entries, index, _issues = store.collect(root)
     events = ledger.ordered_events(index)
     states = ledger.derive_state(index)
     findings: list[Finding] = []
-    check_ledger(index, findings)
+    core_ca = next((p for p in packs
+                    if isinstance(p, Pack) and p.name == "core-ca"), None)
+    if core_ca is not None:
+        from judges.ca.pack import apply_core_ca_ledger
+
+        apply_core_ca_ledger(
+            core_ca, index,
+            lambda rule, level, rel, msg: findings.append(Finding(rule, level, rel, msg)))
+    else:
+        check_ledger(index, findings)
     n_entries = sum(1 for e in all_entries if not e.parse_error)
     print(f"{n_entries} 个条目 | {len(events)} 笔完整事件（有 when_sort 才进流水）")
     print("\n== 派生状态（期初断言 + 流水）==")
@@ -1111,7 +1122,16 @@ def export_world(root: Path, packs=(), impact=(), extra_known=frozenset(),
 
 
 def _load_packs(names: list[str]):
-    """扩展包加载。返回 (pack 模块列表, 扩展字段集)；不可用时返回 (None, None)。"""
+    """按统一后端选择加载判定包，返回 (Pack 或旧模块列表, 扩展字段集)。"""
+    if load_backend() == "registry":
+        try:
+            registry = select_packs("canonlint", ["core-ca", *names])
+        except PackImportError as e:
+            if (e.engine, e.name) == ("canonlint", "econ"):
+                return None, None
+            raise
+        return list(registry.selected), registry.ca106_fields
+
     packs: list = []
     extra_known: frozenset[str] = frozenset()
     for name in names:
@@ -1126,14 +1146,50 @@ def _load_packs(names: list[str]):
     return packs, extra_known
 
 
+def _apply_registry_pack(pack: Pack, index: dict, findings: list[Finding]) -> None:
+    for e in index.values():
+        if e.parse_error:
+            continue
+        for rule in sorted(pack.rules, key=lambda r: r.order):
+            if rule.scope != "entry" or rule.entry_domain != "index_parseable":
+                raise RegistryError(f"canonlint 当前不能调度规则 {rule.id}")
+
+            def add(level, msg, rule=rule, rel=e.rel):
+                level = rule.default_level if level is None else level
+                if level not in rule.levels:
+                    raise RegistryError(f"规则 {rule.id} 发出未登记级别: {level!r}")
+                findings.append(Finding(rule.id, level, rel, msg))
+
+            rule.check(e.meta, e.rel, add)
+
+
 def _apply_packs(packs, index: dict, findings: list[Finding]) -> None:
     for pack in packs:
+        if isinstance(pack, Pack):
+            _apply_registry_pack(pack, index, findings)
+            continue
         for e in index.values():
             if not e.parse_error:
                 pack.check_entry(
                     e.meta, e.rel,
                     lambda rule, level, msg, rel=e.rel:
                         findings.append(Finding(rule, level, rel, msg)))
+
+
+def _apply_core_ca(pack: Pack, all_entries, index, issues,
+                   known_fields, findings: list[Finding], dup_threshold: float) -> None:
+    from judges.ca.pack import apply_core_ca
+
+    apply_core_ca(
+        pack, all_entries, index, issues, known_fields,
+        lambda rule, level, rel, msg: findings.append(Finding(rule, level, rel, msg)),
+        dup_threshold=dup_threshold)
+
+
+def _apply_core_ca_reports(pack: Pack, index: dict, impact_ids: list[str]):
+    from judges.ca.pack import apply_core_ca_reports
+
+    return apply_core_ca_reports(pack, index, impact_ids)
 
 
 # ---- 主流程 --------------------------------------------------------------
@@ -1147,22 +1203,35 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
     扩展包，serve 的写后审计不应用——同一个世界「读时合法、写时非法」。
     """
     all_entries, index, issues = store.collect(root)
-    # 存储层报的形状问题（今天只有 id 重复 CA114）升级成报告项
-    findings = [Finding(i.rule, "error", i.rel, i.message) for i in issues]
     known = KNOWN_FIELDS | extra_known
+    core_ca = next((p for p in packs
+                    if isinstance(p, Pack) and p.name == "core-ca"), None)
+    findings: list[Finding] = []
 
-    for e in all_entries:
-        check_structure(e, findings, known)
-        check_content(e, findings)
-    check_refs(all_entries, index, findings)
-    check_chain(index, findings)
-    for e in all_entries:
-        check_events(e, findings)
-    check_ledger(index, findings)
-    check_duplicates(index, dup_threshold, findings)
-    _apply_packs(packs, index, findings)
+    if core_ca is not None:
+        _apply_core_ca(core_ca, all_entries, index, issues, known, findings, dup_threshold)
+    else:
+        # 存储层报的形状问题（今天只有 id 重复 CA114）升级成报告项
+        findings.extend(Finding(i.rule, "error", i.rel, i.message) for i in issues)
+        for e in all_entries:
+            check_structure(e, findings, known)
+            check_content(e, findings)
+        check_refs(all_entries, index, findings)
+        check_chain(index, findings)
+        for e in all_entries:
+            check_events(e, findings)
+        check_ledger(index, findings)
+        check_duplicates(index, dup_threshold, findings)
+    extension_packs = [p for p in packs
+                       if not (isinstance(p, Pack) and p.name == "core-ca")]
+    _apply_packs(extension_packs, index, findings)
 
-    reports = impact_report(index, impact_ids) if impact_ids else []
+    if not impact_ids:
+        reports = []
+    elif core_ca is not None:
+        reports = _apply_core_ca_reports(core_ca, index, impact_ids)
+    else:
+        reports = impact_report(index, impact_ids)
     return all_entries, index, findings, reports
 
 
@@ -1273,7 +1342,11 @@ def main() -> int:
             if not root.is_dir():
                 print(f"error: {root} 不是目录", file=sys.stderr)
                 return 2
-            packs, extra_known = _load_packs(a.pack)
+            try:
+                packs, extra_known = _load_packs(a.pack)
+            except RegistryError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 2
             if packs is None:
                 print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）",
                       file=sys.stderr)
@@ -1293,7 +1366,12 @@ def main() -> int:
             if not root.is_dir():
                 print(f"error: {root} 不是目录", file=sys.stderr)
                 return 2
-            return ledger_report(root)
+            try:
+                packs, _extra_known = _load_packs([])
+                return ledger_report(root, packs)
+            except RegistryError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 2
 
     ap = argparse.ArgumentParser(
         description=f"canonlint — WGP 协议参考实现 v{PROTOCOL_VERSION}",
@@ -1326,7 +1404,11 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
-    packs, extra_known = _load_packs(args.pack)
+    try:
+        packs, extra_known = _load_packs(args.pack)
+    except RegistryError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     if packs is None:
         print("error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）",
               file=sys.stderr)

@@ -537,7 +537,7 @@ def body_mentions(body: str, aliases: dict[str, str]) -> list[dict]:
             for entity, alias in ordered]
 
 
-def load_config(root: Path) -> dict:
+def load_config(root: Path, rule_ids=None) -> dict:
     """读 classlint.yaml。rules: {PE00x: off} 可关 PE 规则；CL 结构规则不可关。"""
     cfg_path = root / "classlint.yaml"
     try:
@@ -551,20 +551,54 @@ def load_config(root: Path) -> dict:
     rules_cfg = cfg.get("rules") or {}
     if not isinstance(rules_cfg, dict):
         raise ConfigError("classlint.yaml 的 rules 必须是映射，如 {PE003: off}")
+    allowed_rules = RULES if rule_ids is None else rule_ids
     disabled = set()
     for rid, v in rules_cfg.items():
-        if rid not in RULES:
+        if rid not in allowed_rules:
             raise ConfigError(f"rules 中未知规则编号 `{rid}`"
-                              f"（可关的只有 PE 规则：{sorted(RULES)}）")
+                              f"（可关的只有 PE 规则：{sorted(allowed_rules)}）")
         if v != "off" and v is not False:  # YAML 1.1：未加引号的 off 会被解析成 False
             raise ConfigError(f"rules.{rid}={v!r} 非法（只支持 off）")
         disabled.add(rid)
     return {"disabled": disabled}
 
 
+def _run_checks_registry(root: Path):
+    from judges.cl.pack import apply_core_cl
+    from judges.cl.structure import scan
+    from judges.pe.pack import apply_pe
+    from judges.registry import RegistryError, select_packs
+
+    try:
+        registry = select_packs("classlint", ["core-cl", "pe"])
+    except RegistryError as exc:
+        raise ConfigError(str(exc)) from exc
+    core_cl, pe = registry.selected
+    cfg = load_config(root, {rule.id for rule in pe.rules})
+    entries, index = scan(root, parse_entry, ENTRY_ROOT, SKIP_DIRS)
+    world = World(entries, index)
+    findings: list[Finding] = []
+
+    def emit(rule, level, entry, message):
+        findings.append(Finding(rule, level, entry, message))
+
+    apply_core_cl(core_cl, entries, index, world, KNOWN_FIELDS, emit)
+    apply_pe(pe, world, cfg["disabled"], emit)
+    return entries, index, findings, cfg["disabled"]
+
+
 def run_checks(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding], set[str]]:
     """引擎主流程：解析 → 结构规则 → 建模型 → 引用存在性 → 跑启用的 PE 规则。
-    返回 (全部条目, id 索引, 发现, 被关闭的规则)。"""
+    返回 (全部条目, id 索引, 发现, 被关闭的规则)；缺省走 Registry，可显式回退 legacy。"""
+    from judges.registry import RegistryError, load_backend
+
+    try:
+        backend = load_backend()
+    except RegistryError as exc:
+        raise ConfigError(str(exc)) from exc
+    if backend == "registry":
+        return _run_checks_registry(root)
+
     cfg = load_config(root)
     entries, index, findings = collect(root)
     world = World(entries, index)

@@ -32,7 +32,9 @@ python3 classlint/classlint.py check ~/worlds/econ --json  # 机器可读输出
 python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（只读）
 ```
 
-退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误（含指错目录）；`3` 判定通过，但有 PE 规则被 `rules: off` 关掉——「通过」只覆盖仍开着的规则，确认是有意关闭的加 `--accept-disabled-rules` 才回到 0（见 [PROTOCOL.md](PROTOCOL.md) §4）。
+退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误（含指错目录与非法 `WGP_JUDGE_BACKEND`）；`3` 判定通过，但有 PE 规则被 `rules: off` 关掉——「通过」只覆盖仍开着的规则，确认是有意关闭的加 `--accept-disabled-rules` 才回到 0（见 [PROTOCOL.md](PROTOCOL.md) §4）。
+
+判定默认由 Registry 的 `core-cl` 与 `pe` 两个 Pack 执行：CL100–CL107 逐规则注册，扫描/建索引与判定分离，PE 保持编号顺序和 `rules: off` 语义。紧急回退使用 `WGP_JUDGE_BACKEND=legacy python3 classlint/classlint.py check <仓库>`；legacy 仍保留，尚未到发布周期后的删除签核阶段。
 
 ### `--json` 输出字段（`check --json`）
 

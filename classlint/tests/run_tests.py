@@ -14,6 +14,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import classlint  # noqa: E402
 
+from judges.compare import finding_tuple  # noqa: E402
+
 TESTS = Path(__file__).resolve().parent
 
 # 期望判定：(规则编号, 级别, 条目路径)。空列表 = 全绿。
@@ -439,6 +441,28 @@ def check_entity_mentions_in_json() -> int:
     return failures
 
 
+def check_finding_order_matters() -> int:
+    """Finding 顺序是判定的一部分：仅交换顺序必须不等，排序后必须相等。"""
+    failures = 0
+    try:
+        a = classlint.Finding("PE001", "error", "codex/a.md", "msg a")
+        b = classlint.Finding("PE002", "warning", "codex/b.md", "msg b")
+        raw_a = [finding_tuple(f) for f in [a, b]]
+        raw_b = [finding_tuple(f) for f in [b, a]]
+        if raw_a == raw_b:
+            print("FAIL Finding 顺序：仅交换顺序后仍相等")
+            failures += 1
+        elif sorted(raw_a) != sorted(raw_b):
+            print("FAIL Finding 顺序：排序后不相等")
+            failures += 1
+        else:
+            print("PASS Finding 顺序：原始序列不等，排序后相等")
+    except Exception as e:
+        print(f"FAIL Finding 顺序断言异常：{e}")
+        failures += 1
+    return failures
+
+
 def check_entity_registry_errors_are_config_errors() -> int:
     failures = 0
     bad = {
@@ -544,6 +568,303 @@ def check_legitimacy_forms_are_indistinguishable() -> int:
     return failures
 
 
+def _backend_call(backend: str, operation):
+    """Registry 不得借 legacy collect/PE 函数偷偷满足双跑。"""
+    import os
+    from unittest import mock
+
+    with mock.patch.dict(os.environ, {"WGP_JUDGE_BACKEND": backend}):
+        if backend == "legacy":
+            return operation()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(
+                classlint, "collect", return_value=([], {}, [])))
+            for registered in classlint.RULES.values():
+                stack.enter_context(mock.patch.object(registered, "fn", return_value=None))
+            return operation()
+
+
+def _capture_backend(world: Path, backend: str, operation):
+    from judges.compare import normalized_cli_result
+
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = _backend_call(backend, operation)
+    return normalized_cli_result(code, out.getvalue(), err.getvalue(), world)
+
+
+def check_registry_cl_pe_dual_run() -> int:
+    """每条 CL/PE 的真实正反例、原始顺序和完整外部行为都必须双跑一致。"""
+    import os
+    from unittest import mock
+    from judges.compare import finding_tuple
+    from judges.registry import select_packs
+
+    failures = 0
+
+    def expect(condition, message):
+        nonlocal failures
+        if not condition:
+            print(f"FAIL {message}")
+            failures += 1
+
+    try:
+        registry = select_packs("classlint", ["core-cl", "pe"])
+        core, pe = registry.selected
+        expect([r.id for r in core.rules] == [f"CL{n}" for n in range(100, 108)],
+               f"core-cl 必须逐规则登记 CL100–CL107：{[r.id for r in core.rules]}")
+        expect([r.id for r in pe.rules] == ["PE001", "PE002", "PE003", "PE004", "PE005", "PE009"],
+               f"pe 必须按原顺序登记六条规则：{[r.id for r in pe.rules]}")
+        expect(core.ca106_fields == frozenset() and pe.ca106_fields == frozenset(),
+               "classlint 的 CL103 私有字段政策不得写进 ca106_fields")
+        expect(all(r.scope == "entry" and r.entry_domain == "all_entries"
+                   for r in core.rules if r.id != "CL105"),
+               "CL100–CL104/106/107 必须逐条目遍历 all_entries（含被遮蔽条目）")
+    except Exception as exc:
+        expect(False, f"classlint Registry Pack 应可独立加载：{type(exc).__name__}: {exc}")
+
+    def compare_world(label, world, expected=(), forbidden=()):
+        nonlocal failures
+        try:
+            old = _backend_call("legacy", lambda: classlint.run_checks(world))
+            new = _backend_call("registry", lambda: classlint.run_checks(world))
+        except Exception as exc:
+            expect(False, f"{label}：双跑异常 {type(exc).__name__}: {exc}")
+            return None
+        old_raw = [finding_tuple(f) for f in old[2]]
+        new_raw = [finding_tuple(f) for f in new[2]]
+        expect(old_raw == new_raw,
+               f"{label}：原始 Finding 双跑不同\n旧 {old_raw!r}\n新 {new_raw!r}")
+        order = {"error": 0, "warning": 1}
+        key = lambda f: (order.get(f.level, 2), f.rule, f.entry)
+        old_final = [finding_tuple(f) for f in sorted(old[2], key=key)]
+        new_final = [finding_tuple(f) for f in sorted(new[2], key=key)]
+        expect(old_final == new_final, f"{label}：出口排序 Finding 双跑不同")
+        old_shape = ([(e.rel, e.id) for e in old[0]], list(old[1]), sorted(old[3]))
+        new_shape = ([(e.rel, e.id) for e in new[0]], list(new[1]), sorted(new[3]))
+        expect(old_shape == new_shape, f"{label}：条目/索引/disabled 双跑不同：{old_shape} != {new_shape}")
+        for backend, findings in (("legacy", old[2]), ("registry", new[2])):
+            rules = {f.rule for f in findings}
+            expect(set(expected) <= rules,
+                   f"{label}/{backend} 缺真实阳性 Finding：{sorted(set(expected) - rules)}")
+            expect(not (set(forbidden) & rules),
+                   f"{label}/{backend} 真阴性误报：{sorted(set(forbidden) & rules)}")
+        return old, new
+
+    worlds = sorted(p for p in TESTS.iterdir()
+                    if p.is_dir() and (p / "classlint.yaml").is_file())
+    for world in worlds:
+        compare_world(f"18 世界/{world.name}", world)
+        for label, operation in (
+            ("check-text", lambda w=world: classlint.cmd_check(w, False, [])),
+            ("check-json", lambda w=world: classlint.cmd_check(w, True, [])),
+            ("graph-dot", lambda w=world: classlint.cmd_graph(w, "dot")),
+            ("graph-json", lambda w=world: classlint.cmd_graph(w, "json")),
+        ):
+            old = _capture_backend(world, "legacy", operation)
+            new = _capture_backend(world, "registry", operation)
+            expect(old == new, f"18 世界/{world.name}/{label}：CLI 双跑不同")
+
+    cl_rules = {f"CL{n}" for n in range(100, 108)}
+    compare_world("CL 真阴性", TESTS / "clean", forbidden=cl_rules)
+    compare_world("CL101–CL105 真阳性", TESTS / "structure-bad",
+                  expected={"CL101", "CL102", "CL103", "CL104", "CL105"})
+    for name, rule in (("pe001", "PE001"), ("pe002", "PE002"), ("pe003", "PE003")):
+        compare_world(f"{rule} 真阳性", TESTS / f"{name}-bad", expected={rule})
+        compare_world(f"{rule} 真阴性", TESTS / f"{name}-ok", forbidden={rule})
+    compare_world("PE004 真阳性", TESTS / "pe004-bad", expected={"PE004"})
+    compare_world("PE004 真阴性", TESTS / "merchant-capital", forbidden={"PE004"})
+    compare_world("PE005 真阳性", TESTS / "pe005-bad", expected={"PE005"})
+    compare_world("PE005 真阴性", TESTS / "feudal-rent", forbidden={"PE005"})
+    compare_world("PE009 真阳性", TESTS / "pe009-bad", expected={"PE009"})
+    compare_world("PE009 真阴性", TESTS / "state-redistribution", forbidden={"PE009"})
+
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td)
+        (world / "codex").mkdir()
+        (world / "classlint.yaml").write_text("name: probe\nclasslint: \"0.1\"\n",
+                                              encoding="utf-8")
+        (world / "codex" / "bad.md").write_bytes(b"---\nid: bad\ntitle: \xff\xfe\n---\n\xff\n")
+        compare_world("CL100 真阳性", world, expected={"CL100"})
+
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td)
+        (world / "codex").mkdir()
+        (world / "classlint.yaml").write_text("name: probe\nclasslint: \"0.1\"\n",
+                                              encoding="utf-8")
+        (world / "codex" / "a.md").write_text(
+            "---\nid: a\ntitle: A\ntype: faction\ndepends_on:\n"
+            "  - id: b\n    kind: legitimacy\n---\n。\n", encoding="utf-8")
+        (world / "codex" / "b.md").write_text(
+            "---\nid: b\ntitle: B\ntype: faction\n---\n。\n", encoding="utf-8")
+        compare_world("CL106 真阳性/名分旧写法", world, expected={"CL106"})
+
+    with tempfile.TemporaryDirectory() as td:
+        world = _probe_world(td, "depends_on:\n  - id: weather\n    kind: resource\n")
+        (world / "codex" / "typo.md").write_text(
+            "---\nid: typo\ntitle: 手滑\ntype: faction\n"
+            "relations:\n  - type: extractss\n    target: tenant\n---\n。\n",
+            encoding="utf-8")
+        compare_world("CL107 真阳性", world, expected={"CL107"})
+
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td)
+        (world / "codex").mkdir()
+        (world / "classlint.yaml").write_text("name: shadow\nclasslint: \"0.1\"\n",
+                                              encoding="utf-8")
+        (world / "codex" / "a.md").write_text(
+            "---\nid: dup\ntitle: 先来的\ntype: faction\n---\n。\n", encoding="utf-8")
+        (world / "codex" / "b.md").write_text(
+            "---\nid: dup\ntitle: 被遮蔽的\ntype: faction\nextracts: [ghost]\n---\n。\n",
+            encoding="utf-8")
+        result = compare_world("被遮蔽条目", world, expected={"CL102", "CL105"})
+        if result:
+            for backend, run in zip(("legacy", "registry"), result):
+                hits = [f for f in run[2] if f.rule == "CL105"]
+                expect([f.entry for f in hits] == ["codex/b.md"],
+                       f"被遮蔽条目/{backend} 的 CL105 必须报在 codex/b.md：{hits}")
+
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td)
+        (world / "codex").mkdir()
+        (world / "classlint.yaml").write_text("name: order\nclasslint: \"0.1\"\n",
+                                              encoding="utf-8")
+        cards = {
+            "a": "---\nid: a\ntype: faction\nextracts: [ghost]\ndepends_on:\n"
+                 "  - id: tenant\n    kind: legitimacy\n---\n。\n",
+            "lord": "---\nid: lord\ntitle: 地主\ntype: faction\nextracts: [tenant]\n---\n。\n",
+            "tenant": "---\nid: tenant\ntitle: 佃农\ntype: faction\ndepends_on:\n"
+                      "  - id: weather\n    kind: resource\n---\n。\n",
+            "weather": "---\nid: weather\ntitle: 天气\ntype: location\n---\n。\n",
+        }
+        for name, text in cards.items():
+            (world / "codex" / f"{name}.md").write_text(text, encoding="utf-8")
+        result = compare_world("collect→CL105→PE 顺序", world,
+                               expected={"CL101", "CL106", "CL105", "PE001"})
+        if result:
+            for backend, run in zip(("legacy", "registry"), result):
+                sequence = [f.rule for f in run[2]]
+                expect(sequence == ["CL101", "CL106", "CL105", "PE001"],
+                       f"collect→CL105→PE/{backend} 原始顺序错误：{sequence}")
+
+    with tempfile.TemporaryDirectory() as old_td, tempfile.TemporaryDirectory() as new_td:
+        old_world = _legit_world(old_td, "legitimizes: [pope]\n", "legitimizes: [king]\n")
+        new_world = _legit_world(
+            new_td,
+            "relations:\n  - {type: derives_legitimacy_from, target: pope}\n",
+            "relations:\n  - {type: derives_legitimacy_from, target: king}\n")
+        for backend in ("legacy", "registry"):
+            old = _backend_call(backend, lambda: classlint.run_checks(old_world))[2]
+            new = _backend_call(backend, lambda: classlint.run_checks(new_world))[2]
+            expect([finding_tuple(f) for f in old] == [finding_tuple(f) for f in new],
+                   f"名分两种写法/{backend} 的完整 Finding 不同")
+            expect(any(f.rule == "PE003" for f in new),
+                   f"名分两种写法/{backend} 缺 PE003 真阳性")
+
+    for off_value in ("off", '"off"'):
+        with tempfile.TemporaryDirectory() as td:
+            rules = f"rules:\n  PE005: {off_value}\n"
+            world = _probe_world(td, "depends_on:\n  - weather\n", rules)
+            result = compare_world(f"rules off={off_value}", world, forbidden={"PE005"})
+            if result:
+                for backend, run in zip(("legacy", "registry"), result):
+                    expect(run[3] == {"PE005"},
+                           f"rules off={off_value}/{backend} disabled 应为 PE005：{run[3]}")
+            for accept in (False, True):
+                old = _capture_backend(world, "legacy",
+                                       lambda: classlint.cmd_check(world, True, [], accept))
+                new = _capture_backend(world, "registry",
+                                       lambda: classlint.cmd_check(world, True, [], accept))
+                expect(old == new, f"rules off={off_value}/accept={accept}：JSON/退出码双跑不同")
+                expect(old[0] == (0 if accept else 3),
+                       f"rules off={off_value}/accept={accept}：退出码应为 {0 if accept else 3}，实际 {old[0]}")
+                payload = json.loads(old[1])
+                expect(payload["rules_disabled"] == ["PE005"]
+                       and payload["judgement_complete"] is False,
+                       "rules: off 必须保留 rules_disabled 与 judgement_complete=false")
+
+    with tempfile.TemporaryDirectory() as td:
+        world = _probe_world(td, "depends_on:\n  - weather\n", "rules:\n  PE005: off\n")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, {"WGP_JUDGE_BACKEND": "registry"}), \
+                mock.patch.object(classlint, "RULES", {}), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = classlint.cmd_check(world, True, [])
+        expect(code == 3 and not err.getvalue(),
+               f"Registry 不得用 legacy RULES 校验 PE Pack：exit={code}, stderr={err.getvalue()!r}")
+        payload = json.loads(out.getvalue()) if out.getvalue() else {}
+        expect(payload.get("rules_disabled") == ["PE005"]
+               and payload.get("judgement_complete") is False,
+               "legacy RULES 为空时仍须保留 PE005 disabled 与 judgement_complete=false")
+        for bad_rule in ("PE999", "CL100"):
+            (world / "classlint.yaml").write_text(
+                f"name: probe\nrules:\n  {bad_rule}: off\n", encoding="utf-8")
+            result = _capture_backend(world, "registry",
+                                      lambda: classlint.cmd_check(world, True, []))
+            expect(result[0] == 2 and not result[1] and "未知规则编号" in result[2],
+                   f"Registry/{bad_rule} 应由所选 PE Pack 拒绝：{result}")
+
+    with tempfile.TemporaryDirectory() as td:
+        world = _mentions_world(
+            td, "灰港城先征税，灰港随后跟进，灰港城再次争议。",
+            "entities:\n  gray-harbor:\n    aliases: [灰港, 灰港城]\n")
+        for label, operation in (
+            ("check-text", lambda: classlint.cmd_check(world, False, [])),
+            ("check-json", lambda: classlint.cmd_check(world, True, [])),
+            ("graph-dot", lambda: classlint.cmd_graph(world, "dot")),
+            ("graph-json", lambda: classlint.cmd_graph(world, "json")),
+        ):
+            old = _capture_backend(world, "legacy", operation)
+            new = _capture_backend(world, "registry", operation)
+            expect(old == new, f"mentions/graph/{label} 双跑不同")
+            if label == "check-json" and new[1]:
+                payload = json.loads(new[1])
+                gray = next(e for e in payload["entries"] if e["id"] == "gray-harbor")
+                expect(gray["mentions"] == [
+                    {"entity": "gray-harbor", "alias": "灰港城", "count": 2},
+                    {"entity": "gray-harbor", "alias": "灰港", "count": 1},
+                ], f"mentions 内容改变：{gray['mentions']}")
+                expect(payload["judgement_complete"] is True,
+                       "未关规则时 judgement_complete 必须为 true")
+
+    for bad_rule in ("PE999", "CL100"):
+        with tempfile.TemporaryDirectory() as td:
+            world = _probe_world(td, "", f"rules:\n  {bad_rule}: off\n")
+            for backend in ("legacy", "registry"):
+                result = _capture_backend(world, backend,
+                                          lambda: classlint.cmd_check(world, True, []))
+                expect(result[0] == 2 and not result[1] and "未知规则编号" in result[2],
+                       f"{bad_rule}/{backend} 必须在执行前配置失败：{result}")
+
+    with tempfile.TemporaryDirectory() as td:
+        world = _probe_world(td, "")
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, {"WGP_JUDGE_BACKEND": "future"}), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = classlint.cmd_check(world, True, [])
+        result = (code, out.getvalue(), err.getvalue())
+        expect(result[0] == 2 and not result[1] and "WGP_JUDGE_BACKEND" in result[2],
+               f"非法后端必须在审计前 exit 2：{result}")
+
+    with tempfile.TemporaryDirectory() as old_td, tempfile.TemporaryDirectory() as new_td:
+        old_world, new_world = Path(old_td) / "w", Path(new_td) / "w"
+        old = _capture_backend(old_world, "legacy", lambda: classlint.cmd_init(old_world))
+        new = _capture_backend(new_world, "registry", lambda: classlint.cmd_init(new_world))
+        expect(old == new, "classlint init 的输出/退出码双跑不同")
+        tree = lambda root: {
+            str(p.relative_to(root)): p.read_bytes()
+            for p in root.rglob("*") if p.is_file() and ".git" not in p.relative_to(root).parts
+        }
+        expect(tree(old_world) == tree(new_world), "classlint init 生成的文件双跑不同")
+        old = _capture_backend(old_world, "legacy", lambda: classlint.cmd_check(old_world, True, []))
+        new = _capture_backend(new_world, "registry", lambda: classlint.cmd_check(new_world, True, []))
+        expect(old == new, "init 后首次 check 双跑不同")
+
+    if not failures:
+        print("PASS core-cl/pe 双跑：14 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
+    return failures
+
+
 def main() -> int:
     failures = 0
     worlds = sorted(p.name for p in TESTS.iterdir()
@@ -576,6 +897,8 @@ def main() -> int:
     failures += check_legitimacy_forms_are_indistinguishable()
     failures += check_entity_mentions_in_json()
     failures += check_entity_registry_errors_are_config_errors()
+    failures += check_finding_order_matters()
+    failures += check_registry_cl_pe_dual_run()
     extra = set(EXPECTED) - set(worlds)
     for name in sorted(extra):
         print(f"FAIL {name}: EXPECTED 登记了期望但夹具目录不存在")
