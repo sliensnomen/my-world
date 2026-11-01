@@ -49,6 +49,11 @@ DOCUMENT_STATUSES = {"现行", "草案", "历史", "模板", "案例", "授权"}
 CN_DIGIT = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
             "七": 7, "八": 8, "九": 9, "十": 10}
 
+# 仓库主的本地代理规矩：明确不入库（.gitignore），也不算项目文档。
+# 必须在这里排除，否则「本地工作区（文件在）」与「干净克隆（文件不在）」
+# 不可能同时判绿——总索引也会被迫登记一个版本库里不存在的目标。
+LOCAL_ONLY_DOCS = {"AGENTS.md"}
+
 
 def project_document_paths() -> set[str]:
     paths = set(ROOT.glob("*.md"))
@@ -56,7 +61,8 @@ def project_document_paths() -> set[str]:
     for pattern in ("docs/**/*.md", "store/*.md", "classlint/*.md",
                     "classlint/tests/*/README.md"):
         paths.update(ROOT.glob(pattern))
-    return {p.relative_to(ROOT).as_posix() for p in paths if p.is_file()}
+    discovered = {p.relative_to(ROOT).as_posix() for p in paths if p.is_file()}
+    return discovered - LOCAL_ONLY_DOCS
 
 
 DOCUMENT_INDEX_HEADER = "| 文档 | 分类 | 状态 | 摘要 | 权威与更新触发 |"
@@ -304,7 +310,8 @@ def check_doc_paths_exist():
     skip = {
         "CONSTITUTION.md": "由 canonlint init 在世界仓库里生成，本仓库不该有",
         "classlint.yaml": "由 classlint init 在世界仓库里生成，本仓库不该有",
-        "codex/entities.yaml": "世界仓库的实体别名表，Sprint 1 规划，本仓库不该有",
+        "codex/entities.yaml": "世界仓库的实体别名表（classlint mentions 已实现），本仓库不该有",
+        "AGENTS.md": "仓库主本地代理规矩，明确不入库（.gitignore）；仅在本地存在，索引与发现范围都排除",
         "01_Requirements.md": "classlint 早期规划里的文档名，从未进仓库",
         "02_Architecture.md": "classlint 早期规划里的文档名，从未进仓库",
         "03_Plan.md": "classlint 早期规划里的文档名，从未进仓库",
