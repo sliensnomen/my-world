@@ -1,5 +1,10 @@
 # my-world · 世界的存储与检测
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sliensnomen/my-world)
+
+> [DeepWiki](https://deepwiki.com/sliensnomen/my-world) 那份英文导读是**建站时刻的快照**，不会随提交自动更新；
+> 与代码不一致时一律以本仓库为准，信的顺序见下文「这个仓库里什么说了算」。
+
 给写小说、剧本、跑团设定的人用的本地优先工具：**把世界存成 Git 里的 Markdown，再用确定性规则检测它在结构上讲不讲得通。**
 
 同类工具里，SillyTavern 的世界书能**存**、World Anvil 能**展示**，但都不能**判定**——没有哪件工具会告诉你
