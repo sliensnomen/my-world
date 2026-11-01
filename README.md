@@ -15,7 +15,7 @@
 | | 负责 | 现在有什么 |
 |---|---|---|
 | **存** | 条目格式、id、目录布局、关系、写入命令 | `store/` · `world.schema.json`（格式契约） |
-| **判** | 结构规则 + 政治经济学规则 | 39 条 CA 规则（`canonlint.py`）· 8 条 CL + 6 条 PE 规则（`classlint/`：CL100–CL107，PE001–PE005 与 PE009） |
+| **判** | 结构规则 + 政治经济学规则 | 39 条 CA 规则（`judges/` 的 `core-ca` 包，`canonlint.py` 驱动）· 8 条 CL + 6 条 PE 规则（`judges/` 的 `core-cl`/`pe` 包，`classlint/` 驱动；CL100–CL107，PE001–PE005 与 PE009） |
 
 **两者之间有一条线**：`store/` 里不许出现政治经济学词汇。改存储的人不该被迫先学会八层链和 PE003——
 政治经济学只住在规则、`classlint/` 和文档里。这条线由 `tests/test_store.py` 用 AST 检查守着（越线即红）。
@@ -38,6 +38,7 @@ python3 canonlint.py ~/worlds/grey-harbor --impact crown-capital  # CA504：改�
 python3 canonlint.py ledger ~/worlds/grey-harbor            # 事件流水：派生状态（只读，不进退出码）
 python3 canonlint.py event transfer --by anna --to bob --object sword-x --when "元年" --when-sort 1  # 一行记一笔流水
 python3 canonlint.py ~/worlds/grey-harbor --pack econ        # 启用 econ 扩展包（CA601/CA602）
+WGP_JUDGE_BACKEND=legacy python3 canonlint.py ~/worlds/grey-harbor  # 紧急回退到旧判定后端
 
 # ── 政治经济学层：classlint（条目住 codex/，目前是另一个仓库根）
 python3 classlint/classlint.py init ~/worlds/grey-harbor-econ
@@ -51,19 +52,20 @@ python3 classlint/classlint.py graph ~/worlds/grey-harbor-econ --format dot     
 # ── 出口：把世界数据交给前端（只读，不判定）
 python3 canonlint.py export ~/worlds/grey-harbor --out world.json   # 导出数据集（合同见 docs/接口说明.md）
 python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口：/api/world、/api/entry/<id> …
+python3 serve.py ~/worlds/grey-harbor --port 8000 --writable        # 默认只读；加 --writable 才开三条写路由
 # 前端读 /api/world 或 world.json；wgp-client.js 负责补默认值、给出思维导图要的形状
 ```
 
-`serve.py` 另有 `--quiet`（不打每行请求日志）与 `--pack econ`（让 CA6xx 一起进 JSON，与 canonlint 侧同一面旗）。
+`serve.py` 默认只读，另有 `--writable`（开三条写路由）、`--token`（Bearer 凭据）、`--write-log`（JSONL 审计日志）、`--quiet`（不打每行请求日志）与 `--pack econ`（让 CA6xx 一起进 JSON，与 canonlint 侧同一面旗）。
 
-判定器默认使用 Registry：`core-ca`、`core-cl`、`pe` 负责核心规则，`econ` 仍由 `--pack econ` 显式启用。CLI 与 serve 共用同一后端和 Pack 加载入口；紧急回退时在原命令前加 `WGP_JUDGE_BACKEND=legacy`。非法后端值属于环境错误，在审计或端口绑定前以退出码 2 失败，不会输出部分审计结果。legacy 目前保留作回退，尚未经过 Registry 默认运行一个发布周期的删除签核。
+判定器默认使用 Registry：`judges/` 提供统一的 Rule/Pack 元数据与加载入口，`core-ca`、`core-cl`、`pe` 负责核心规则，`econ` 仍由 `--pack econ` 显式启用。CLI 与 serve 共用同一后端和 Pack 加载入口；紧急回退时在原命令前加 `WGP_JUDGE_BACKEND=legacy`。非法后端值属于环境错误，在审计或端口绑定前以退出码 2 失败，不会输出部分审计结果。迁移或改规则时用 `judges/compare.py` 做旧/新后端双跑：把 Finding 四元组、CLI stdout/stderr/退出码、HTTP 状态/正文/语义头与审计日志归一化后逐项判等。legacy 目前保留作回退，尚未经过 Registry 默认运行一个发布周期的删除签核。
 
 退出码：canonlint `0` 通过 · `1` 有 error（`--strict` 时 warning 也算）· `2` 用法/环境错误（例如没装 pyyaml，或 `--dup-threshold` 不在 `(0, 1]` 内）。classlint 另有 `3`：PE 规则被 `rules: off` 关掉时，判定不是「全规则通过」，退出码 3；确认是有意关闭的，加 `--accept-disabled-rules` 才回到 0（见 `classlint/PROTOCOL.md` §4）。
 三个开关的边界都钉在 `tests/run_tests.py` 里：`--strict` **只改退出码不改判定**（同一份数据两种模式的 findings 逐字相同）；`--dup-threshold` 越界是用法错误、且它真的是旋钮（放宽到 0.99 会消音 CA201）；`--impact` 给悬空主体出空下游、主体不进自己的下游、报告不影响退出码。
 `report` 级别的发现（CA504 影响报告、`graph`）**永不进退出码**。
 
 > 两层现在读的目录不同：canonlint 读 `entries/`，classlint 读 `codex/`。
-> 把两层合成一条管线（一个世界、两种判定器）还没做。
+> 判定器注册表统一了规则加载与后端选择，但「一个世界、两种判定器」的合并管线还没做。
 
 全部项目文档的分类、时效状态和更新触发见 **[文档总索引](docs/README.md)**。
 
@@ -73,7 +75,7 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 
 1. **`world.schema.json`** —— 条目格式的唯一契约。自定义与外来字段一律住 `x-` 前缀（例 `x-st-entry`）；
    不许另开 `extensions` 键——它不在字段表里，会被 CA106 当成未定义字段。
-2. **代码 + 测试** —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；测试绿就是真相。
+2. **代码 + 测试** —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；迁移期再加旧/新后端双跑（`judges/compare.py`）；测试绿就是真相。
 3. **`PROTOCOL.md`** —— 2026-09 冻结时写下的规范散文：规则表（§6.3，39 条）与代码逐条互证，
    其余叙述是当时的意图。与代码不一致时**以代码为准**。
 4. **`项目文书.md` / `classlint/项目文书.md`** —— 定位与路线图，属于「想法」，不是契约。
@@ -87,6 +89,7 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 - ✅ **能判**：39 条 CA 规则（结构 / 引用 / 承重链条 / 事件流水 / 重复 / 影响报告）+ CL1xx + PE001–PE005 + PE009
 - ✅ **有回归网**：`tests/` 五套（68 + 12 + 26 + 35 + 15 项检查）+ `classlint/tests/` 一套（18 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
+- ✅ **判定器注册表**：`judges/` 用统一 Rule/Pack 元数据装载 CA/CL/PE/econ，默认后端为 registry；`WGP_JUDGE_BACKEND=legacy` 可整批回退，非法值在审计或端口绑定前以退出码 2 失败。迁移期用 `judges/compare.py` 双跑旧/新后端，Finding、CLI、HTTP 与审计日志归一化后逐项判等
 - ✅ **界面 v0.2**：`web/index.html`（台账 / 审计 / 流水三视图 + 记账表单 + 升格/降级工单，零依赖零构建，`serve.py` 同源伺候）；默认只读，`--writable` 时界面才显示写入口
 - ✅ **可写 HTTP 入口（Phase 2/3）**：`POST /api/entry`（写卡）、`POST /api/event`（记账）、`POST /api/status`（升格/降级）；写完即审、红则回滚，写请求串行化，只收同源 `application/json`；可选 `--token`  bearer 凭据与 `--write-log` 审计日志（见 `docs/接口说明.md`）
 - ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）
@@ -105,6 +108,7 @@ python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口�
 3. **酒馆适配器**：`adapters/st/` 读写世界书与角色卡 V2/V3，我们的关系图住 `x-` 命名空间
 4. **事件流水后续**：携带推导等待容器卡触发；`modify` 已在协议 1.9 转正
    ——触发条件与「动它之前要回答什么」都在 [docs/事件流水设计.md](docs/事件流水设计.md) §4 的 backlog 里
+5. **legacy 退役**：Registry 默认运行满一个发布周期、且没有应急回退后，删除旧判定后端并同步协议与文档（判定器注册表计划 Task 7）
 
 ## 参与贡献
 
