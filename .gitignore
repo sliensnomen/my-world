@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 .~lock.*#
+# 仓库主本地的代理规矩，明确不入库；tests/test_docs.py 的 LOCAL_ONLY_DOCS 与 docs/README.md 同步排除
+AGENTS.md
