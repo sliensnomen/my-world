@@ -80,7 +80,7 @@ python3 serve.py ~/worlds/grey-harbor --port 8000 --writable        # 默认只�
    其余叙述是当时的意图。与代码不一致时**以代码为准**。
 4. **`项目文书.md` / `classlint/项目文书.md`** —— 定位与路线图，属于「想法」，不是契约。
 
-`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与项数（39 条 CA、8 条 CL、6 条 PE、五套检查的 68 + 12 + 26 + 35 + 15、18 个 classlint 夹具），以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
+`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与检查项数（39 条 CA、8 条 CL、6 条 PE、五套检查的 68 + 12 + 26 + 35 + 15），`README.md` / `CONTRIBUTING.md` / `classlint/README.md` 里的 18 个 classlint 夹具，以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
 它**不**是全文校验：层数、字段数、示例世界的条目数、退出码说明这些没被钉住，改代码时请顺手 `grep` 一遍文档。
 
 ## 现状（不吹）

@@ -34,6 +34,7 @@ depends_on:
 | `title` | **必须** | string | 显示名 |
 | `type` | **必须** | string | `^[a-z0-9-]+$`。**实体开放**：词汇用户自定义，初始建议集 `character` / `location` / `faction` / `item` / `event` / `resource` / `institution` |
 | 关系字段（契约列过的全部具名字段） | 可选 | 列表 | 见 §2 |
+| `relations` | 可选 | 对象列表 | 规范形：`{type, target, ...注解}`；与具名字段进入同一张边表，可含自定义关系名 |
 | `x-*` | 可选 | 任意 | 扩展字段必须带 `x-` 前缀，审计器放行 |
 
 除上表与 `x-` 前缀字段外，任何字段**必须**被审计器拒绝（CL103）。
@@ -44,7 +45,7 @@ depends_on:
 
 ## 2. 生产关系层：七种关系
 
-**固定关系，实体开放。** 关系是语法，必须固定为本节的具名关系；实体是词汇，用户随便定义。
+**固定关系，实体开放。** 本层下判语的生产关系固定为本节七种；实体词汇开放。规范形 `relations` 还允许自定义关系名：它们只建边、查目标存在性并进入 `graph`，不自动获得 PE 语义。
 
 本条列的是**本层要判的七种生产关系**（`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/
 `owes`/`depends_on`）。契约 `world.schema.json` 的 `x-relation-vocabulary` 是关系名的唯一
@@ -122,16 +123,16 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 五值定集（v1.1
 | PE003 | error | **合法性不得无锚闭环**：`legitimizes` 图的强连通分量（含自环）若没有任何来自分量外的 `legitimizes` 输入，报警。有外部锚点的互锁合法（依据：WGP v0.5 魔戒 dogfood，规范性互锁是常态）。**`derives_legitimacy_from` 写的那条也在这张图里**（翻译成反向的 `legitimizes`，判定与旧写法逐条相同）——名分是关系名，不再是 `depends_on` 的 `kind` 值 |
 | PE004 | error | **剩余必须收敛（定性版）**：`extracts` 子图存在环（含自环）——剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。定量判定（抽取量 vs 剩余量）待流量层数据就位后回填 |
 | PE005 | warning | **劳动者必须被覆盖（定性版）**：存在 `A —extracts→ B` 且 B 没有任何**物质**来源侧边——被抽取者的剩余/再生产在模型里不可见（隐形剥削嫌疑）。「物质来源侧边」= `extracts`、`exchanges_with`、或带物质类别 `kind`（`resource`/`production`/`economy`/`fiscal`/`manpower`，见 `world.schema.json` 的 `x-strict-vocabulary.depends_on.kind`）的 `depends_on`。一条裸 `depends_on`（无 kind，如 `depends_on: [weather]`）**不**消音：自然条件既不是生产关系也不承担再生产，消音必须是一次物质关系的声明。报在 B 侧：修法是补上带 kind 的物质来源，或确认 B 为终端生产者。定量判定待流量层回填 |
-| PE009 | warning | **债务必须收得回来**：存在 `A —owes→ B` 而模型里没有任何收账通道。通道有两条：**债主对债务人的支配**（`B —controls/coerces/extracts/legitimizes→ A` 任一条——能指挥、能强制、能抽取偿付、能撤回正当性），或**债务人依赖债主**（`A —depends_on→ B`——断供即崩，续借的开关在债主手里）。两条都没有 = 这笔债在模型里无法兑现，只是一句记账。报在 A 侧。注意 `owes` 与 `depends_on` 是两条不同的边（债务不等于供养），所以这里**不**因为写了 `owes` 就假定欠债方依赖债主——依赖得另外写出来 |
+| PE009 | warning | **债务必须收得回来**：存在 `A —owes→ B` 而模型里没有任何收账通道。通道有两条：**债主对债务人的支配**（`B —controls/coerces/extracts/legitimizes→ A` 任一条——能指挥、能强制、能抽取偿付、能撤回正当性），或**债务人对债主的承重依赖**（`A —depends_on→ B`，且这条依赖 `critical: true` 或带物质类别 `kind`：`resource`/`production`/`economy`/`fiscal`/`manpower`）。裸 `depends_on` 与 `x-` 实验类别不算通道。两条都没有 = 这笔债在模型里无法兑现，只是一句记账。报在 A 侧。注意 `owes` 与 `depends_on` 是两条不同的边（债务不等于供养），所以这里**不**因为写了 `owes` 就假定欠债方依赖债主——依赖得另外写出来 |
 
 ### 3.4 报告级输出（永不进退出码）
 
-- **关系图**：`classlint graph <仓库> [--format dot|json]`——节点 = 条目，边 = 契约列过的全部关系（本层判的七种 + `canon_refs`/`conflicts_with`/`exchanges_with`/`derives_legitimacy_from`）；DOT 可直接喂 Graphviz，JSON 供任意前端消费。
+- **关系图**：`classlint graph <仓库> [--format dot|json]`——节点 = 有效 id 条目，边 = 已建关系边（含契约关系与规范形自定义关系；悬空目标不进图）；DOT 可直接喂 Graphviz，JSON 供任意前端消费。
 - **影响报告**：`classlint check <仓库> --impact ID...`——指定条目的 `depends_on` 反向传递闭包（"改 A 炸 B"的待复核队列），参考 WGP 的 CA504。**不含主体自身**：环会把主体带回自己的下游，而「改 A 会炸 A」是环的结论（由结构规则报），不是影响报告的结论——与 CA504 同口径。
-- **正文提及报告**：`check --json` 的每个条目带 `mentions: [{entity, alias, count}]`，把 `codex/entities.yaml` 注册的别名映射到稳定 id。匹配区分大小写、最长优先且不重叠，英文/数字别名要求词边界；缺文件或无匹配为 `[]`。只读正文，不改原文、findings、CL/PE、文本输出或 graph；坏注册表是配置错误（退出码 2）。
+- **正文提及报告**：`check --json` 的每个可解析条目带 `mentions: [{entity, alias, count}]`，把 `codex/entities.yaml` 注册的别名映射到稳定 id。匹配区分大小写、最长优先且不重叠，英文/数字别名要求词边界；缺文件或无匹配为 `[]`。只读正文，不改原文、findings、CL/PE、文本输出或 graph；坏注册表是配置错误（退出码 2）。
 - **`--json` 的字段**（`classlint_version` / `entries` / `findings` / `reports` / `rules_disabled` / `judgement_complete`）以实际输出为准，逐字段说明见 `classlint/README.md` 的「`--json` 输出字段」一节。
 
-**无传递违规原则：** 只判直接边。A 抽取 B、B 的供养断裂并不使 A 连带违规；间接影响是**影响报告**（`--impact`，§3.4）的职责——它已实现，只报直接依赖的反向闭包，不改变任何判定结论。
+**无传递违规原则：** 只判直接边。A 抽取 B、B 的供养断裂并不使 A 连带违规；间接影响是**影响报告**（`--impact`，§3.4）的职责——它已实现，只报 `depends_on` 的反向传递闭包，不改变任何判定结论。
 
 **判定一致性要求：** 同一仓库快照、同一协议版本，任何兼容实现的确定性判定**必须**逐条一致。
 
@@ -152,7 +153,7 @@ rules:
 
 ## 4. 退出码
 
-- `0`：无 error（warning 不影响），且**没有规则被关闭**；
+- `0`：无 error（warning 不影响），且没有规则被关闭；或虽已关闭规则，但显式加了 `--accept-disabled-rules`；
 - `1`：存在 error；
 - `2`：用法/环境/配置错误（含**指错目录**：`codex/` 不在时直说「不像一个 classlint 世界仓库」，而不是收 0 条给出全绿报告——整机版的「看起来在被审」）；
 - `3`：判定通过，但有 PE 规则被 `rules: off` 关闭——「通过」只覆盖仍开着的规则，
