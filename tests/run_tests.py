@@ -1957,6 +1957,66 @@ def check_same_instant_id_order_is_not_history() -> list[str]:
     return problems
 
 
+def check_ambiguous_final_without_assertion_is_reported() -> list[str]:
+    """同刻多笔且受方/保管人不同：没有断言也要报 CA704/CA709「归属未定序」（协议 1.10）。
+
+    #10 的实测：两笔同刻 transfer 给 alice、bob，世界里没有任何 owns 断言时，
+    旧实现把 warning 发在「遍历 owns 断言」的循环里——没有断言就一条都不报，
+    而派生状态照旧按 id 序挑一个持有者展示（猜的答案没有任何标记）。CA709 同病。
+    修复后：未定序是流水自身的性质，与断言无关；每客体报一条，warning 不拦。
+    """
+    problems = []
+
+    def ev(eid: str, kind: str, legs: str) -> str:
+        return _card(eid, f"when: 元年\nevent_kind: {kind}\nwhen_sort: 5\n{legs}"
+                     ).replace("type: location", "type: event")
+
+    def no_ambiguity_noise(world: Path, rule: str) -> None:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"未定序世界把 traceback 写到了 stderr：\n{err}")
+        hits = [ln for ln in out.splitlines() if f"[{rule}]" in ln]
+        if len(hits) != 1:
+            problems.append(
+                f"{rule} 的未定序应每客体只报一条，实际 {len(hits)} 条：\n{out}")
+        if hits and "未定序" not in hits[0]:
+            problems.append(f"{rule} 的这一条应是「未定序」：\n{out}")
+        if any("] error " in ln for ln in hits):
+            problems.append(f"未定序不许按 id 序挑赢家报 error（{rule}）：\n{out}")
+        if code != 0:
+            problems.append(f"未定序只是 warning，默认模式不该拦（{rule}，exit {code}）")
+
+    # CA704：世界里没有任何 owns 断言
+    tmp, world = _temp_world("canonlint-ambig704-", {
+        "alice": _card("alice", ""),
+        "bob": _card("bob", ""),
+        "relic": _card("relic", ""),
+        "ev-a": ev("ev-a", "transfer",
+                   "by:\n  - alice\nobject:\n  - relic\nto:\n  - alice\n"),
+        "ev-b": ev("ev-b", "transfer",
+                   "by:\n  - alice\nobject:\n  - relic\nto:\n  - bob\n"),
+    })
+    with tmp:
+        no_ambiguity_noise(world, "CA704")
+        code_s, _, _ = _judge(world, "--strict")
+        if code_s != 1:
+            problems.append(
+                f"--strict 下 CA704 warning 应当算失败（exit 1），实际 {code_s}")
+
+    # CA709：世界里没有任何 custody_of 断言
+    tmp, world = _temp_world("canonlint-ambig709-", {
+        "x": _card("x", ""), "y": _card("y", ""),
+        "relic": _card("relic", ""),
+        "cu-a": ev("cu-a", "custody",
+                   "by:\n  - x\nobject:\n  - relic\nto:\n  - x\n"),
+        "cu-b": ev("cu-b", "custody",
+                   "by:\n  - y\nobject:\n  - relic\nto:\n  - y\n"),
+    })
+    with tmp:
+        no_ambiguity_noise(world, "CA709")
+    return problems
+
+
 def check_death_events_are_checked_as_actors() -> list[str]:
     """CA705 覆盖 death 事件自身：死人在更晚的另一笔 death 里不能当施动者（协议 1.8）。"""
     cards = {
@@ -2820,6 +2880,8 @@ def main() -> int:
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
         ("同刻事件不按 id 定序（CA704/709/711/712 改名不翻转）", check_same_instant_id_order_is_not_history),
+        ("同刻未定序与断言无关（无 owns/custody_of 也报 CA704/CA709）",
+         check_ambiguous_final_without_assertion_is_reported),
         ("death 事件自身也查 CA705（死人不当施动者）", check_death_events_are_checked_as_actors),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),

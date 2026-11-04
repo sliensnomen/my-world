@@ -140,7 +140,7 @@ function renderLedger() {
   const L = WORLD.ledger || {states: {}, membership: {}};
   const objs = Object.keys(L.states);
   const persons = Object.keys(L.membership);
-  let html = "<h3>派生状态（期初断言 + 流水）</h3>";
+  let html = "<h3>派生状态（结论断言 + 流水）</h3>";
   if (!objs.length) html += `<div class="empty">没有可派生的客体。</div>`;
   else {
     html += `<table><tr><th>客体</th><th>持有者</th><th>保管</th><th>位置</th></tr>`;

@@ -37,7 +37,7 @@ import ledger  # 事件流水：解析与派生状态（判定原料；判语在
 from judges.model import Pack
 from judges.registry import PackImportError, RegistryError, load_backend, select_packs
 
-PROTOCOL_VERSION = "1.9"   # 1.9：modify 转正；同一 id 内变化，不动窗口与派生状态
+PROTOCOL_VERSION = "1.10"  # 1.10：同刻未定序与断言解耦；「期初断言」统一为「结论断言」
 CONTRACT_VERSION = "0.7"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
@@ -624,36 +624,31 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
     states = ledger.derive_state(index)
     # 每个客体的「最终一刻」：when_sort 最大的那批 transfer/grant。同刻多笔的先后
     # 没有定义（ordered_events 的 id 序只用于输出稳定），所以不许拿 id 序挑一个赢家：
-    # 受方集合不同 = 归属未定序，报 warning；相同才继续对账。
-    final_acts: dict[str, tuple[float, list[tuple[Entry, list[str]]]]] = {}
-    for e, v in events:
-        if v.kind not in ("transfer", "grant"):
+    # 受方集合不同 = 归属未定序。**与有没有 owns 断言无关**（协议 1.10）：没有断言时
+    # 派生状态也会按 id 序挑一个展示，读者得知道那只是猜的。每客体只报一条。
+    final_acts = ledger.final_acts_by_object(index, ("transfer", "grant"))
+    ambiguous: set[str] = set()
+    for obj in sorted(final_acts):
+        when, acts = final_acts[obj]
+        recipient_sets = {frozenset(to) for _ev, _v, to in acts}
+        if len(recipient_sets) <= 1:
             continue
-        if not v.legs.get("to"):
-            continue
-        for obj in v.legs.get("object", []):
-            per_obj = final_acts.setdefault(obj, (v.when_sort, []))
-            if v.when_sort > per_obj[0]:
-                final_acts[obj] = (v.when_sort, [(e, v.legs["to"])])
-            elif v.when_sort == per_obj[0]:
-                per_obj[1].append((e, v.legs["to"]))
+        ambiguous.add(obj)
+        peers = "、".join(sorted(ev.id or ev.rel for ev, _v, _to in acts))
+        first = min(acts, key=lambda act: act[0].id or "")[0]
+        findings.append(Finding(
+            "CA704", "warning", first.rel,
+            f"归属未定序：`{obj}` 在 when_sort={when:g} 同时有 "
+            f"{len(acts)} 笔转让（{peers}），受方集合不同——同刻没有先后，"
+            "id 序只用于展示；请拆开 when_sort 或让受方一致"))
     for e in index.values():
         if e.parse_error or not e.id:
             continue
         for r in e.edges_of("owns"):
-            if r.target not in final_acts:
+            if r.target not in final_acts or r.target in ambiguous:
                 continue
             when, acts = final_acts[r.target]
-            recipient_sets = {frozenset(to) for _ev, to in acts}
-            if len(recipient_sets) > 1:
-                peers = "、".join(sorted(ev.id or ev.rel for ev, _to in acts))
-                findings.append(Finding(
-                    "CA704", "warning", e.rel,
-                    f"归属未定序：`{r.target}` 在 when_sort={when:g} 同时有 "
-                    f"{len(acts)} 笔转让（{peers}），受方集合不同——先按 id 序挑一个"
-                    f"只是展示，断言无法对账；请拆开 when_sort 或让受方一致"))
-                continue
-            recipients = set().union(*recipient_sets)
+            recipients = set().union(*(set(to) for _ev, _v, to in acts))
             st = states.get(r.target)
             if (st is not None and st.holder is not None and st.holder != e.id
                     and e.id not in recipients):
@@ -721,17 +716,23 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                     f"本事件却在更晚的 when_sort={v.when_sort:g} 拿它当客体"))
 
     # CA709: 手写 custody_of 断言与 custody 流水推出的最终保管人打架
-    # （CA704 的保管版；多值受方同口径：最终那笔 to 列表里任一受方放行）
-    custody_final: dict[str, tuple[float, list[tuple[Entry, list[str]]]]] = {}
-    for e, v in events:
-        if v.kind != "custody" or not v.legs.get("to"):
+    # （CA704 的保管版；多值受方同口径：最终那笔 to 列表里任一受方放行。
+    #  同刻多笔记账人不同 → 「归属未定序」，与有没有 custody_of 断言无关）
+    custody_final = ledger.final_acts_by_object(index, ("custody",))
+    custody_ambiguous: set[str] = set()
+    for obj in sorted(custody_final):
+        when, acts = custody_final[obj]
+        recipient_sets = {frozenset(to) for _ev, _v, to in acts}
+        if len(recipient_sets) <= 1:
             continue
-        for obj in v.legs.get("object", []):
-            per_obj = custody_final.setdefault(obj, (v.when_sort, []))
-            if v.when_sort > per_obj[0]:
-                custody_final[obj] = (v.when_sort, [(e, v.legs["to"])])
-            elif v.when_sort == per_obj[0]:
-                per_obj[1].append((e, v.legs["to"]))
+        custody_ambiguous.add(obj)
+        peers = "、".join(sorted(ev.id or ev.rel for ev, _v, _to in acts))
+        first = min(acts, key=lambda act: act[0].id or "")[0]
+        findings.append(Finding(
+            "CA709", "warning", first.rel,
+            f"归属未定序：`{obj}` 在 when_sort={when:g} 同时有 "
+            f"{len(acts)} 笔 custody（{peers}），保管人集合不同——同刻没有先后，"
+            "id 序只用于展示；请拆开 when_sort 或让保管人一致"))
     # CA710 的原料也一并收集：custody_of 断言按客体归拢
     custody_claims: dict[str, list[Entry]] = {}
     for e in index.values():
@@ -739,19 +740,10 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
             continue
         for obj in ledger.custody_assertions(e):
             custody_claims.setdefault(obj, []).append(e)
-            if obj not in custody_final:
+            if obj not in custody_final or obj in custody_ambiguous:
                 continue
             when, acts = custody_final[obj]
-            recipient_sets = {frozenset(to) for _ev, to in acts}
-            if len(recipient_sets) > 1:
-                peers = "、".join(sorted(ev.id or ev.rel for ev, _to in acts))
-                findings.append(Finding(
-                    "CA709", "warning", e.rel,
-                    f"归属未定序：`{obj}` 在 when_sort={when:g} 同时有 "
-                    f"{len(acts)} 笔 custody（{peers}），保管人集合不同——"
-                    f"断言无法对账；请拆开 when_sort 或让保管人一致"))
-                continue
-            recipients = set().union(*recipient_sets)
+            recipients = set().union(*(set(to) for _ev, _v, to in acts))
             st = states.get(obj)
             if (st is not None and st.custodian is not None
                     and st.custodian != e.id and e.id not in recipients):
@@ -935,7 +927,7 @@ def ledger_report(root: Path, packs=()) -> int:
         check_ledger(index, findings)
     n_entries = sum(1 for e in all_entries if not e.parse_error)
     print(f"{n_entries} 个条目 | {len(events)} 笔完整事件（有 when_sort 才进流水）")
-    print("\n== 派生状态（期初断言 + 流水）==")
+    print("\n== 派生状态（结论断言 + 流水）==")
     if not states:
         print("(没有可派生的客体：没有 owns 断言，也没有完整事件)")
     for obj in sorted(states):
@@ -1066,7 +1058,7 @@ def build_export(all_entries: list[Entry], findings: list[Finding],
     stances = [a.get("stance") for d in parsed for a in d["relations"]
                if a.get("stance") is not None]
     levels = _counts(f.level for f in findings)
-    # 派生状态透出（B6）：期初断言 + 流水 → 谁拿着什么、谁在哪个组织
+    # 派生状态透出（B6）：结论断言 + 流水 → 谁拿着什么、谁在哪个组织
     states_raw = ledger.derive_state(index) if index is not None else {}
     membership_raw = ledger.derive_membership(index) if index is not None else {}
     return _json_safe({

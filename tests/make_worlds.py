@@ -277,7 +277,7 @@ WE["the-north"] = ("faction", "canon", "political", True, """\
 与刚铎财政并列为'大师共同的盲区'：political 承重墙下缺 fiscal 支点。""",
 "[]", "[]", [("robb-host-ledger", "manpower", False)])
 
-# ---- 期初断言与流水的实体卡（协议 1.2；lb 全 False，不给 CA503 添戏）----
+# ---- 结论断言与流水的实体卡（协议 1.2；lb 全 False，不给 CA503 添戏）----
 
 WE["house-tully"] = ("faction", "canon", "political", False, """\
 徒利家族，河间地的统领世家，奔流城公爵，族语'家族、责任、荣誉'。

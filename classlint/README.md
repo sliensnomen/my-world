@@ -43,7 +43,7 @@ python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | `classlint_version` | string | 本工具版本（当前 `"0.1"`）。与 WGP 的 `protocol_version` 不是一回事 |
-| `entries` | 对象列表 | 每个条目：`id`（解析不出时为 `null`）、`path`（相对世界根的路径）、`meta`（frontmatter 原样）、`body_chars`（正文字数）、`mentions`（正文别名报告） |
+| `entries` | 对象列表 | 每个**可解析**条目：`id`（frontmatter 缺失或不是字符串时为 `null`）、`path`（相对世界根的路径）、`meta`（frontmatter 原样）、`body_chars`（正文字数）、`mentions`（正文别名报告）。解析失败的文件不进此列表，由 `findings` 中的 CL100 报告 |
 | `findings` | 对象列表 | 每条发现：`rule`（`CL1xx` / `PE0xx`）、`level`（`error` / `warning`）、`entry`（条目文件路径；仓库级为 `null`）、`message` |
 | `reports` | 对象列表 | 报告级输出，**永不进退出码**；目前是 `--impact` 的 `{subject, downstream}` 受影响队列 |
 | `rules_disabled` | 字符串列表 | 被 `rules: off` 关掉的规则编号；空列表 = 全规则在跑 |
@@ -56,20 +56,20 @@ python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（
 ## 审计规则（协议 v0.1，见 [PROTOCOL.md](PROTOCOL.md)）
 
 - **CL1xx 结构规则**（不可关）：解析失败、缺必填字段、id 非法/重复、未定义字段、关系 schema 违规、关系目标不存在。
-- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）；**PE004** 剩余必须收敛（extracts 子图无环，定性版）；**PE005** 劳动者必须被覆盖（被抽取者须有来源侧边，定性版 warning）；**PE009** 债务必须收得回来（`owes` 要有收账通道：债主能支配/强制/抽取/撤回正当性，或债务人依赖债主，warning）。
+- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）；**PE004** 剩余必须收敛（extracts 子图无环，定性版）；**PE005** 劳动者必须被覆盖（被抽取者须有来源侧边，定性版 warning）；**PE009** 债务必须收得回来（`owes` 要有收账通道：债主能支配/强制/抽取/撤回正当性，或债务人对债主持有 `critical: true` 或带物质类别 `kind` 的 `depends_on`，warning）。
 
 PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以关，不能改定义。
 
 报告级输出（永不进退出码）：`classlint graph <仓库> [--format dot|json]` 关系图；`classlint check <仓库> --impact ID...` 下游影响报告。
 
-测试：`python3 tests/run_tests.py`（18 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
+测试：`python3 classlint/tests/run_tests.py`（18 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
 
 ## 世界仓库结构
 
 ```
 world/
-├── classlint.yaml        # 项目配置（名称、工具版本、启用的规则包）
-├── rules/                # 自定义规则（YAML，Sprint 2 起）
+├── classlint.yaml        # 项目配置（名称、工具版本、PE 规则开关）
+├── rules/                # 预留目录；YAML 声明式自定义规则尚未实现
 ├── lore/                 # 世界背景、规则、声音指南
 ├── codex/                # 实体注册表——条目唯一位置
 │   ├── entities.yaml     # 稳定 ID 与别名注册
@@ -88,7 +88,7 @@ world/
 
 - 仅允许小写字母、数字、连字符（`^[a-z0-9-]+$`）；
 - 全库唯一；一旦发布永不更改、永不复用；
-- 正文中的别名通过 `codex/entities.yaml` 注册到稳定 ID（别名解析 Sprint 1 实现）。
+- 正文中的别名通过 `codex/entities.yaml` 注册到稳定 ID，识别结果见 `check --json` 的 `mentions`。
 
 ## 核心原则
 

@@ -130,8 +130,33 @@ def ordered_events(index: dict[str, Entry]) -> list[tuple[Entry, EventView]]:
     return out
 
 
+def final_acts_by_object(
+        index: dict[str, Entry], kinds: tuple[str, ...],
+) -> dict[str, tuple[float, list[tuple[Entry, EventView, list[str]]]]]:
+    """每个客体的「最终一刻」动作：`when_sort` 最大那批 `kinds` 事件。
+
+    同刻多笔**全部**收进列表——同刻没有先后，`id` 序只用于输出稳定，不是裁决
+    （协议 1.8）。返回 `{客体: (when_sort, [(卡, 事件视图, 受方列表)])}`；
+    受方多值原样保留。没有 `to` 的事件不进（CA702 管缺腿，这里只收完整动作）。
+    """
+    final: dict[str, tuple[float, list[tuple[Entry, EventView, list[str]]]]] = {}
+    for e, view in ordered_events(index):
+        if view.kind not in kinds or not view.legs.get("to"):
+            continue
+        for obj in view.legs.get("object", []):
+            current = final.get(obj)
+            if current is None or view.when_sort > current[0]:
+                final[obj] = (view.when_sort, [(e, view, view.legs["to"])])
+            elif view.when_sort == current[0]:
+                current[1].append((e, view, view.legs["to"]))
+    return final
+
+
 def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
-    """期初断言（owns）+ 流水 → 每个客体的当前状态。只读，确定序。
+    """结论断言（owns）+ 流水 → 每个客体的当前状态。只读，确定序。
+
+    卡上的 owns 是作者对**当前结论**的断言（无时间）；没有更早流水时它兼作这段
+    历史的起点，一旦发生流转，断言要写成最终持有者，与流水推出的结论一致（CA704）。
 
     多值 `to` 只取第一个：派生状态是**展示用**的单一答案，不是裁决——「多值受方
     未定序」由 CA704 在断言侧处理。同刻事件的先后同样只影响展示，不影响判定。
