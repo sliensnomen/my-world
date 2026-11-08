@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**39 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.9"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.10"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -33,7 +33,7 @@
 
 16. **每一种关系的悬空引用都报 CA401**（§6.3）：`owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes` 六种字段的语义虽归 classlint 那一层，但从前 canonlint 一条都不查——`owns: [幽灵]` 在本层完全隐形，只有跑 classlint 才有 CL105。规则归属不改变「引用指向不存在的 id 是结构问题」，现在本层对契约列过的每一种关系都查存在性（照旧**不**给生产关系附加状态语义：依据草稿、交换对象降级都不构成违规）。`tests/run_tests.py` 钉住五种关系 × 两种写法都要报、目标存在时不报。
 
-17. **`owes` 有了判语：债务必须收得回来**（classlint PE009，见 `classlint/PROTOCOL.md` §3.3）：存在 `A —owes→ B` 时，模型里必须有收账通道——债主对债务人的支配（`controls`/`coerces`/`extracts`/`legitimizes` 任一条），或债务人依赖债主（`depends_on`）。两条都没有就报 warning：那样的 `owes` 只是一句记账，模型里没有能兑现它的结构。此前 `owes` 有词表、有形状、有定义，却没有一条规则用它——契约自己写着「本版 PE 规则还没用它下判语」，这是已知缺口。编号取 **PE009** 而不是 PE006：`classlint` 规划里的 PE006–PE008 属流量层（剩余量/人口/交叉），编号即协议，不占用已规划的空位。
+17. **`owes` 有了判语：债务必须收得回来**（classlint PE009，见 `classlint/PROTOCOL.md` §3.3）：存在 `A —owes→ B` 时，模型里必须有收账通道——债主对债务人的支配（`controls`/`coerces`/`extracts`/`legitimizes` 任一条），或债务人依赖债主（`depends_on`）。现行判定已把债务人侧通道收紧为 `critical: true` 或带物质 `kind` 的依赖；裸依赖与 `x-` 类别不算。两条都没有就报 warning：那样的 `owes` 只是一句记账，模型里没有能兑现它的结构。此前 `owes` 有词表、有形状、有定义，却没有一条规则用它——契约自己写着「本版 PE 规则还没用它下判语」，这是已知缺口。编号取 **PE009** 而不是 PE006：`classlint` 规划里的 PE006–PE008 属流量层（剩余量/人口/交叉），编号即协议，不占用已规划的空位。
 
 18. **两个引擎共用同一份边层，读卡合并才算到底**。`db1ef88` 合并了文件层（`store/parse.py`：id 语法、frontmatter 切分、契约词表、拼法归一化），但**建边与形状校验**仍是 classlint 自己一份（约 90 行），于是契约声明合法的 `conflicts_with: [{id, stance}]`、`exchanges_with: [{id, what}]` 在 classlint 里变成硬错误、**整条边消失**；`depends_on + kind: legitimacy` 的搬家也只在 canonlint 侧执行——同一份数据两个引擎判得不一样。现在 `Entry.relations` 与 `relation_shape_errors` 只有 `store/model.py` 一份实现，classlint 只把形状问题映射成本引擎编号（CL104），并新增 CL106（旧写法搬家提示，与 CA111 同一件事）。保留的唯一差异是契约 `x-stricter-than-contract` 第一条登记的 `depends_on` 口径（canonlint 要求对象式且 `kind`/`critical` 给全，classlint 按自己的协议 §2.2 降为可选）——它现在是一个开关 `Entry.depends_on_requires_annotations`，而不是两份代码。两把新锁钉住它：`tests/test_store.py`「两个引擎建同一张边图」（17 种形状两边跑，边图含顺序与形状问题必须逐条相同，例外只许是登记的那处口径差）与 `tests/test_schema.py` 改写后的别名锁（遍历**契约**逐个真的解析：声明合法的形状必须建出边，多写未声明的键必须报错）。后者刚写完就抓出两处真缺陷：canonlint 的 `deps` 拒收契约声明合法的 `depends_on.note`（CA107 冤报），`conflicts_with` 的对象式多写键无声通过。
 
@@ -83,6 +83,10 @@
 **v1.9 修订记录（2026-10-28，modify 转正）：**
 
 32. **`modify` 进词表：同一身份内的变化**。`object` 必填、`by` 可选，具体变化写在事件正文；它不新增属性补丁结构，不改变持有者、保管、位置或成员关系。与 `transform` 不同，`modify` 不关闭或打开存在窗口，`result` 对它没有产物语义。CA102/CA109/CA401/CA702/CA705/CA708 复用既有判定，不新增规则编号，按 §9.1 升 minor；契约升 0.7。
+
+**v1.10 修订记录（2026-11-04，#10 止血：结论断言 + 同刻未定序与断言解耦）：**
+
+33. **同刻未定序与是否手写断言无关**。CA704/CA709 的「归属未定序」warning 以前挂在 `owns`/`custody_of` 断言循环里：每张断言卡一条，没有断言则完全不报——而派生状态在无断言时也会按 id 序挑一个展示，读者无从知道那是猜的。现在 warning 从断言循环抽出，按客体各报一条（有断言、无断言都报），受方集合一致时的对账逻辑不变。同时文档口径从「期初断言」统一为「当前结论断言」：`owns` 无时间，没有更早流水时兼作这段历史的起点，发生过流转后断言必须写最终持有者/保管人。这是判据收口、不新增规则编号，按 §9.1 升 minor；契约不动。
 
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
@@ -184,7 +188,7 @@ ai_assisted: false
 | `legitimizes` | 可选 | 列表 | 元素为 id 或对象（`{id, note?}`）；**正当化**（A 给 B 合法性）；与 `B derives_legitimacy_from A` 同义。判定（PE003/PE009）归 classlint；本层只建边并查存在性（CA401） |
 | `owes` | 可选 | 列表 | 元素为 id 或对象（`{id, what?, note?}`）；**债务**（A 欠 B）。判定（PE009）归 classlint；本层只建边并查存在性（CA401） |
 | `relations` | 可选 | 对象列表 | **规范形**（v1.1）：元素 `{type, target, kind?, critical?, stance?, what?, note?}`，`type` 逐字取 §4.4 的规范名；与上面各具名字段判定等价（§5.4）。元素同样查目标存在性（CA401），拼写近失记 CA110 |
-| `depends_on` | 条件必填 | 对象列表 | 见 §5.3 schema；`load_bearing: true` 时必填 |
+| `depends_on` | 条件必填 | 对象列表 | 见 §5.3/§5.4；承重墙必须声明依赖，可用本字段或规范形 `relations` 表达 |
 | `layer` | 条件必填 | enum | 见 §5.2；`load_bearing: true` 时必填 |
 | `superseded_by` | 条件必填 | id 或 null | 见 §3.4；`archived` 必填，其他状态可省略或填 null |
 | `ai_assisted` | 必须 | bool | 见 §7 AI 条款 |
@@ -194,7 +198,7 @@ ai_assisted: false
 | `by` | 可选 | id 列表 | 事件腿：施动者 |
 | `to` | 可选 | id 列表 | 事件腿：受方（转移的接手人、移动的目的地） |
 | `object` | 可选 | id 列表 | 事件腿：客体（被转移/移动/造/毁的那个） |
-| `from` | 可选 | id 列表 | 事件腿（协议 1.4）：移动的起点，先记后查 |
+| `from` | 可选 | id 列表 | 事件腿（协议 1.4）：移动的起点，由 CA711 与轨迹链对账 |
 | `custody_of` | 可选 | id 列表 | 保管断言（协议 1.4）：本卡保管这些客体；与 `owns` 平行，受 CA709/CA710 对账 |
 | `member_of` | 可选 | id 列表 | 组织归属断言（协议 1.6）：本卡属于这些组织；多值合法，受 CA712 对账（流水里最后一个动作是 `leave` 即打架） |
 | `result` | 可选 | id 列表 | 事件腿（协议 1.7）：`transform` 的产物（新身份）；多值 = 一生多。旧身份（`object`）的存在窗口止于这笔，新身份的窗口始于这笔；持有者与位置不自动继承 |
@@ -206,7 +210,7 @@ ai_assisted: false
 
 ### 2.3 引用语法
 
-所有跨条目引用（`canon_refs` / `conflicts_with` / `exchanges_with[].id` / `derives_legitimacy_from[].id` / `depends_on[].id` / `superseded_by`）**必须**使用 `id`，**禁止**使用文件路径或标题。
+所有跨条目引用——包括各具名关系字段、规范形 `relations`、`superseded_by`、事件腿与 `custody_of`/`member_of` 断言——**必须**使用 `id`，**禁止**使用文件路径或标题。
 
 理由：`id` 不可变，文件可以移动、重命名、换目录而不炸任何引用。文件路径是存储细节，不是身份。
 
@@ -252,11 +256,11 @@ draft → trial → canon → archived
 
 ### 3.4 降级的级联处置（消灭"stale 引用"）
 
-降级一条 `canon` 条目会使其所有下游的 `canon_refs` 立即违反 CA402。为消除协议死锁，降级裁决**必须**附带处置方案：
+降级一条 `canon` 条目会触发下游 `canon_refs` 的降级处置：有有效承接者时由 CA402 报在引用方，没有有效承接者时由 CA405 报在 archived 条目侧。为消除协议死锁，降级裁决**必须**附带处置方案：
 
 1. 评审执行降级时，**必须**在 `archived` 条目上填写 `superseded_by`，指向承接其地位的条目（可以是新条目或既有条目）；确无承接者时填 `null` 并在裁决理由中说明。
 2. 降级的同时，评审**必须**生成 CA504 影响报告，列出该条目的全部下游依赖者，作为待复核工单。
-3. 下游条目在工单关闭前处于"已知违规"状态——CA402 照报 error，**协议不提供豁免**。违规必须在工单中实质性解决（改指向 `superseded_by` 目标、或修改正文消除依赖），不允许"标记 stale 后放着不管"。
+3. 工单关闭前，CA402/CA405 按上述分工照报 error，**协议不提供豁免**。违规必须在工单中实质性解决（改指向 `superseded_by` 目标、或修改正文消除依赖），不允许"标记 stale 后放着不管"。
 
 设计理由：stale 标记是债务的合法化，与本协议"降级不删稿但也不留暗账"的立场冲突。允许的唯一缓冲是工单本身，不是数据里的豁免位。
 
@@ -394,7 +398,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 
 ### 5.4 `depends_on` 对象 schema（kind 五值定集，v1.1）
 
-每个元素**必须**恰好包含以下三个必填字段，可以加 `x-` 扩展字段。**这条对两种写法同样成立**：旧具名字段 `depends_on:` 的元素按 `id`/`kind`/`critical`，规范形 `relations:` 里的 `depends_on` 项按 `target`/`kind`/`critical`——缺一个就报 CA107，两条路径都不跳过，否则「规范形省掉 `kind`」就能合法地关掉 CA501/CA502/CA503（见 §9 v1.1 修订记录第 2 条）。契约 `attrs` 里另有可选的 `note`（仅供人读，不参与判定）。
+每个元素**必须**包含以下三个必填字段，可以另加 `note` 与 `x-` 扩展字段。**这条对两种写法同样成立**：旧具名字段 `depends_on:` 的元素按 `id`/`kind`/`critical`，规范形 `relations:` 里的 `depends_on` 项按 `target`/`kind`/`critical`——缺一个就报 CA107，两条路径都不跳过，否则「规范形省掉 `kind`」就能合法地关掉 CA501/CA502/CA503（见 §9 v1.1 修订记录第 2 条）。`note` 仅供人读，不参与判定。
 
 | 字段 | 类型 | 约束 |
 |---|---|---|
@@ -402,7 +406,7 @@ CA302 判的是「有没有声明」，不是「有没有边」——所以下�
 | `kind` | string | 必填。**五值初始集**：`resource` / `production` / `economy` / `fiscal` / `manpower`（哪一类物资）；集外仅允许 `x-` 前缀实验值（如 `x-faith`），作为协议的长期泄压阀，CA108 info 级收集证据。v1.1 起 `legitimacy` **不再是 kind 值**——名分依据是关系名（§4.5） |
 | `critical` | bool | 必填；`true` = 断供即崩塌 |
 
-缺字段、多字段（非 `x-`）= CA107 error；`kind` 在初始集外且无 `x-` 前缀 = CA108 error，有 `x-` 前缀 = CA108 info 级提示（计入案例收集）。
+缺必填字段、含未定义的非 `x-` 字段 = CA107 error；`kind` 在初始集外且无 `x-` 前缀 = CA108 error，有 `x-` 前缀 = CA108 info 级提示（计入案例收集）。
 
 **kind 分族（v0.5 起的物质族；v1.1 收窄为单族）：** 初始集的物质族是 `resource` / `production` / `economy` / `fiscal` / `manpower`——自下而上流动，受 CA501 层级方向约束与 CA502 环检测。
 
@@ -447,6 +451,8 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA3xx | 承重墙触发 | 确定性 |
 | CA4xx | 引用与状态机 | 确定性 |
 | CA5xx | 政治经济学链条 | 确定性 |
+| CA6xx | econ 扩展包（数值系统） | 确定性 |
+| CA7xx | 事件流水 | 确定性 |
 | CA9xx | AI 语义审计 | **建议性，永不进退出码** |
 
 ### 6.2 审计中立性条款
@@ -466,7 +472,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA104 | warning | `trial`/`canon` 条目正文少于 200 字（计数算法见 §6.6） |
 | CA105 | error | `id` 语法非法：含小写字母/数字/连字符以外的字符，或不是字符串 |
 | CA106 | error | 存在不带 `x-` 前缀的未定义字段 |
-| CA107 | error | `depends_on` 对象违反 §5.4 schema（缺字段/多非 x- 字段） |
+| CA107 | error | `depends_on` 对象违反 §5.4 schema（缺必填字段/含未定义的非 `x-` 字段） |
 | CA108 | error/info | `depends_on[].kind` 在初始集外：无 `x-` 前缀 = error；有 `x-` 前缀 = info（案例收集） |
 | CA109 | error | 字段类型/格式非法：`canon_refs` 非列表或元素非字符串、`load_bearing`/`ai_assisted`/`critical` 非 bool、id 引用不符合 `^[a-z0-9-]+$` 格式（`world:id` 形式除外，归 CA401）等；事件字段出现在非 `type: event` 的卡上（协议 1.8）也归本条 |
 | CA110 | warning | 关系名拼写近失：规范形 `relations[].type` 与某个规范关系名的编辑距离 ≤1（如 `depends-onn`、`depend_on`、`extractss`）。距离在**去掉连字符/下划线之后**计算——不这么做，量的是分隔符风格而不是「打错没有」，协议自己举的例子 `depends-onn` 就会落在阈值之外、整条边静默。工具**真的把这条边按规范名建进图**（CA401/CA501/CA504 照判），本条只提示疑似拼写错误；距离 ≥2 的名字原样保留、不提示（自由档，见 §5.4） |
@@ -475,8 +481,8 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA114 | error | `id` 重复（两张卡撞同一个 id）。按路径序首个入索引：别人引用这个 id 时指的是前者，**被遮蔽那一份自己的出边照旧检查**（它没进索引不等于没写错） |
 | CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复 |
 | CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明）。**只对已定档条目（trial/canon）发出**：draft 还没到做决定的时候，而 `--strict` 会把 warning 当失败 |
-| CA302 | error | `load_bearing: true` 但缺 `layer` 或 `depends_on` |
-| CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`，和协议 1.2/1.4 的事件腿 `by`/`to`/`object`/`from` 与保管断言 `custody_of`、归属断言 `member_of`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
+| CA302 | error | `load_bearing: true` 但缺 `layer`，或既没有 `depends_on` 字段也没有规范形 `relations` 字段（显式空列表仍算已声明） |
+| CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`，和协议 1.2/1.4/1.7 的事件腿 `by`/`to`/`object`/`from`/`result` 与保管断言 `custody_of`、归属断言 `member_of`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
 | CA402 | error | `canon_refs` 目标状态为 `draft`/`trial`；或目标为 `archived` 且已填**有效**的 `superseded_by`（提示迁移至承接条目）。目标为 `archived` 且没有有效承接者（未填、`null`、坏值、指向不存在、指向自己）时**不报本条**，由 CA405 在 archived 条目侧单独报告，避免双报；迁移指引里印出的承接条目一定是真存在的那一个 |
 | CA403 | warning | `conflicts_with` 双方均简式且缺回指（对象式标注豁免，见 §4.2） |
 | CA404 | error | `canon` 条目的 `depends_on` 目标状态非 `canon`（链条依赖只能建立在已定档上） |
@@ -489,12 +495,12 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA701 | warning | 时序倒流：事件 A 的 `depends_on` 里有事件 B，两边都有 `when_sort` 且 B > A（要求 B ≤ A，相等合法）。任一边缺 `when_sort` 即豁免；非 `type: event` 的卡不参与。**`when_sort` 相等即同刻，同刻没有先后**——流水里的 id 序只是输出稳定键，不是时序（协议 1.8） |
 | CA702 | error | 账不平：完整事件的必填腿缺失或为空（`transfer`/`custody`/`grant` 要 `by`+`to`+`object`，`move` 要 `object`+`to`，`create`/`destroy`/`birth`/`death`/`modify` 要 `object`，`join` 要 `by`+`to`，`leave` 要 `by`+`from`，`transform` 要 `object`+`result`）。腿形状写坏归 CA109，不双报 |
 | CA703 | warning | 无源之财：`transfer`/`grant` 的客体在它之前没有任何持有者（既无 `owns` 断言，也无更早的 `transfer`/`grant` 指向它）。事件自身缺 `when_sort` 即豁免。`create` 不算持有者来源：它的腿表只有 `object`，事件里没记「谁造的」，推不出持有者 |
-| CA704 | error/warning | 结论与流水打架：手写 `owns` 断言与流水推出的最终持有者不一致（只对有 `transfer`/`grant` 流水的客体比对；无流水的客体断言即全部历史）。**多值受方 = 归属未定序**：最终那笔的 `to` 多于一个 id 时，派生状态的报告取第一个，CA704 对列表里任一受方的断言都放行；更早一笔的受方已被转手，不放行。**同刻多笔转让**（协议 1.8）：同一客体在最大 `when_sort` 上有多笔转让且受方集合不同 → **warning**「归属未定序」，不许按 id 序挑一笔当最终持有者；受方集合一致则按一致集合对账，仍是 error |
+| CA704 | error/warning | 结论与流水打架：手写 `owns` 断言与流水推出的最终持有者不一致（只对有 `transfer`/`grant` 流水的客体比对；无流水的客体断言即全部历史）。**多值受方 = 归属未定序**：最终那笔的 `to` 多于一个 id 时，派生状态的报告取第一个，CA704 对列表里任一受方的断言都放行；更早一笔的受方已被转手，不放行。**同刻多笔转让**（协议 1.8/1.10）：同一客体在最大 `when_sort` 上有多笔转让且受方集合不同 → **warning**「归属未定序」，不许按 id 序挑一笔当最终持有者；该 warning **与有没有 `owns` 断言无关，每客体只报一条**（协议 1.10）；受方集合一致则按一致集合对账，仍是 error |
 | CA705 | warning | 死人做活事：事件的 `by` 里有人在**严格更早**（`when_sort` 较小）的事件里已 `death`；同刻不算。**`death` 事件自身也查**（协议 1.8）：死者不能再当任何事件的施动者，包括另一笔 `death` |
 | CA706 | warning | 半截事件：`when` 与 `event_kind` 只给了一个。两个都给才是完整事件，都不给就是普通史料卡（协议 1.1 的世界在 1.2 下不红） |
 | CA707 | warning | `owns` 断言互搏：同一客体被多张卡断言持有。派生状态按 id 序取第一个只是「报告需要一个确定答案」，不是裁决；请统一到一张卡上断言，或改用流水表达流转。与有无流水无关 |
 | CA708 | warning | 不存在的东西在动弹：客体的事件落在它自己的存在窗口外——`create`/`birth` 开窗、`death`/`destroy` 关窗、`transform` 关旧窗开新窗（取最早的边界；缺 `when_sort` 的边界不产生窗口）。端点事件自身豁免。`modify` 是普通客体事件，不是端点；同一 id 的变化不关闭或打开窗口。CA705 管 `by` 腿，本条管 `object` 腿 |
-| CA709 | error/warning | 结论与流水打架（保管版）：手写 `custody_of` 断言与 custody 流水推出的最终保管人不一致。custody 不改变持有者、只改保管；多值受方与 CA704 同口径（最终那笔 `to` 列表里任一受方放行）。同刻多笔 custody 且受方集合不同 → warning「未定序」（协议 1.8，与 CA704 对称） |
+| CA709 | error/warning | 结论与流水打架（保管版）：手写 `custody_of` 断言与 custody 流水推出的最终保管人不一致。custody 不改变持有者、只改保管；多值受方与 CA704 同口径（最终那笔 `to` 列表里任一受方放行）。同刻多笔 custody 且受方集合不同 → warning「未定序」（协议 1.8/1.10，与 CA704 对称：**与有没有断言无关，每客体一条**） |
 | CA710 | warning | `custody_of` 断言互搏：同一客体被多张卡断言保管（CA707 的保管版） |
 | CA711 | warning | 轨迹断裂：`move` 的 `from` 对不上链上当前位置（上一笔 `move` 的 `to`）。只查存在窗口内的 `move`（窗外归 CA708，不双报）；上一笔 `to` 多值则位置「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时当前位置在列表里即放行；缺 `from`/`when_sort` 不查。**同刻多笔 `move`**（协议 1.8）之间没有先后：同刻先合并位置（目的地一致才确定，不一致即「未定」），只有**严格更晚**的 `move` 才与它比对 |
 | CA712 | error | 结论与流水打架（成员版）：手写 `member_of` 断言，但该人流水里对那个组织的最后一个动作是 `leave`——要么补一笔 `join`，要么撤断言。组织没有流水时断言即全部历史，不判。`member_of` 多值合法（一个人可以在多个组织），所以只有对账、没有互搏规则。**同刻 join 与 leave 并存**时最后动作未定序 → fail-open，不报（协议 1.8） |
@@ -527,7 +533,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.9",
+  "protocol_version": "1.10",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

@@ -48,34 +48,31 @@ def check_ca703(world: dict, emit) -> None:
 
 def check_ca704(world: dict, emit) -> None:
     index = world["index"]
-    events = event_ledger.ordered_events(index)
     states = event_ledger.derive_state(index)
-    final_acts = {}
-    for e, view in events:
-        if view.kind not in ("transfer", "grant") or not view.legs.get("to"):
+    # 未定序与有无断言无关（协议 1.10）：同刻多笔且受方集合不同就报，每客体一条。
+    final_acts = event_ledger.final_acts_by_object(index, ("transfer", "grant"))
+    ambiguous = set()
+    for obj in sorted(final_acts):
+        when, acts = final_acts[obj]
+        recipient_sets = {frozenset(to) for _event, _view, to in acts}
+        if len(recipient_sets) <= 1:
             continue
-        for obj in view.legs.get("object", []):
-            per_obj = final_acts.setdefault(obj, (view.when_sort, []))
-            if view.when_sort > per_obj[0]:
-                final_acts[obj] = (view.when_sort, [(e, view.legs["to"])])
-            elif view.when_sort == per_obj[0]:
-                per_obj[1].append((e, view.legs["to"]))
+        ambiguous.add(obj)
+        peers = "、".join(sorted(event.id or event.rel
+                                 for event, _view, _to in acts))
+        first = min(acts, key=lambda act: act[0].id or "")[0]
+        emit("warning", first.rel,
+             f"归属未定序：`{obj}` 在 when_sort={when:g} 同时有 "
+             f"{len(acts)} 笔转让（{peers}），受方集合不同——同刻没有先后，"
+             "id 序只用于展示；请拆开 when_sort 或让受方一致")
     for e in index.values():
         if e.parse_error or not e.id:
             continue
         for ref in e.edges_of("owns"):
-            if ref.target not in final_acts:
+            if ref.target not in final_acts or ref.target in ambiguous:
                 continue
             when, acts = final_acts[ref.target]
-            recipient_sets = {frozenset(to) for _event, to in acts}
-            if len(recipient_sets) > 1:
-                peers = "、".join(sorted(event.id or event.rel for event, _to in acts))
-                emit("warning", e.rel,
-                     f"归属未定序：`{ref.target}` 在 when_sort={when:g} 同时有 "
-                     f"{len(acts)} 笔转让（{peers}），受方集合不同——先按 id 序挑一个"
-                     "只是展示，断言无法对账；请拆开 when_sort 或让受方一致")
-                continue
-            recipients = set().union(*recipient_sets)
+            recipients = set().union(*(set(to) for _event, _view, to in acts))
             state = states.get(ref.target)
             if (state is not None and state.holder is not None and state.holder != e.id
                     and e.id not in recipients):
@@ -140,34 +137,31 @@ def check_ca708(world: dict, emit) -> None:
 
 def check_ca709(world: dict, emit) -> None:
     index = world["index"]
-    events = event_ledger.ordered_events(index)
     states = event_ledger.derive_state(index)
-    custody_final = {}
-    for e, view in events:
-        if view.kind != "custody" or not view.legs.get("to"):
+    # 未定序与有无断言无关（协议 1.10）：同刻多笔且保管人集合不同就报，每客体一条。
+    custody_final = event_ledger.final_acts_by_object(index, ("custody",))
+    ambiguous = set()
+    for obj in sorted(custody_final):
+        when, acts = custody_final[obj]
+        recipient_sets = {frozenset(to) for _event, _view, to in acts}
+        if len(recipient_sets) <= 1:
             continue
-        for obj in view.legs.get("object", []):
-            per_obj = custody_final.setdefault(obj, (view.when_sort, []))
-            if view.when_sort > per_obj[0]:
-                custody_final[obj] = (view.when_sort, [(e, view.legs["to"])])
-            elif view.when_sort == per_obj[0]:
-                per_obj[1].append((e, view.legs["to"]))
+        ambiguous.add(obj)
+        peers = "、".join(sorted(event.id or event.rel
+                                 for event, _view, _to in acts))
+        first = min(acts, key=lambda act: act[0].id or "")[0]
+        emit("warning", first.rel,
+             f"归属未定序：`{obj}` 在 when_sort={when:g} 同时有 "
+             f"{len(acts)} 笔 custody（{peers}），保管人集合不同——同刻没有先后，"
+             "id 序只用于展示；请拆开 when_sort 或让保管人一致")
     for e in index.values():
         if e.parse_error or not e.id:
             continue
         for obj in event_ledger.custody_assertions(e):
-            if obj not in custody_final:
+            if obj not in custody_final or obj in ambiguous:
                 continue
             when, acts = custody_final[obj]
-            recipient_sets = {frozenset(to) for _event, to in acts}
-            if len(recipient_sets) > 1:
-                peers = "、".join(sorted(event.id or event.rel for event, _to in acts))
-                emit("warning", e.rel,
-                     f"归属未定序：`{obj}` 在 when_sort={when:g} 同时有 "
-                     f"{len(acts)} 笔 custody（{peers}），保管人集合不同——"
-                     "断言无法对账；请拆开 when_sort 或让保管人一致")
-                continue
-            recipients = set().union(*recipient_sets)
+            recipients = set().union(*(set(to) for _event, _view, to in acts))
             state = states.get(obj)
             if (state is not None and state.custodian is not None
                     and state.custodian != e.id and e.id not in recipients):

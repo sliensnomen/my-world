@@ -21,9 +21,9 @@
 canonlint 要求 `depends_on` 对象式且 `kind`/`critical` 给全，classlint 按自己的协议降为可选），
 由 `tests/test_store.py` 的「两个引擎建同一张边图」钉着——例外只许是这一处。
 
-规则不在这里。层级方向、承重墙、盲区、合法性闭环、关系讲不讲得通——那些在
-`canonlint.py`（未来拆到 `rules/`）。**存储层不认识理论**：它不知道 `fiscal` 与
-`manpower` 有什么区别，也不知道哪一层该养哪一层。
+规则不在这里。层级方向、承重墙、盲区、合法性闭环、关系讲不讲得通——那些默认在
+`judges/` 的 Registry Pack 里；`canonlint.py` 与 `classlint/classlint.py` 只保留 legacy 回退实现。
+**存储层不认识理论**：它不知道 `fiscal` 与 `manpower` 有什么区别，也不知道哪一层该养哪一层。
 
 ---
 
@@ -32,10 +32,10 @@ canonlint 要求 `depends_on` 对象式且 `kind`/`critical` 给全，classlint 
 ### 改完必须跑的命令
 
 ```sh
-python3 tests/run_tests.py            # 15 种快照跑法 + 意图断言，共 63 项检查
+python3 tests/run_tests.py            # 15 种快照跑法 + 意图断言，共 69 项检查
 python3 tests/test_schema.py          # 契约与代码常量不漂移（12 项）
 python3 tests/test_store.py           # 存储层边界，包括本文件的规矩（26 项）
-python3 tests/test_serve.py           # 接口与前端数据合同（31 项）
+python3 tests/test_serve.py           # 接口与前端数据合同（35 项）
 python3 tests/test_docs.py            # 文档数字、链接与总索引（15 项）
 python3 classlint/tests/run_tests.py  # classlint 的 18 个夹具世界
 ```
@@ -49,8 +49,8 @@ python3 classlint/tests/run_tests.py  # classlint 的 18 个夹具世界
 
 1. `store/model.py`：加进 `CORE_REQUIRED_FIELDS`（必填）或 `ANNOTATION_FIELDS`（可选）。
 2. `world.schema.json`：加进 `properties`；若属于严格档，同步 `x-strict-required`。
-3. `canonlint.py`：若它也要被严格规则检查（比如词表），再把词表加进 `x-strict-vocabulary`
-   并在 `check_structure` 里加判定。
+3. `judges/ca/`：若它也要被严格规则检查（比如词表），再把词表加进 `x-strict-vocabulary`
+   并在对应 Rule 里加判定；legacy 是否同步按 `CONTRIBUTING.md` 的双跑要求处理。
 4. 跑六套测试。`tests/test_schema.py` 会在两张表不一致时直接报红。
 
 **加一个条目目录**（比如 `drafts/`）
@@ -65,7 +65,7 @@ python3 classlint/tests/run_tests.py  # classlint 的 18 个夹具世界
    `Entry.relations` 里归一化成 `Relation`。
 2. 决定它是否进 `from store import ...` 的字段表——**这一步会让 CA106 不再报它**，
    属于行为变更，必须解释。
-3. 判定器那边（`rules/`）决定它参不参与检查；存储层不判断关系名是否有意义，
+3. 判定器那边（`judges/` 的对应 Pack）决定它参不参与检查；存储层不判断关系名是否有意义，
    未知关系名**原样保留**。
 
 判定器**只读 `Entry.edges_of("关系名")`**（归一化视图），不再自己翻旧具名字段——
@@ -88,7 +88,7 @@ python3 classlint/tests/run_tests.py  # classlint 的 18 个夹具世界
 - 不能 → 它属于判定器。
 
 `tests/test_store.py` 把这条规矩变成了机器可查的东西：`store/` 的源码里不允许出现
-理论词表（八层名、六种 `kind`、PE 规则号、政治经济学术语）。这条检查会失败，
+理论词表（八层名、五种 `kind`、PE 规则号、政治经济学术语）。这条检查会失败，
 说明有理论漏进了存储层。
 
 唯一的例外是四条**已经发出去的老提示语**（`ALLOWED_SNIPPETS`，写在

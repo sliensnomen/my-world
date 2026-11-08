@@ -41,7 +41,7 @@ def event(id, kind, when_sort, legs="", depends="[]"):
 
 
 CLEAN = {
-    # 期初断言（owns 写在「当前持有者」卡上，与流水推出的最终持有者一致）
+    # 结论断言（owns 写在「当前持有者」卡上，与流水推出的最终持有者一致）
     "house-fox": card("house-fox", "faction", "owns:\n  - grey-rock\n"),
     "lord-anna": card("lord-anna", "character", "owns:\n  - fox-blade\n"),
     # owns 断言必须等于流水推出的最终持有者（CA704）：watch-command 经 grant 归 bob

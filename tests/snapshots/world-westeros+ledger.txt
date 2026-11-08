@@ -1,7 +1,7 @@
 exit=0
 42 个条目 | 12 笔完整事件（有 when_sort 才进流水）
 
-== 派生状态（期初断言 + 流水）==
+== 派生状态（结论断言 + 流水）==
 eddard-stark: 持有者 （无） | 保管 - | 位置 -
 ice-sword: 持有者 eddard-stark（来自 `ev-ice-to-ned`） | 保管 house-stark | 位置 -
 iron-throne: 持有者 robert-baratheon（来自 `ev-robert-crowned`） | 保管 - | 位置 -
