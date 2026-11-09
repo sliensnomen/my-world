@@ -527,7 +527,7 @@ def check_只读界面被伺候且指向数据源():
     page = ROOT / "web" / "index.html"
     assert page.is_file(), "web/index.html 不存在"
     text = page.read_text(encoding="utf-8")
-    for marker in ("/api/world", "台账", "审计", "流水", "派生状态"):
+    for marker in ("/api/world", "台账", "审计", "流水", "派生状态", "certainty", "未定序"):
         assert marker in text, f"web/index.html 少了 {marker!r}"
     fallback_match = re.search(r"const REQUIRED_FALLBACK = (\{.*\});", text)
     assert fallback_match, "web/index.html 缺少可解析的 REQUIRED_FALLBACK"
