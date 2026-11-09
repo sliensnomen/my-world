@@ -110,6 +110,9 @@ class ObjectState:
     holder_source: str | None = None  # 来源条目/事件 id
     custodian: str | None = None      # 保管人（custody 推出；不改变持有者）
     location: str | None = None       # 位置（move 推出）
+    # 确定度（契约 0.8）：known = 流水唯一结论；unknown = 没有相关流水（展示值可能
+    # 来自手写断言兜底）；ambiguous = 同刻未定序或断言互搏。三态由 state_certainty 给。
+    certainty: str = "unknown"
 
 
 def ordered_events(index: dict[str, Entry]) -> list[tuple[Entry, EventView]]:
@@ -152,6 +155,45 @@ def final_acts_by_object(
     return final
 
 
+CERTAINTY_STATES = ("known", "unknown", "ambiguous")
+
+
+def state_certainty(index: dict[str, Entry]) -> dict[str, str]:
+    """每个客体的确定度（契约 0.8）：`known` / `unknown` / `ambiguous`。
+
+    - `known`：流水给出唯一结论（该轴最后一批动作的受方/目的地一致）；
+    - `unknown`：没有任何相关流水——展示值可能来自手写断言兜底，属于「猜的」，
+      未经流水验证（有断言不等于有流水）；
+    - `ambiguous`：同刻多笔动作受方不同，或多张卡对同一客体断言互搏（CA707/CA710）。
+
+    三态只描述**结论有多确定**，不是判定：`ambiguous` 照样导出，由前端三视图展示
+    冲突双方，而不是挑一个赢家。
+    """
+    flowed: set[str] = set()
+    ambiguous: set[str] = set()
+    for kinds in (("transfer", "grant"), ("custody",), ("move",)):
+        for obj, (_when, acts) in final_acts_by_object(index, kinds).items():
+            if len({frozenset(to) for _e, _v, to in acts}) > 1:
+                ambiguous.add(obj)
+            else:
+                flowed.add(obj)
+    claims: dict[tuple[str, str], set[str]] = {}
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        for r in e.edges_of("owns"):
+            claims.setdefault(("owns", r.target), set()).add(e.id)
+        for obj in custody_assertions(e):
+            claims.setdefault(("custody", obj), set()).add(e.id)
+    for (_axis, obj), holders in claims.items():
+        if len(holders) > 1:
+            ambiguous.add(obj)
+    out = {obj: "known" for obj in flowed}
+    for obj in ambiguous:
+        out[obj] = "ambiguous"
+    return {obj: out[obj] for obj in sorted(out)}
+
+
 def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
     """结论断言（owns）+ 流水 → 每个客体的当前状态。只读，确定序。
 
@@ -160,6 +202,10 @@ def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
 
     多值 `to` 只取第一个：派生状态是**展示用**的单一答案，不是裁决——「多值受方
     未定序」由 CA704 在断言侧处理。同刻事件的先后同样只影响展示，不影响判定。
+
+    每个状态另带 `certainty`（契约 0.8）：`known` = 流水唯一结论；`unknown` = 没有
+    相关流水（可能只有断言兜底）；`ambiguous` = 同刻未定序或断言互搏。规则见
+    state_certainty——它只描述结论有多确定，不是判定，ambiguous 照样导出。
     """
     states: dict[str, ObjectState] = {}
     for e in sorted(index.values(), key=lambda x: x.id or ""):
@@ -179,6 +225,9 @@ def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
                 st.custodian = v.legs["to"][0]
             elif v.kind == "move" and v.legs.get("to"):
                 st.location = v.legs["to"][0]
+    certainty = state_certainty(index)
+    for obj, st in states.items():
+        st.certainty = certainty.get(obj, "unknown")
     return states
 
 

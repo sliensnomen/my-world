@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**39 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.10"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.11"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -83,6 +83,10 @@
 **v1.9 修订记录（2026-10-28，modify 转正）：**
 
 32. **`modify` 进词表：同一身份内的变化**。`object` 必填、`by` 可选，具体变化写在事件正文；它不新增属性补丁结构，不改变持有者、保管、位置或成员关系。与 `transform` 不同，`modify` 不关闭或打开存在窗口，`result` 对它没有产物语义。CA102/CA109/CA401/CA702/CA705/CA708 复用既有判定，不新增规则编号，按 §9.1 升 minor；契约升 0.7。
+
+**v1.11 修订记录（2026-11-09，B 方案契约 0.8：`from` 腿语义 + `certainty` 导出）：**
+
+34. **`transfer`/`grant` 的 `from` 腿转正为语义腿，派生状态透出确定度**。`from` 是「谁交出的」，与 `by`（谁执行的）分离；形状早已在契约里允许，本次补上语义与测试（旧世界缺 `from` 仍然合法，时序校验 fail-open）。导出 JSON 的 `ledger.states[客体]` 新增 `certainty`：`known`（流水唯一结论）/ `unknown`（没有相关流水，展示值可能来自手写断言兜底）/ `ambiguous`（同刻未定序或断言互搏）。三态只描述结论有多确定，不改变判定：`ambiguous` 照样导出、不挑赢家。按 §9.1 升 minor；契约 0.7→0.8。
 
 **v1.10 修订记录（2026-11-04，#10 止血：结论断言 + 同刻未定序与断言解耦）：**
 
@@ -533,7 +537,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.10",
+  "protocol_version": "1.11",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

@@ -37,8 +37,8 @@ import ledger  # 事件流水：解析与派生状态（判定原料；判语在
 from judges.model import Pack
 from judges.registry import PackImportError, RegistryError, load_backend, select_packs
 
-PROTOCOL_VERSION = "1.10"  # 1.10：同刻未定序与断言解耦；「期初断言」统一为「结论断言」
-CONTRACT_VERSION = "0.7"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
+PROTOCOL_VERSION = "1.11"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出（契约 0.8）
+CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
 
@@ -1086,7 +1086,8 @@ def build_export(all_entries: list[Entry], findings: list[Finding],
         },
         "ledger": {
             "states": {obj: {"holder": st.holder, "holder_source": st.holder_source,
-                             "custodian": st.custodian, "location": st.location}
+                             "custodian": st.custodian, "location": st.location,
+                             "certainty": st.certainty}
                        for obj, st in sorted(states_raw.items())},
             "membership": {p: dict(sorted(acts.items()))
                            for p, acts in sorted(membership_raw.items())},

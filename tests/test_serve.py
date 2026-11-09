@@ -507,6 +507,8 @@ def check_导出透出事件字段与派生状态():
     st = real["ledger"]["states"].get("ice-sword")
     assert st and st["holder"] == "eddard-stark", f"ice-sword 派生持有者不对：{st}"
     assert st["custodian"] == "house-stark", f"ice-sword 派生保管不对：{st}"
+    assert st.get("certainty") == "known", \
+        f"ice-sword 有完整流水，certainty 应为 known：{st}"
     assert real["ledger"]["membership"].get("jon-snow", {}).get("night-watch-order") == "join", \
         f"琼恩的组织归属不对：{real['ledger']['membership'].get('jon-snow')}"
     ev = next(d for d in real["entries"] if d["id"] == "ev-ice-to-ned")

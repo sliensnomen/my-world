@@ -2017,6 +2017,104 @@ def check_ambiguous_final_without_assertion_is_reported() -> list[str]:
     return problems
 
 
+def check_from_leg_is_legal() -> list[str]:
+    """契约 0.8：`transfer`/`grant` 的 `from` 腿是「谁交出的」，与 `by` 分离。
+
+    形状在 world.schema.json 里早已允许；这里钉语义：写了 `from` 不报 CA109/CA702，
+    导出原样透出；缺 `from` 仍然合法（时序校验 fail-open，Task 3 才看它）。
+    """
+    problems = []
+
+    def ev(eid: str, kind: str, legs: str) -> str:
+        return _card(eid, f"when: 元年\nevent_kind: {kind}\nwhen_sort: 1\n{legs}"
+                     ).replace("type: location", "type: event")
+
+    tmp, world = _temp_world("canonlint-from-", {
+        "alice": _card("alice", ""), "bob": _card("bob", ""),
+        "sword": _card("sword", ""),
+        "ev-give": ev("ev-give", "transfer",
+                      "by:\n  - alice\nfrom:\n  - alice\nobject:\n  - sword\nto:\n  - bob\n"),
+        "ev-grant": ev("ev-grant", "grant",
+                       "by:\n  - bob\nfrom:\n  - alice\nobject:\n  - sword\nto:\n  - alice\n"),
+    })
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"带 from 的转让把 traceback 写到了 stderr：\n{err}")
+        if code != 0:
+            problems.append(f"带 from 的转让应 exit 0，实际 {code}：\n{out}")
+        bad = [ln for ln in out.splitlines() if "[CA109]" in ln or "[CA702]" in ln]
+        if bad:
+            problems.append(f"from 是合法腿，不该报形状/账平错误：\n" + "\n".join(bad))
+        p = subprocess.run([PY, str(TOOL), "export", str(world)],
+                           cwd=ROOT, capture_output=True, text=True)
+        if p.stderr or p.returncode != 0:
+            problems.append(f"导出带 from 的世界失败（exit={p.returncode}）：\n{p.stderr}")
+        else:
+            data = json.loads(p.stdout)
+            evd = next((d for d in data["entries"] if d.get("id") == "ev-give"), None)
+            if evd is None or evd.get("from") != ["alice"]:
+                problems.append(f"事件卡的 from 没原样透出：{evd}")
+
+    # 缺 from 仍然合法：旧世界不能被判红（fail-open）
+    tmp, world = _temp_world("canonlint-from-absent-", {
+        "alice": _card("alice", ""), "bob": _card("bob", ""),
+        "sword": _card("sword", ""),
+        "ev-give": ev("ev-give", "transfer",
+                      "by:\n  - alice\nobject:\n  - sword\nto:\n  - bob\n"),
+    })
+    with tmp:
+        code, out, err = _judge(world)
+        if err or code != 0:
+            problems.append(f"缺 from 的旧世界不该被判红（exit={code}）：\n{out}{err}")
+    return problems
+
+
+def check_certainty_three_states_in_export() -> list[str]:
+    """契约 0.8：导出 `ledger.states[obj].certainty` 三态且取值受限。
+
+    known：流水给出唯一结论（sword 一笔 transfer 到 bob）；
+    unknown：没有这条客体的流水，只有手写结论断言（amulet 仅 owns 兜底）；
+    ambiguous：同刻多笔转让受方不同（ring 同刻给 bob/carol），或断言互搏。
+    """
+    problems = []
+
+    def ev(eid: str, kind: str, sort: int, legs: str) -> str:
+        return _card(eid, f"when: 第{sort}年\nevent_kind: {kind}\nwhen_sort: {sort}\n{legs}"
+                     ).replace("type: location", "type: event")
+
+    tmp, world = _temp_world("canonlint-certainty-", {
+        "alice": _card("alice", "owns:\n  - amulet\n"),
+        "bob": _card("bob", ""), "carol": _card("carol", ""),
+        "sword": _card("sword", ""), "amulet": _card("amulet", ""),
+        "ring": _card("ring", ""),
+        "ev-sword": ev("ev-sword", "transfer", 1,
+                       "by:\n  - alice\nobject:\n  - sword\nto:\n  - bob\n"),
+        "ev-ring-a": ev("ev-ring-a", "transfer", 2,
+                        "by:\n  - alice\nobject:\n  - ring\nto:\n  - bob\n"),
+        "ev-ring-b": ev("ev-ring-b", "transfer", 2,
+                        "by:\n  - alice\nobject:\n  - ring\nto:\n  - carol\n"),
+    })
+    with tmp:
+        p = subprocess.run([PY, str(TOOL), "export", str(world)],
+                           cwd=ROOT, capture_output=True, text=True)
+        if p.stderr or p.returncode != 0:
+            problems.append(f"导出 certainty 世界失败（exit={p.returncode}）：\n{p.stderr}")
+        else:
+            states = json.loads(p.stdout)["ledger"]["states"]
+            allowed = {"known", "unknown", "ambiguous"}
+            for obj, st in states.items():
+                if st.get("certainty") not in allowed:
+                    problems.append(
+                        f"{obj} 的 certainty 应是 {sorted(allowed)} 之一，实际 {st.get('certainty')!r}")
+            want = {"sword": "known", "amulet": "unknown", "ring": "ambiguous"}
+            for obj, expect in want.items():
+                got = states.get(obj, {}).get("certainty")
+                if got != expect:
+                    problems.append(f"{obj} 的 certainty 应为 {expect}，实际 {got!r}")
+    return problems
+
+
 def check_death_events_are_checked_as_actors() -> list[str]:
     """CA705 覆盖 death 事件自身：死人在更晚的另一笔 death 里不能当施动者（协议 1.8）。"""
     cards = {
@@ -2878,6 +2976,8 @@ def main() -> int:
         ("modify 同 id 变化：不动窗口/状态，复用通用规则与 CLI",
          check_modify_preserves_identity_and_state),
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
+        ("带 from 的 transfer/grant 合法且原样导出（契约 0.8）", check_from_leg_is_legal),
+        ("派生状态导出 certainty 三态（known/unknown/ambiguous）", check_certainty_three_states_in_export),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
         ("同刻事件不按 id 定序（CA704/709/711/712 改名不翻转）", check_same_instant_id_order_is_not_history),
         ("同刻未定序与断言无关（无 owns/custody_of 也报 CA704/CA709）",

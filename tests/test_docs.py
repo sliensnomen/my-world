@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import sys
 from pathlib import Path
@@ -477,7 +478,12 @@ def check_hook_has_no_strict():
 
 
 def check_version_strings_match_code():
-    """版本号只有一个来源（canonlint.py 的 PROTOCOL_VERSION）：文档里写的必须跟它一样。"""
+    """版本号只有一个来源（canonlint.py）：协议号与契约号都要跟代码一致。
+
+    协议号：文档里写的 `PROTOCOL_VERSION = "..."` 必须与代码一致。
+    契约号：`world.schema.json` 的 `x-contract-version` 与标题里的 vX.Y 必须与
+    `canonlint.CONTRACT_VERSION` 一致（契约 0.8 之前没有测试钉这一条，靠人记）。
+    """
     want = canonlint.PROTOCOL_VERSION
     found = []
     for name in DOCS:
@@ -486,6 +492,14 @@ def check_version_strings_match_code():
     assert found, "文档里一处 PROTOCOL_VERSION 都没写（PROTOCOL.md 至少该说明版本号从哪来）"
     bad = [f"{name} 写的是 {value}" for name, value in found if value != want]
     assert not bad, f"协议版本号对不上代码（代码是 {want}）：{bad}"
+
+    schema = json.loads((ROOT / "world.schema.json").read_text(encoding="utf-8"))
+    contract = canonlint.CONTRACT_VERSION
+    assert schema.get("x-contract-version") == contract, (
+        f"world.schema.json 的 x-contract-version={schema.get('x-contract-version')!r}，"
+        f"代码是 {contract!r}")
+    assert str(schema.get("title", "")).endswith("v" + contract), (
+        f"world.schema.json 的标题应带 v{contract}：{schema.get('title')!r}")
 
 
 CHECKS = (
