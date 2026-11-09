@@ -2115,6 +2115,107 @@ def check_certainty_three_states_in_export() -> list[str]:
     return problems
 
 
+def check_custody_assertion_is_fallback_without_flow() -> list[str]:
+    """契约 0.8：custody_of 断言是「当前结论」，没有 custody 流水时兜底成保管人。
+
+    有流水时流水赢（断言只参与 CA709 对账）：
+    - sword 只有 custody_of: [alice]，没有流水 → custodian=alice、certainty=unknown；
+    - shield 断言给 alice，但有一笔 custody 流水交给 bob → custodian=bob、
+      certainty=known（断言只用来跟流水对账，不覆盖流水结论）。
+    """
+    problems = []
+    cards = {
+        "alice": _card("alice", "custody_of:\n  - sword\n  - shield\n"),
+        "bob": _card("bob", ""),
+        "sword": _card("sword", "").replace("type: location", "type: item"),
+        "shield": _card("shield", "").replace("type: location", "type: item"),
+        "ev-shield": _card("ev-shield", (
+            "when: 元年\nevent_kind: custody\nwhen_sort: 1\n"
+            "by:\n  - carol\nobject:\n  - shield\nto:\n  - bob\n"
+        )).replace("type: location", "type: event"),
+        "carol": _card("carol", ""),
+    }
+    tmp, world = _temp_world("canonlint-custody-fallback-", cards)
+    with tmp:
+        p = subprocess.run([PY, str(TOOL), "export", str(world)],
+                           cwd=ROOT, capture_output=True, text=True)
+        if p.stderr or p.returncode != 0:
+            problems.append(f"导出 custody 兜底世界失败（exit={p.returncode}）：\n{p.stderr}")
+        else:
+            states = json.loads(p.stdout)["ledger"]["states"]
+            sword = states.get("sword", {})
+            if sword.get("custodian") != "alice":
+                problems.append(
+                    f"无 custody 流水时 custody_of 断言应兜底保管人 alice，实际 {sword.get('custodian')!r}")
+            if sword.get("certainty") != "unknown":
+                problems.append(
+                    f"只有断言没有流水时 certainty 应为 unknown，实际 {sword.get('certainty')!r}")
+            shield = states.get("shield", {})
+            if shield.get("custodian") != "bob":
+                problems.append(
+                    f"有 custody 流水时流水应赢：custodian 应为 bob，实际 {shield.get('custodian')!r}")
+            if shield.get("certainty") != "known":
+                problems.append(
+                    f"有唯一 custody 流水时 certainty 应为 known，实际 {shield.get('certainty')!r}")
+    return problems
+
+
+def check_member_of_assertion_is_fallback_without_flow() -> list[str]:
+    """契约 0.8：member_of 断言是「当前结论」，没有 join/leave 流水时兜底成在册。
+
+    有流水时流水赢：
+    - jon 只有 member_of: [order-a]，没有流水 → order-a=join；
+    - arya 断言 order-b，另有一笔 join 到 order-c → order-b 兜底 join、order-c 流水 join；
+    - sansa 没有断言，join/leave 流水都在 order-a → 最后离开，order-a=leave。
+    """
+    problems = []
+    cards = {
+        "order-a": _card("order-a", ""), "order-b": _card("order-b", ""),
+        "order-c": _card("order-c", ""),
+        "jon": _card("jon", "member_of:\n  - order-a\n").replace(
+            "type: location", "type: person"),
+        "arya": _card("arya", "member_of:\n  - order-b\n").replace(
+            "type: location", "type: person"),
+        "sansa": _card("sansa", "").replace("type: location", "type: person"),
+        "ev-arya": _card("ev-arya", (
+            "when: 元年\nevent_kind: join\nwhen_sort: 1\n"
+            "by:\n  - arya\nto:\n  - order-c\n"
+        )).replace("type: location", "type: event"),
+        "ev-sansa-join": _card("ev-sansa-join", (
+            "when: 元年\nevent_kind: join\nwhen_sort: 1\n"
+            "by:\n  - sansa\nto:\n  - order-a\n"
+        )).replace("type: location", "type: event"),
+        "ev-sansa-leave": _card("ev-sansa-leave", (
+            "when: 三年\nevent_kind: leave\nwhen_sort: 3\n"
+            "by:\n  - sansa\nfrom:\n  - order-a\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-member-fallback-", cards)
+    with tmp:
+        p = subprocess.run([PY, str(TOOL), "export", str(world)],
+                           cwd=ROOT, capture_output=True, text=True)
+        if p.stderr or p.returncode != 0:
+            problems.append(f"导出 member_of 兜底世界失败（exit={p.returncode}）：\n{p.stderr}")
+        else:
+            membership = json.loads(p.stdout)["ledger"]["membership"]
+            want = {
+                "jon": {"order-a": "join"},
+                "_arya_order_b": {"order-b": "join"},
+                "_arya_order_c": {"order-c": "join"},
+                "sansa": {"order-a": "leave"},
+            }
+            got = {
+                "jon": membership.get("jon", {}),
+                "_arya_order_b": {"order-b": membership.get("arya", {}).get("order-b")},
+                "_arya_order_c": {"order-c": membership.get("arya", {}).get("order-c")},
+                "sansa": membership.get("sansa", {}),
+            }
+            for who, expect in want.items():
+                if got[who] != expect:
+                    problems.append(f"{who} 的组织归属应为 {expect}，实际 {got[who]}")
+    return problems
+
+
 def check_death_events_are_checked_as_actors() -> list[str]:
     """CA705 覆盖 death 事件自身：死人在更晚的另一笔 death 里不能当施动者（协议 1.8）。"""
     cards = {
@@ -2978,6 +3079,8 @@ def main() -> int:
         ("world-ledger-bad 把六条流水规则每条至少踩一次", check_ledger_bad_world_fires_every_rule),
         ("带 from 的 transfer/grant 合法且原样导出（契约 0.8）", check_from_leg_is_legal),
         ("派生状态导出 certainty 三态（known/unknown/ambiguous）", check_certainty_three_states_in_export),
+        ("custody_of 断言无流水时兜底保管人（有流水流水赢）", check_custody_assertion_is_fallback_without_flow),
+        ("member_of 断言无流水时兜底在册（有流水流水赢）", check_member_of_assertion_is_fallback_without_flow),
         ("ledger 子命令是只读报告（不改退出码、不写盘）", check_ledger_command_is_readonly_report),
         ("同刻事件不按 id 定序（CA704/709/711/712 改名不翻转）", check_same_instant_id_order_is_not_history),
         ("同刻未定序与断言无关（无 owns/custody_of 也报 CA704/CA709）",

@@ -32,7 +32,7 @@ canonlint 要求 `depends_on` 对象式且 `kind`/`critical` 给全，classlint 
 ### 改完必须跑的命令
 
 ```sh
-python3 tests/run_tests.py            # 15 种快照跑法 + 意图断言，共 71 项检查
+python3 tests/run_tests.py            # 15 种快照跑法 + 意图断言，共 73 项检查
 python3 tests/test_schema.py          # 契约与代码常量不漂移（12 项）
 python3 tests/test_store.py           # 存储层边界，包括本文件的规矩（26 项）
 python3 tests/test_serve.py           # 接口与前端数据合同（35 项）
