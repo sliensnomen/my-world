@@ -20,6 +20,9 @@
   .badge.warning { background: #fdf3d7; color: var(--yellow); }
   .badge.info { background: #e4effb; color: #1a5fa8; }
   .badge.type { background: #eee; color: var(--gray); }
+  .badge.known { background: #e3f4e7; color: var(--green); }
+  .badge.unknown { background: #eee; color: var(--gray); }
+  .badge.ambiguous { background: #fdf3d7; color: var(--yellow); }
   table { width: 100%; border-collapse: collapse; background: #fff; font-size: 14px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-size: 13px; color: var(--gray); }
@@ -136,20 +139,40 @@ function renderFindings() {
   $("#main").innerHTML = html || `<div class="empty">零 findings——这个世界全绿。</div>`;
 }
 
+const CERTAINTY_LABEL = {known: "确定", unknown: "猜的", ambiguous: "未定"};
+let ledgerView = "all";
+
 function renderLedger() {
   const L = WORLD.ledger || {states: {}, membership: {}};
   const objs = Object.keys(L.states);
   const persons = Object.keys(L.membership);
+  const ambiguousFindings = (WORLD.findings || []).filter(f =>
+    ["CA704", "CA709", "CA707", "CA710"].includes(f.rule));
+  const count = (k) => objs.filter(o => (L.states[o].certainty || "unknown") === k).length;
+  const tabs = [["all", "全部"], ["known", `确定（${count("known")}）`],
+                ["unknown", `猜的（${count("unknown")}）`],
+                ["ambiguous", `未定序（${count("ambiguous")}）`]];
   let html = "<h3>派生状态（结论断言 + 流水）</h3>";
-  if (!objs.length) html += `<div class="empty">没有可派生的客体。</div>`;
+  html += `<div class="filters">视图：` + tabs.map(([k, label]) =>
+    `<a data-lv="${k}" class="${ledgerView === k ? "active" : ""}">${label}</a>`).join("") + `</div>`;
+  const shown = ledgerView === "all" ? objs : objs.filter(o => (L.states[o].certainty || "unknown") === ledgerView);
+  if (!shown.length) html += `<div class="empty">这个视图没有客体。</div>`;
   else {
-    html += `<table><tr><th>客体</th><th>持有者</th><th>保管</th><th>位置</th></tr>`;
-    for (const o of objs) {
+    html += `<table><tr><th>客体</th><th>持有者</th><th>保管</th><th>位置</th><th>确定度</th></tr>`;
+    for (const o of shown) {
       const s = L.states[o];
       const src = s.holder_source ? `<span class="muted">（来自 ${esc(s.holder_source)}）</span>` : "";
-      html += `<tr><td><code>${esc(o)}</code></td><td>${esc(s.holder || "（无）")}${src}</td><td>${esc(s.custodian || "-")}</td><td>${esc(s.location || "-")}</td></tr>`;
+      const cert = s.certainty || "unknown";
+      const hint = cert === "unknown" ? `<span class="muted">（没有相关流水，可能是手写断言兜底）</span>`
+        : cert === "ambiguous" ? `<span class="muted">（同刻未定序或断言互搏，别挑赢家）</span>` : "";
+      html += `<tr><td><code>${esc(o)}</code></td><td>${esc(s.holder || "（无）")}${src}</td><td>${esc(s.custodian || "-")}</td><td>${esc(s.location || "-")}</td><td><span class="badge ${cert}">${CERTAINTY_LABEL[cert] || esc(cert)}</span>${hint}</td></tr>`;
     }
     html += "</table>";
+  }
+  if (ambiguousFindings.length) {
+    html += `<h3>未定序：冲突双方都在这里，不挑赢家</h3><table><tr><th>规则</th><th>卡片</th><th>冲突</th></tr>` +
+      ambiguousFindings.map(f => `<tr><td><span class="badge warning">${esc(f.rule)}</span></td><td><code>${esc(f.entry)}</code></td><td>${esc(f.message)}</td></tr>`).join("") +
+      "</table>";
   }
   html += "<h3>组织归属（join/leave 流水）</h3>";
   if (!persons.length) html += `<div class="empty">没有 join/leave 流水。</div>`;
@@ -163,6 +186,8 @@ function renderLedger() {
     html += "</table>";
   }
   $("#main").innerHTML = html;
+  document.querySelectorAll("[data-lv]").forEach(a =>
+    a.addEventListener("click", () => { ledgerView = a.dataset.lv; renderLedger(); }));
 }
 
 function renderEventForm() {

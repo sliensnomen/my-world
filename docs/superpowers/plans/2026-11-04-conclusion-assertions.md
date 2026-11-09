@@ -1,6 +1,7 @@
 # 结论断言与干净所有权模型 Implementation Plan（B 方案）
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **状态：历史（2026-11-09 完成）**——Task 1–5 已全部勾选，提交 3519038 / 4af0258 / 51d43d0 / 2d8fc60。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 把「手写断言」的语义从「期初事实」彻底改成「当前结论」，并让流水成为唯一的时序来源——`transfer`/`grant` 补 `from` 腿、派生状态事件优先、`certainty` 三态进导出契约；A 方案（协议 1.10）已经把措辞与同刻未定序的地砖铺好。
 
@@ -41,9 +42,9 @@
 - Modify: `tests/test_schema.py`
 - Test: `tests/run_tests.py`
 
-- [ ] 先写红测试：带 `from` 的 `transfer`/`grant` 合法；`certainty` 三态在 JSON 里出现且取值受限。
-- [ ] 契约升 0.8：事件字段允许 `from`（形状已允许，补语义与测试）；导出 `ledger` 段每个客体带 `certainty`。
-- [ ] 同步 `PROTOCOL.md` §9.1 与 `world.schema.json` 的 `x-contract-version`。
+- [x] 先写红测试：带 `from` 的 `transfer`/`grant` 合法；`certainty` 三态在 JSON 里出现且取值受限。
+- [x] 契约升 0.8：事件字段允许 `from`（形状已允许，补语义与测试）；导出 `ledger` 段每个客体带 `certainty`。
+- [x] 同步 `PROTOCOL.md` §9.1 与 `world.schema.json` 的 `x-contract-version`。
 
 ### Task 2: 派生状态改为「事件优先，owns 兜底」
 
@@ -52,15 +53,15 @@
 - Modify: `canonlint.py`、`judges/ca/ledger.py`（CA703/CA704/CA709/CA712）
 - Test: `tests/run_tests.py`
 
-- [ ] 先写红测试：有完整流水时，派生状态完全由流水决定；owns 只参与对账。
-- [ ] 无流水时 owns 仍是历史起点（A 的语义保留）；`certainty` 按三态计算并随导出输出。
-- [ ] 双后端对齐，全族 CA7xx 双跑。
+- [x] 先写红测试：有完整流水时，派生状态完全由流水决定；owns 只参与对账。
+- [x] 无流水时 owns 仍是历史起点（A 的语义保留）；`certainty` 按三态计算并随导出输出。
+- [x] 双后端对齐，全族 CA7xx 双跑。
 
 ### Task 3: `from` 腿的时序校验（新规则编号按 §9.1 决定）
 
-- [ ] 先写红测试：`transfer.from` 与「上一笔 transfer 的 to」不一致时报什么、缺 `from` 时 fail-open。
-- [ ] 与 CA711 同款「只与严格更早比较、同刻合并」的口径；编号、级别、规则表同步。
-- [ ] 事件夹具补 `from` 用例；生成器重生成后核对 diff。
+- [x] 先写红测试：`transfer.from` 与「上一笔 transfer 的 to」不一致时报什么、缺 `from` 时 fail-open。
+- [x] 与 CA711 同款「只与严格更早比较、同刻合并」的口径；编号、级别、规则表同步。
+- [x] 事件夹具补 `from` 用例；生成器重生成后核对 diff。
 
 ### Task 4: 前端三视图与导出
 
@@ -68,14 +69,14 @@
 - Modify: `web/index.html`、`docs/给前端的说明.md`
 - Test: `tests/test_serve.py`
 
-- [ ] 视图一：确定态（流水唯一结论）；视图二：猜的（无流水，仅 owns，标 `certainty: unknown`）；视图三：未定序（`ambiguous`，展示冲突双方，不挑赢家）。
-- [ ] 导出 JSON 与 HTTP 接口同步；`docs/给前端的说明.md` 补字段说明。
+- [x] 视图一：确定态（流水唯一结论）；视图二：猜的（无流水，仅 owns，标 `certainty: unknown`）；视图三：未定序（`ambiguous`，展示冲突双方，不挑赢家）。
+- [x] 导出 JSON 与 HTTP 接口同步；`docs/给前端的说明.md` 补字段说明。
 
 ### Task 5: 验收与文档收口
 
-- [ ] 六套回归全绿；快照逐份核对；夹具重生成后的 `git diff --stat` 核对。
-- [ ] `README.md` / `CONTRIBUTING.md` / `store/README.md` 的检查项数、`PROTOCOL.md` §6.3 与版本号同步。
-- [ ] 完成后把本计划状态改为「历史」，并在 `docs/README.md` 同步状态。
+- [x] 六套回归全绿；快照逐份核对；夹具重生成后的 `git diff --stat` 核对。
+- [x] `README.md` / `CONTRIBUTING.md` / `store/README.md` 的检查项数、`PROTOCOL.md` §6.3 与版本号同步。
+- [x] 完成后把本计划状态改为「历史」，并在 `docs/README.md` 同步状态。
 
 ## 不做（本期明确排除）
 

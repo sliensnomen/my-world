@@ -507,6 +507,8 @@ def check_导出透出事件字段与派生状态():
     st = real["ledger"]["states"].get("ice-sword")
     assert st and st["holder"] == "eddard-stark", f"ice-sword 派生持有者不对：{st}"
     assert st["custodian"] == "house-stark", f"ice-sword 派生保管不对：{st}"
+    assert st.get("certainty") == "known", \
+        f"ice-sword 有完整流水，certainty 应为 known：{st}"
     assert real["ledger"]["membership"].get("jon-snow", {}).get("night-watch-order") == "join", \
         f"琼恩的组织归属不对：{real['ledger']['membership'].get('jon-snow')}"
     ev = next(d for d in real["entries"] if d["id"] == "ev-ice-to-ned")
@@ -525,7 +527,7 @@ def check_只读界面被伺候且指向数据源():
     page = ROOT / "web" / "index.html"
     assert page.is_file(), "web/index.html 不存在"
     text = page.read_text(encoding="utf-8")
-    for marker in ("/api/world", "台账", "审计", "流水", "派生状态"):
+    for marker in ("/api/world", "台账", "审计", "流水", "派生状态", "certainty", "未定序"):
         assert marker in text, f"web/index.html 少了 {marker!r}"
     fallback_match = re.search(r"const REQUIRED_FALLBACK = (\{.*\});", text)
     assert fallback_match, "web/index.html 缺少可解析的 REQUIRED_FALLBACK"

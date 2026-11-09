@@ -56,7 +56,7 @@ CLEAN = {
     "ev-blade-forged": event("ev-blade-forged", "create", 1, "object:\n  - fox-blade\n"),
     "ev-blade-to-anna": event(
         "ev-blade-to-anna", "transfer", 2,
-        "by:\n  - house-fox\nto:\n  - lord-anna\nobject:\n  - fox-blade\n",
+        "by:\n  - house-fox\nfrom:\n  - house-fox\nto:\n  - lord-anna\nobject:\n  - fox-blade\n",
         depends="\n  - {id: ev-blade-forged, kind: production, critical: false}"),
     "ev-command-granted": event(
         "ev-command-granted", "grant", 3,
@@ -123,6 +123,14 @@ BAD = {
     "deserter-dan": card("deserter-dan", "character", "member_of:\n  - house-a\n"),
     "ev-dan-leaves": event(
         "ev-dan-leaves", "leave", 10, "by:\n  - deserter-dan\nfrom:\n  - house-a\n"),
+    # CA713：relay-item 上一笔落到 house-b，本笔却声称从 house-a 交出（转让起点断裂）
+    "relay-item": card("relay-item", "item"),
+    "ev-relay-1": event(
+        "ev-relay-1", "transfer", 12,
+        "by:\n  - house-a\nto:\n  - house-b\nobject:\n  - relay-item\n"),
+    "ev-relay-2": event(
+        "ev-relay-2", "transfer", 13,
+        "by:\n  - house-b\nfrom:\n  - house-a\nto:\n  - house-a\nobject:\n  - relay-item\n"),
 }
 
 

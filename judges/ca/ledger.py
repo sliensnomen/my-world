@@ -249,7 +249,34 @@ def check_ca711(world: dict, emit) -> None:
                 position[obj] = (location, view.when_sort)
 
 
+def check_ca713(world: dict, emit) -> None:
+    index = world["index"]
+    undetermined = object()
+    recipient = {}
+    for e, view in event_ledger.ordered_events(index):
+        if view.kind not in ("transfer", "grant"):
+            continue
+        for obj in view.legs.get("object", []):
+            to = view.legs.get("to", [])
+            from_ = view.legs.get("from", [])
+            current = recipient.get(obj)
+            if (from_ and current is not None
+                    and current[0] is not undetermined
+                    and current[1] < view.when_sort
+                    and current[0] not in from_):
+                emit("warning", e.rel,
+                     f"转让起点断裂：`{obj}` 上一笔账落在 `{current[0]}`（when_sort={current[1]:g}），"
+                     f"本笔却声称从 `{from_[0]}` 交出（不写 from 就不查；同刻转让不排序）")
+            if to:
+                holder = to[0] if len(to) == 1 else undetermined
+                if current is not None and current[1] == view.when_sort:
+                    if (current[0] is undetermined or holder is undetermined
+                            or current[0] != holder):
+                        holder = undetermined
+                recipient[obj] = (holder, view.when_sort)
+
+
 def apply(run_world) -> None:
     for rule_id in ("CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
-                    "CA709", "CA710", "CA712", "CA711"):
+                    "CA709", "CA710", "CA712", "CA711", "CA713"):
         run_world(rule_id)

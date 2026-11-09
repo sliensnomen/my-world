@@ -108,8 +108,11 @@ def is_event_card(e: Entry) -> bool:
 class ObjectState:
     holder: str | None = None         # 当前持有者（owns 断言或 transfer/grant 推出）
     holder_source: str | None = None  # 来源条目/事件 id
-    custodian: str | None = None      # 保管人（custody 推出；不改变持有者）
+    custodian: str | None = None      # 保管人（custody 推出，或 custody_of 断言兜底）
     location: str | None = None       # 位置（move 推出）
+    # 确定度（契约 0.8）：known = 流水唯一结论；unknown = 没有相关流水（展示值可能
+    # 来自手写断言兜底）；ambiguous = 同刻未定序或断言互搏。三态由 state_certainty 给。
+    certainty: str = "unknown"
 
 
 def ordered_events(index: dict[str, Entry]) -> list[tuple[Entry, EventView]]:
@@ -152,24 +155,63 @@ def final_acts_by_object(
     return final
 
 
-def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
-    """结论断言（owns）+ 流水 → 每个客体的当前状态。只读，确定序。
+CERTAINTY_STATES = ("known", "unknown", "ambiguous")
 
-    卡上的 owns 是作者对**当前结论**的断言（无时间）；没有更早流水时它兼作这段
-    历史的起点，一旦发生流转，断言要写成最终持有者，与流水推出的结论一致（CA704）。
 
-    多值 `to` 只取第一个：派生状态是**展示用**的单一答案，不是裁决——「多值受方
-    未定序」由 CA704 在断言侧处理。同刻事件的先后同样只影响展示，不影响判定。
+def state_certainty(index: dict[str, Entry]) -> dict[str, str]:
+    """每个客体的确定度（契约 0.8）：`known` / `unknown` / `ambiguous`。
+
+    - `known`：流水给出唯一结论（该轴最后一批动作的受方/目的地一致）；
+    - `unknown`：没有任何相关流水——展示值可能来自手写断言兜底，属于「猜的」，
+      未经流水验证（有断言不等于有流水）；
+    - `ambiguous`：同刻多笔动作受方不同，或多张卡对同一客体断言互搏（CA707/CA710）。
+
+    三态只描述**结论有多确定**，不是判定：`ambiguous` 照样导出，由前端三视图展示
+    冲突双方，而不是挑一个赢家。
     """
-    states: dict[str, ObjectState] = {}
-    for e in sorted(index.values(), key=lambda x: x.id or ""):
+    flowed: set[str] = set()
+    ambiguous: set[str] = set()
+    for kinds in (("transfer", "grant"), ("custody",), ("move",)):
+        for obj, (_when, acts) in final_acts_by_object(index, kinds).items():
+            if len({frozenset(to) for _e, _v, to in acts}) > 1:
+                ambiguous.add(obj)
+            else:
+                flowed.add(obj)
+    claims: dict[tuple[str, str], set[str]] = {}
+    for e in index.values():
         if e.parse_error or not e.id:
             continue
         for r in e.edges_of("owns"):
-            st = states.setdefault(r.target, ObjectState())
-            if st.holder is None:  # 多个 owns 断言并存时按 id 序取第一个——
-                # 这只是给派生状态一个确定答案，不是裁决；互搏本身由判定层报 CA707
-                st.holder, st.holder_source = e.id, e.id
+            claims.setdefault(("owns", r.target), set()).add(e.id)
+        for obj in custody_assertions(e):
+            claims.setdefault(("custody", obj), set()).add(e.id)
+    for (_axis, obj), holders in claims.items():
+        if len(holders) > 1:
+            ambiguous.add(obj)
+    out = {obj: "known" for obj in flowed}
+    for obj in ambiguous:
+        out[obj] = "ambiguous"
+    return {obj: out[obj] for obj in sorted(out)}
+
+
+def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
+    """流水推出、断言兜底 → 每个客体的当前状态。只读，确定序。
+
+    卡上的 owns/custody_of 是作者对**当前结论**的断言（无时间）：有流水时只参与
+    CA704/CA709 对账；没有相关流水时它兜底成这段历史的起点（A 的语义保留）。
+
+    **流水优先**：先把有 when_sort 的完整事件按顺序叠上去，再由断言补缺——不是
+    「断言当历史起点、流水覆盖」，而是「流水就是历史，断言只在没有流水时说话」。
+    两种写法在 holder 上等价，但后者会让「有断言、无流水」的错误答案看起来像事实。
+
+    多值 `to` 只取第一个：派生状态是**展示用**的单一答案，不是裁决——「多值受方
+    未定序」由 CA704 在断言侧处理。同刻事件的先后同样只影响展示，不影响判定。
+
+    每个状态另带 `certainty`（契约 0.8）：`known` = 流水唯一结论；`unknown` = 没有
+    相关流水（展示值只是断言兜底）；`ambiguous` = 同刻未定序或断言互搏。规则见
+    state_certainty——它只描述结论有多确定，不是判定，ambiguous 照样导出。
+    """
+    states: dict[str, ObjectState] = {}
     for e, v in ordered_events(index):
         for obj in v.legs.get("object", []):
             st = states.setdefault(obj, ObjectState())
@@ -179,6 +221,22 @@ def derive_state(index: dict[str, Entry]) -> dict[str, ObjectState]:
                 st.custodian = v.legs["to"][0]
             elif v.kind == "move" and v.legs.get("to"):
                 st.location = v.legs["to"][0]
+    # 断言兜底：只补流水没给出结论的轴。多个 owns/custody_of 断言并存时按 id 序
+    # 取第一个——这只是给派生状态一个确定答案，不是裁决（CA707/CA710 会报互搏）。
+    for e in sorted(index.values(), key=lambda x: x.id or ""):
+        if e.parse_error or not e.id:
+            continue
+        for r in e.edges_of("owns"):
+            st = states.setdefault(r.target, ObjectState())
+            if st.holder is None:
+                st.holder, st.holder_source = e.id, e.id
+        for obj in custody_assertions(e):
+            st = states.setdefault(obj, ObjectState())
+            if st.custodian is None:
+                st.custodian = e.id
+    certainty = state_certainty(index)
+    for obj, st in states.items():
+        st.certainty = certainty.get(obj, "unknown")
     return states
 
 
@@ -202,10 +260,12 @@ def member_of_assertions(e: Entry) -> list[str]:
 
 
 def derive_membership(index: dict[str, Entry]) -> dict[str, dict[str, str]]:
-    """{人: {组织: "join"|"leave"}}——每个人对每个组织、流水里的最后一个动作。
+    """{人: {组织: "join"|"leave"}}——流水优先，member_of 断言兜底。
 
-    只读有 when_sort 的完整事件（fail-open）。同刻两笔按 id 序只是展示答案；
+    只读有 when_sort 的完整事件（fail-open）：同刻两笔按 id 序只是展示答案；
     判定层在「同刻 join 与 leave 并存」时 fail-open（CA712 不报）。
+    `member_of` 是作者对当前在册状态的断言：某人对某组织没有流水时兜底成 join，
+    有流水时以流水最后一动为准（断言只参与 CA712 对账）。
     """
     last: dict[str, dict[str, str]] = {}
     for e, v in ordered_events(index):
@@ -215,6 +275,13 @@ def derive_membership(index: dict[str, Entry]) -> dict[str, dict[str, str]]:
         for person in v.legs.get("by", []):
             for org in orgs:
                 last.setdefault(person, {})[org] = v.kind
+    for e in sorted(index.values(), key=lambda x: x.id or ""):
+        if e.parse_error or not e.id:
+            continue
+        for org in member_of_assertions(e):
+            acts = last.setdefault(e.id, {})
+            if org not in acts:
+                acts[org] = "join"
     return last
 
 

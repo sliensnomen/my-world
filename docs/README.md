@@ -63,4 +63,4 @@
 | [docs/superpowers/plans/2026-10-30-judge-registry.md](superpowers/plans/2026-10-30-judge-registry.md) | 设计路线 | 草案 | 判定器注册表的分期迁移、双跑与原子切换计划 | 执行时逐项勾选，完成后转为历史 |
 | [docs/superpowers/specs/2026-10-28-documentation-governance-design.md](superpowers/specs/2026-10-28-documentation-governance-design.md) | 设计路线 | 现行 | 本轮文档治理的已确认设计规格 | 已实施，后续文档政策变化时同步 |
 | [docs/superpowers/plans/2026-10-28-documentation-governance.md](superpowers/plans/2026-10-28-documentation-governance.md) | 设计路线 | 历史 | 本轮文档治理的逐步实施计划 | 已执行，保留红绿验证与验收记录 |
-| [docs/superpowers/plans/2026-11-04-conclusion-assertions.md](superpowers/plans/2026-11-04-conclusion-assertions.md) | 设计路线 | 草案 | 结论断言与干净所有权模型（B 方案）的分期实施计划 | 执行时逐项勾选，完成后转为历史；对应 GitHub issue #10 的后续部分 |
+| [docs/superpowers/plans/2026-11-04-conclusion-assertions.md](superpowers/plans/2026-11-04-conclusion-assertions.md) | 设计路线 | 历史 | 结论断言与干净所有权模型（B 方案）的分期实施计划（已完成） | 执行时逐项勾选，完成后转为历史；对应 GitHub issue #10 的后续部分 |

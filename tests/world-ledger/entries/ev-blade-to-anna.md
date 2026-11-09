@@ -17,6 +17,8 @@ when_sort: 2
 event_kind: transfer
 by:
   - house-fox
+from:
+  - house-fox
 to:
   - lord-anna
 object:

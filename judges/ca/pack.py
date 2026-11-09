@@ -147,6 +147,9 @@ PACK = Pack(
         Rule(id="CA712", pack="core-ca", scope="world", entry_domain="",
              check=ca_ledger.check_ca712, default_level="error",
              levels=frozenset({"error"}), order=712),
+        Rule(id="CA713", pack="core-ca", scope="world", entry_domain="",
+             check=ca_ledger.check_ca713, default_level="warning",
+             levels=frozenset({"warning"}), order=713),
     ),
 )
 
