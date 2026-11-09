@@ -37,7 +37,7 @@ import ledger  # 事件流水：解析与派生状态（判定原料；判语在
 from judges.model import Pack
 from judges.registry import PackImportError, RegistryError, load_backend, select_packs
 
-PROTOCOL_VERSION = "1.11"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出（契约 0.8）
+PROTOCOL_VERSION = "1.12"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
@@ -829,6 +829,37 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                         loc = UNDETERMINED
                 position[obj] = (loc, v.when_sort)
             # to 缺失/为空：CA702 已报，位置不动
+
+
+    # CA713: 转让起点断裂——transfer/grant 的 from 对不上链上的上一笔落点。
+    # 与 CA711 同款口径：同刻不排序；上一笔 to 多值 → 起点未定，跳过到重新锚定；
+    # from 多值 = 没定，起点在列表里就放行；缺 from / 缺 when_sort 不查。
+    UNDETERMINED_OWNER = object()  # 起点「未定」：与 None（还没有上一笔）区分
+    recipient: dict[str, tuple[object, float]] = {}
+    for e, v in events:
+        if v.kind not in ("transfer", "grant"):
+            continue
+        for obj in v.legs.get("object", []):
+            to = v.legs.get("to", [])
+            frm = v.legs.get("from", [])
+            cur = recipient.get(obj)
+            if (frm and cur is not None
+                    and cur[0] is not UNDETERMINED_OWNER
+                    and cur[1] < v.when_sort  # 同刻的转让彼此不构成「上一笔」
+                    and cur[0] not in frm):
+                findings.append(Finding(
+                    "CA713", "warning", e.rel,
+                    f"转让起点断裂：`{obj}` 上一笔账落在 `{cur[0]}`（when_sort={cur[1]:g}），"
+                    f"本笔却声称从 `{frm[0]}` 交出（不写 from 就不查；同刻转让不排序）"))
+            # 同刻多笔转让只在结论一致时保留落点；不一致 = 起点未定。
+            if to:
+                holder = to[0] if len(to) == 1 else UNDETERMINED_OWNER
+                if cur is not None and cur[1] == v.when_sort:
+                    if (cur[0] is UNDETERMINED_OWNER or holder is UNDETERMINED_OWNER
+                            or cur[0] != holder):
+                        holder = UNDETERMINED_OWNER
+                recipient[obj] = (holder, v.when_sort)
+            # to 缺失/为空：CA702 已报，落点不动
 
 
 def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:

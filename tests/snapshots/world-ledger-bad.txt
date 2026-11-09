@@ -8,10 +8,12 @@ exit=1
 [CA701] warning entries/ev-late-dep.md: 时序倒流：本事件 when_sort=9，depends_on 的事件 `ev-ghost` when_sort=11（要求 ≤ 本事件）
 [CA703] warning entries/ev-missing-leg.md: 无源之财：transfer 的客体 `sword-y` 在它之前没有任何持有者（既无 owns 断言，也无更早的 transfer/grant 指向它）
 [CA703] warning entries/ev-no-source.md: 无源之财：transfer 的客体 `orphan-item` 在它之前没有任何持有者（既无 owns 断言，也无更早的 transfer/grant 指向它）
+[CA703] warning entries/ev-relay-1.md: 无源之财：transfer 的客体 `relay-item` 在它之前没有任何持有者（既无 owns 断言，也无更早的 transfer/grant 指向它）
 [CA705] warning entries/ev-knight-acts.md: 死人做活事：`old-knight` 在 when_sort=5 的事件里已 death，却在更晚的本事件（when_sort=7）的 by 里
 [CA706] warning entries/ev-half.md: 半截事件：`when` 与 `event_kind` 只给了一个（两个都给才进流水判定，都不给就是普通史料卡）
 [CA708] warning entries/ev-ghost.md: 不存在的东西在动弹：`sword-y` 在 when_sort=9 已死亡/被毁/被转化，本事件却在更晚的 when_sort=11 拿它当客体
 [CA710] warning entries/keeper-d.md: custody_of 断言互搏：`orphan-item` 同时被 `keeper-c` 与本卡断言保管（派生状态按 id 序取 `keeper-c`；请统一到一张卡上断言，或用 custody 流水表达移交）
+[CA713] warning entries/ev-relay-2.md: 转让起点断裂：`relay-item` 上一笔账落在 `house-b`（when_sort=12），本笔却声称从 `house-a` 交出（不写 from 就不查；同刻转让不排序）
 [CA102] info    entries/ev-x-kind.md: event_kind='x-mine-teleport' 为实验值（x- 前缀），已计入案例收集
 
-23 个条目 | 6 错误 | 7 警告
+26 个条目 | 6 错误 | 9 警告

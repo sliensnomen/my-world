@@ -1502,6 +1502,102 @@ def check_trajectory_break_fires_ca711() -> list[str]:
     return problems
 
 
+def check_transfer_from_must_match_previous_to() -> list[str]:
+    """CA713 转让起点断裂：transfer/grant 的 from 对不上链上上一笔的落点（warning）。
+
+    与 CA711 同款口径：只查完整事件（缺 when_sort 不进流水）；上一笔 to 多值 →
+    起点「未定」跳过校验，直到下一笔单值 to 重新锚定；from 多值 = 没定，起点在
+    列表里就放行；不写 from 就不查（fail-open）；同刻转让不排序、不互为「上一笔」。
+    """
+    problems = []
+
+    def ev(eid, sort, legs):
+        return _card(eid, f"when: 第{sort}年\nevent_kind: transfer\nwhen_sort: {sort}\n{legs}"
+                     ).replace("type: location", "type: event")
+
+    def broken_lines(out):
+        return [ln for ln in out.splitlines() if "[CA713]" in ln]
+
+    # 1. 正常链条 A→B→C：不响
+    cards = {
+        "sword": _card("sword", ""),
+        "pa": _card("pa", ""), "pb": _card("pb", ""), "pc": _card("pc", ""),
+        "ev-1": ev("ev-1", 1, "by:\n  - pa\nobject:\n  - sword\nto:\n  - pb\n"),
+        "ev-2": ev("ev-2", 2, "by:\n  - pb\nobject:\n  - sword\nfrom:\n  - pb\nto:\n  - pc\n"),
+    }
+    tmp, world = _temp_world("canonlint-from-ok-", cards)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"正常转让链把 traceback 写到了 stderr：\n{err}")
+        if broken_lines(out):
+            problems.append(f"A→B→C 的正常转让链不该报 CA713：\n{out}")
+
+    # 2. 断裂：上一笔落到 pb，本笔却「从 pc 交出」→ 响在 ev-2，不响第一笔
+    cards["ev-2"] = ev("ev-2", 2, "by:\n  - pc\nobject:\n  - sword\nfrom:\n  - pc\nto:\n  - pa\n")
+    tmp, world = _temp_world("canonlint-from-bad-", cards)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"断裂转让把 traceback 写到了 stderr：\n{err}")
+        hits = broken_lines(out)
+        if not any("ev-2.md" in ln for ln in hits):
+            problems.append(f"from=pc 对不上落点 pb 却没报 CA713：\n{out}")
+        if any("ev-1.md" in ln for ln in hits):
+            problems.append(f"第一笔转让是链条起点，不该被查：\n{out}")
+
+    # 3. 上一笔 to 多值 → 起点未定 → 跳过；下一笔单值 to 重新锚定后照查
+    cards3 = {
+        "sword": _card("sword", ""),
+        "pa": _card("pa", ""), "pb": _card("pb", ""), "pc": _card("pc", ""),
+        "ev-1": ev("ev-1", 1, "by:\n  - pa\nobject:\n  - sword\nto:\n  - pa\n  - pb\n"),
+        "ev-2": ev("ev-2", 2, "by:\n  - pc\nobject:\n  - sword\nfrom:\n  - pc\nto:\n  - pc\n"),
+        "ev-3": ev("ev-3", 3, "by:\n  - pa\nobject:\n  - sword\nfrom:\n  - pa\nto:\n  - pb\n"),
+    }
+    tmp, world = _temp_world("canonlint-from-undet-", cards3)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"未定起点把 traceback 写到了 stderr：\n{err}")
+        hits = broken_lines(out)
+        if any("ev-2.md" in ln for ln in hits):
+            problems.append(f"上一笔 to 多值 = 起点未定，ev-2 不该被查：\n{out}")
+        if not any("ev-3.md" in ln for ln in hits):
+            problems.append(f"重新锚定后 from 对不上必须报（ev-3）：\n{out}")
+
+    # 4. from 多值：起点在列表里就放行（多值 = 没定，不替人裁）
+    cards4 = {
+        "sword": _card("sword", ""),
+        "pa": _card("pa", ""), "pb": _card("pb", ""), "pc": _card("pc", ""),
+        "ev-1": ev("ev-1", 1, "by:\n  - pa\nobject:\n  - sword\nto:\n  - pb\n"),
+        "ev-2": ev("ev-2", 2, "by:\n  - pa\nobject:\n  - sword\nfrom:\n  - pa\n  - pb\nto:\n  - pc\n"),
+    }
+    tmp, world = _temp_world("canonlint-from-multi-", cards4)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"多值 from 把 traceback 写到了 stderr：\n{err}")
+        if broken_lines(out):
+            problems.append(f"上一笔落点 pb 在 from 列表里，不该报 CA713：\n{out}")
+
+    # 5. 同刻两笔转让不互为「上一笔」：同刻多值 → 未定，后续不查
+    cards5 = {
+        "ring": _card("ring", ""),
+        "pa": _card("pa", ""), "pb": _card("pb", ""), "pc": _card("pc", ""),
+        "ev-1": ev("ev-1", 1, "by:\n  - pa\nobject:\n  - ring\nto:\n  - pb\n"),
+        "ev-2": ev("ev-2", 1, "by:\n  - pa\nobject:\n  - ring\nto:\n  - pc\n"),
+        "ev-3": ev("ev-3", 2, "by:\n  - pb\nobject:\n  - ring\nfrom:\n  - pb\nto:\n  - pa\n"),
+    }
+    tmp, world = _temp_world("canonlint-from-instant-", cards5)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"同刻转让把 traceback 写到了 stderr：\n{err}")
+        if broken_lines(out):
+            problems.append(f"同刻多笔 = 起点未定，ev-3 不该被查：\n{out}")
+    return problems
+
+
 def check_join_leave_are_vocabulary_kinds() -> list[str]:
     """join/leave 转正（协议 1.6）：进 event_kind 词表，腿表参与 CA702。
 
@@ -1798,7 +1894,7 @@ def check_ledger_bad_world_fires_every_rule() -> list[str]:
     if err:
         problems.append(f"world-ledger-bad 把 traceback 写到了 stderr：\n{err}")
     for rule in ("CA701", "CA702", "CA703", "CA704", "CA705", "CA706", "CA708",
-                 "CA709", "CA710", "CA712", "CA102", "CA401"):
+                 "CA709", "CA710", "CA712", "CA713", "CA102", "CA401"):
         if f"[{rule}]" not in out:
             problems.append(f"world-ledger-bad 没有触发 {rule}（触发矩阵失效）：\n{out}")
     if code != 1:
@@ -2804,12 +2900,12 @@ def check_registry_ca_dual_run() -> list[str]:
         "CA201", "CA401", "CA402", "CA403", "CA404", "CA405",
         "CA501", "CA502", "CA503", "CA504", "CA505",
         "CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
-        "CA707", "CA708", "CA709", "CA710", "CA711", "CA712",
+        "CA707", "CA708", "CA709", "CA710", "CA711", "CA712", "CA713",
     }
     world_rules = {
         "CA114", "CA201", "CA403", "CA405", "CA502", "CA504", "CA505",
         "CA701", "CA703", "CA704", "CA705", "CA707", "CA708", "CA709",
-        "CA710", "CA711", "CA712",
+        "CA710", "CA711", "CA712", "CA713",
     }
     index_rules = {"CA501", "CA503"}
     try:
@@ -3071,6 +3167,7 @@ def main() -> int:
         ("move 的 from 腿悬空引用报 CA401", check_move_from_leg_is_checked),
         ("custody_of 断言对账 CA709 + 保管互搏 CA710", check_custody_assertions_reconcile_with_ledger),
         ("轨迹断裂报 CA711（未定/多值放行、与 CA708 不双报）", check_trajectory_break_fires_ca711),
+        ("转让起点断裂报 CA713（from 对不上上一笔落点）", check_transfer_from_must_match_previous_to),
         ("join/leave 进词表、腿表参与 CA702", check_join_leave_are_vocabulary_kinds),
         ("member_of 断言与流水对账（CA712）+ 悬空/坏形状", check_member_of_reconciles_with_ledger),
         ("transform 窗口交接：旧关新开、自身豁免、不自动继承", check_transform_closes_and_opens_windows),
