@@ -292,15 +292,17 @@ def check_test_counts_match_docs():
 
 def check_pe_claims_match_code():
     pe = rule_ids_in_code("PE", CL_SRC)
-    implemented = {f"PE{i:03d}" for i in range(1, 13)}
+    implemented = {f"PE{i:03d}" for i in range(1, 15)}
     assert pe == implemented, \
-        f"classlint 已实现的 PE 规则不是 PE001–PE012：{sorted(pe)}"
+        f"classlint 已实现的 PE 规则不是 PE001–PE014：{sorted(pe)}"
     for name in ("classlint/PROTOCOL.md", "classlint/README.md", "README.md", "CONTRIBUTING.md"):
-        assert "PE001–PE012" in doc(name), f"{name} 没写明已实现的是 PE001–PE012"
+        assert "PE001–PE014" in doc(name), f"{name} 没写明已实现的是 PE001–PE014"
     assert "PE006–PE008" in doc("classlint/PROTOCOL.md"), \
         "classlint/PROTOCOL.md 应写明 PE006–PE008（流量层交叉规则）已实现"
     assert "PE009" in doc("classlint/PROTOCOL.md"), \
         "classlint/PROTOCOL.md 应写明 PE009（债务必须收得回来）已实现"
+    assert "PE013/PE014" in doc("classlint/PROTOCOL.md"), \
+        "classlint/PROTOCOL.md 应写明 PE013/PE014（个人关系层）已实现"
 
 
 def check_doc_paths_exist():
