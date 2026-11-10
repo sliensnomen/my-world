@@ -90,7 +90,7 @@ def check_pe003(world, emit) -> None:
 
 
 def check_pe004(world, emit) -> None:
-    """extracts 的环状 SCC 表示剩余互相抽取而不落地于生产。"""
+    """剩余必须收敛：抽取不能超过剩余（定量：surplus 声明）。"""
     adj: dict[str, set[str]] = {}
     for _src, edge, _src_rel in world.edges_of("extracts"):
         if edge.target in world.index:
@@ -103,9 +103,35 @@ def check_pe004(world, emit) -> None:
         emit(None, world.rel_of[rep],
              f"extracts 存在环: {loop}——剩余在循环中不落地于生产（黑洞）")
 
+    logistics = _flow_entries(world, "logistics")
+    for entity in world.entries:
+        surplus = entity.meta.get("surplus")
+        if not isinstance(surplus, dict):
+            continue
+        outflows = [flow for flow in logistics if flow.meta.get("from") == entity.id]
+        for what, spec in surplus.items():
+            if not isinstance(spec, dict):
+                continue
+            amount, unit = spec.get("amount"), spec.get("unit")
+            if not _is_finite_number(amount) or not _nonempty_str(unit):
+                continue
+            outs = [flow for flow in outflows if flow.meta.get("what") == what]
+            same = [flow for flow in outs if flow.meta.get("unit") == unit]
+            total = sum(float(flow.meta["amount"]) for flow in same
+                        if _is_finite_number(flow.meta.get("amount")))
+            if total > amount + 1e-9:
+                emit("error", entity.rel,
+                     f"抽取超过剩余：`{entity.id}` 的 `{what}` 剩余只有 {amount:g} {unit}，"
+                     f"但有 {total:g} {unit} 被抽走（{', '.join(flow.id for flow in same)}）"
+                     f"——剩余不收敛")
+            elif outs and not same:
+                units = sorted({str(flow.meta.get("unit")) for flow in outs})
+                emit("warning", entity.rel,
+                     f"抽取超过剩余：`{entity.id}` 的 `{what}` 剩余单位是 `{unit}`，"
+                     f"抽走线单位是 {units}——单位不可比，无法判定")
 
 def check_pe005(world, emit) -> None:
-    """被抽取者必须声明物质来源侧边，否则再生产不可见。"""
+    """被抽取者必须声明物质来源侧边，否则再生产不可见；定量版：剩余要有流入。"""
     def has_material_source(src: str) -> bool:
         for owner, edge, _rel in world.edges:
             if owner != src:
@@ -125,6 +151,25 @@ def check_pe005(world, emit) -> None:
                  f"也不靠带类别的物质依赖活着）——剩余从哪来不可见（请标注本条的 "
                  f"extracts/exchanges_with/带 kind 的 depends_on，或确认为终端生产者）")
 
+    logistics = _flow_entries(world, "logistics")
+    warned: set[tuple[str, str]] = set()
+    for entity in world.entries:
+        target = entity.id
+        if target is None or entity.meta.get("type") == "flow":
+            continue
+        surplus = entity.meta.get("surplus")
+        if not isinstance(surplus, dict):
+            continue
+        for what in surplus:
+            if not _nonempty_str(what) or (target, what) in warned:
+                continue
+            has_inflow = any(flow.meta.get("to") == target and flow.meta.get("what") == what
+                             for flow in logistics)
+            if not has_inflow:
+                warned.add((target, what))
+                emit("warning", entity.rel,
+                     f"声称 `{what}` 有剩余，但没有任何 `{what}` 物流线流入"
+                     f"——剩余从哪来不可见（定量版；请标注来源线，或确认为终端生产者）")
 
 def check_pe009(world, emit) -> None:
     """债权必须有支配、强制、抽取、正当性或承重依赖的兑现通道。"""
@@ -208,15 +253,40 @@ def check_pe010(world, emit) -> None:
 
 
 def check_pe011(world, emit) -> None:
-    """补给律：暴力线的驻军地必须有物流线到达。"""
+    """补给律：暴力线驻军地必须有物流线到达；有 needs 时按量判。"""
     logistics = _flow_entries(world, "logistics")
     for violence in _flow_entries(world, "violence"):
         to = violence.meta.get("to")
+        needs = violence.meta.get("needs")
+        if isinstance(needs, dict):
+            what, amount, unit = (needs.get("what"), needs.get("amount"),
+                                  needs.get("unit"))
+            if not (_nonempty_str(what) and _is_finite_number(amount)
+                    and _nonempty_str(unit)):
+                continue
+            ins = [flow for flow in logistics
+                   if flow.meta.get("to") == to and flow.meta.get("what") == what]
+            same = [flow for flow in ins if flow.meta.get("unit") == unit]
+            total = sum(float(flow.meta["amount"]) for flow in same
+                        if _is_finite_number(flow.meta.get("amount")))
+            if not ins:
+                emit("error", violence.rel,
+                     f"驻军补给不足：`{to}` 需要 {amount:g} {unit} `{what}`，"
+                     f"但没有任何 `{what}` 物流线送到——断粮")
+            elif not same:
+                units = sorted({str(flow.meta.get("unit")) for flow in ins})
+                emit("warning", violence.rel,
+                     f"驻军补给不足：`{to}` 需要 {amount:g} {unit}，"
+                     f"流入线单位是 {units}——单位不可比，无法判定")
+            elif total < amount - 1e-9:
+                emit("error", violence.rel,
+                     f"驻军补给不足：`{to}` 的 `{what}` 需要 {amount:g} {unit}，"
+                     f"同单位流入只有 {total:g} {unit}——断粮")
+            continue
         if any(flow.meta.get("to") == to for flow in logistics):
             continue
         emit(None, violence.rel,
              f"补给律：暴力线驻守 `{to}`，但没有任何物流线送到 `{to}`——军队跨线无补给")
-
 
 def check_pe012(world, emit) -> None:
     """人口律：流失必须有可对账的端点。"""

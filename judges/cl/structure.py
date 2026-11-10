@@ -17,11 +17,13 @@ FLOW_LINE_FIELDS = {
     "information": {"delay"},
     "people": {"what", "amount", "unit"},
 }
-FLOW_FIELDS = set(FLOW_COMMON_FIELDS) | set().union(*FLOW_LINE_FIELDS.values())
+FLOW_OPTIONAL_FIELDS = {"needs"}
+FLOW_FIELDS = (set(FLOW_COMMON_FIELDS) | set().union(*FLOW_LINE_FIELDS.values())
+               | FLOW_OPTIONAL_FIELDS)
 FLOW_TRENDS = ("rising", "flat", "falling")
 
 # 需求侧数据模型（协议 v0.3）：`demand`/`population` 只允许出现在非 flow 条目上。
-FLOW_ENTITY_FIELDS = {"demand", "population"}
+FLOW_ENTITY_FIELDS = {"demand", "population", "surplus"}
 # ---- 时间线层（协议 v0.6） -----------------------------------------------------
 TIMELINE_TYPES = ("moment", "shift")
 TIMELINE_MOMENT_FIELDS = {"at", "text", "affects", "source", "note"}
@@ -45,7 +47,7 @@ def _nonempty_str(value) -> bool:
 
 
 def _demand_errors(entry) -> list[str]:
-    """CL108（v0.3 扩展）：实体卡需求侧声明的格式；顺序与 legacy 的 _demand_findings 相同。"""
+    """CL108（v0.3/v0.8 扩展）：实体卡需求侧与剩余声明的格式；顺序与 legacy 相同。"""
     errors: list[str] = []
 
     if "population" in entry.meta:
@@ -53,27 +55,31 @@ def _demand_errors(entry) -> list[str]:
         if not _is_finite_number(value) or value <= 0:
             errors.append("`population` 必须是大于 0 的数字")
 
-    demand = entry.meta.get("demand")
-    if demand is None:
-        return errors
-    if not isinstance(demand, dict):
-        errors.append("`demand` 必须是映射（物资名 → {amount, unit}）")
-        return errors
-    for what, spec in demand.items():
-        if not _nonempty_str(what):
-            errors.append("`demand` 的物资名必须是非空字符串")
-            continue
-        if not isinstance(spec, dict):
-            errors.append(f"`demand.{what}` 必须是映射（含 amount/unit）")
-            continue
-        amount = spec.get("amount")
-        if not _is_finite_number(amount) or amount <= 0:
-            errors.append(f"`demand.{what}.amount` 必须是大于 0 的数字")
-        if not _nonempty_str(spec.get("unit")):
-            errors.append(f"`demand.{what}.unit` 必须是非空字符串")
-        for key in spec:
-            if key not in ("amount", "unit"):
-                errors.append(f"`demand.{what}` 不接受字段 `{key}`")
+    def check_quantity_map(field: str) -> None:
+        value = entry.meta.get(field)
+        if value is None:
+            return
+        if not isinstance(value, dict):
+            errors.append(f"`{field}` 必须是映射（物资名 → {{amount, unit}}）")
+            return
+        for what, spec in value.items():
+            if not _nonempty_str(what):
+                errors.append(f"`{field}` 的物资名必须是非空字符串")
+                continue
+            if not isinstance(spec, dict):
+                errors.append(f"`{field}.{what}` 必须是映射（含 amount/unit）")
+                continue
+            amount = spec.get("amount")
+            if not _is_finite_number(amount) or amount <= 0:
+                errors.append(f"`{field}.{what}.amount` 必须是大于 0 的数字")
+            if not _nonempty_str(spec.get("unit")):
+                errors.append(f"`{field}.{what}.unit` 必须是非空字符串")
+            for key in spec:
+                if key not in ("amount", "unit"):
+                    errors.append(f"`{field}.{what}` 不接受字段 `{key}`")
+
+    check_quantity_map("demand")
+    check_quantity_map("surplus")
     return errors
 
 
@@ -144,6 +150,8 @@ def flow_schema_errors(entry) -> list[str]:
 
     if isinstance(line, str) and line in FLOW_LINES:
         allowed = FLOW_COMMON_FIELDS | FLOW_LINE_FIELDS[line]
+        if line == "violence":
+            allowed = allowed | FLOW_OPTIONAL_FIELDS
         for key in entry.meta:
             if key in FLOW_FIELDS and key not in allowed:
                 errors.append(f"line={line} 的流量不接受字段 `{key}`")
@@ -167,6 +175,23 @@ def flow_schema_errors(entry) -> list[str]:
         errors.append("`trend` 只能是 rising/flat/falling")
     if "note" in entry.meta and not isinstance(entry.meta["note"], str):
         errors.append("`note` 必须是字符串")
+    needs = entry.meta.get("needs")
+    if needs is not None and line == "violence":
+        if not isinstance(needs, dict):
+            errors.append("`needs` 必须是映射（含 what/amount/unit）")
+        else:
+            if not _nonempty_str(needs.get("what")):
+                errors.append("`needs.what` 必须是非空字符串")
+            if not _is_finite_number(needs.get("amount")) or needs.get("amount") <= 0:
+                errors.append("`needs.amount` 必须是大于 0 的数字")
+            if not _nonempty_str(needs.get("unit")):
+                errors.append("`needs.unit` 必须是非空字符串")
+            for key in needs:
+                if key not in ("what", "amount", "unit"):
+                    errors.append(f"`needs` 不接受字段 `{key}`")
+    when = entry.meta.get("when")
+    if when is not None and not _is_finite_number(when):
+        errors.append("`when` 必须是数字（世界内时间轴；不写则不判时延律）")
     return errors
 
 
