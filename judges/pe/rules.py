@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from store import parse as shared
 
+from judges.cl.structure import _is_finite_number, _nonempty_str, flow_schema_errors
+
 
 def _load_material_kinds() -> frozenset[str]:
     fallback = {"resource", "production", "economy", "fiscal", "manpower"}
@@ -141,3 +143,94 @@ def check_pe009(world, emit) -> None:
              f"欠 `{edge.target}` 债务，但看不到任何收得回来的途径：`{edge.target}` 不指挥、不强制、"
              f"不抽取、也不为这条提供正当性，这条自己也不依赖 `{edge.target}`"
              "——债权关系要有能兑现它的结构，否则只是记账")
+
+
+def _flow_entries(world, line: str) -> list:
+    """与 legacy `_flow_entries` 同口径：只收完整、形状合法的流量条目。"""
+    out = []
+    for entry in world.entries:
+        if entry.meta.get("type") != "flow" or entry.meta.get("line") != line:
+            continue
+        frm, to = entry.meta.get("from"), entry.meta.get("to")
+        if not isinstance(frm, str) or not isinstance(to, str):
+            continue
+        if frm not in world.index or to not in world.index:
+            continue
+        if flow_schema_errors(entry):
+            continue
+        out.append(entry)
+    return out
+
+
+def check_pe010(world, emit) -> None:
+    """物流守恒：同单位流入必须满足 demand；数据不足时报 warning，不静默。"""
+    logistics = _flow_entries(world, "logistics")
+
+    for entry in world.entries:
+        if entry.id is None or entry.meta.get("type") == "flow":
+            continue
+        demand = entry.meta.get("demand")
+        if not isinstance(demand, dict):
+            continue
+        for what, spec in demand.items():
+            if not isinstance(spec, dict):
+                continue
+            amount, unit = spec.get("amount"), spec.get("unit")
+            if not (_is_finite_number(amount) and _nonempty_str(unit)):
+                continue
+            incoming = [f for f in logistics
+                        if f.meta.get("to") == entry.id and f.meta.get("what") == what]
+            same = [f for f in incoming if f.meta.get("unit") == unit]
+            if same:
+                inflow = sum(f.meta["amount"] for f in same)
+                if inflow < amount:
+                    emit("error", entry.rel,
+                         f"物流守恒：`{entry.id}` 对 `{what}` 的需求是 {amount:g} {unit}，"
+                         f"同单位流入只有 {inflow:g} {unit}——断供")
+            elif incoming:
+                units = "、".join(sorted({str(f.meta.get("unit")) for f in incoming}))
+                emit("warning", entry.rel,
+                     f"物流守恒：`{entry.id}` 对 `{what}` 的需求单位是 `{unit}`，"
+                     f"流入线单位是 {units}——单位不可比，无法判定")
+            else:
+                emit("error", entry.rel,
+                     f"物流守恒：`{entry.id}` 声明了 `{what}` 需求 {amount:g} {unit}，"
+                     f"但没有任何物流线流入——断供")
+
+    for flow in logistics:
+        to, what = flow.meta.get("to"), flow.meta.get("what")
+        target_demand = world.index[to].meta.get("demand")
+        if isinstance(target_demand, dict) and what in target_demand:
+            continue
+        emit("warning", flow.rel,
+             f"物流守恒：`{to}` 没有声明对 `{what}` 的需求，这条流入无法对账"
+             f"（给 `{to}` 加 demand，或确认它不需要）")
+
+
+def check_pe011(world, emit) -> None:
+    """补给律：暴力线的驻军地必须有物流线到达。"""
+    logistics = _flow_entries(world, "logistics")
+    for violence in _flow_entries(world, "violence"):
+        to = violence.meta.get("to")
+        if any(flow.meta.get("to") == to for flow in logistics):
+            continue
+        emit(None, violence.rel,
+             f"补给律：暴力线驻守 `{to}`，但没有任何物流线送到 `{to}`——军队跨线无补给")
+
+
+def check_pe012(world, emit) -> None:
+    """人口律：流失必须有可对账的端点。"""
+    for flow in _flow_entries(world, "people"):
+        frm, to = flow.meta.get("from"), flow.meta.get("to")
+        if frm == to:
+            emit(None, flow.rel, "人口律：起点与终点是同一实体——流失没有去向")
+            continue
+
+        def has_population(eid: str) -> bool:
+            value = world.index[eid].meta.get("population")
+            return _is_finite_number(value) and value > 0
+
+        if not has_population(frm) and not has_population(to):
+            emit(None, flow.rel,
+                 f"人口律：`{frm}` 与 `{to}` 都没有声明 population——流失规模无法对账"
+                 f"（给至少一端加 population）")
