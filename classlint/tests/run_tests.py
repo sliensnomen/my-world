@@ -84,6 +84,10 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("PE014", "warning", "codex/flow-tax-out.md"),  # 庇护关系缓冲危机
     ],
     "personal-clean": [],
+    "delay-bad": [
+        ("PE015", "warning", "codex/flow-order.md"),  # 政变(12)早于诏书抵达(10+3)
+    ],
+    "delay-clean": [],
     # 时间线层（协议 v0.6）：CL109 形状 + CL105 悬空
     "timeline-clean": [],
     "timeline-bad": [
@@ -724,8 +728,8 @@ def check_registry_cl_pe_dual_run() -> int:
         expect([r.id for r in pe.rules] == ["PE001", "PE002", "PE003", "PE004", "PE005",
                                             "PE006", "PE007", "PE008",
                                             "PE009", "PE010", "PE011", "PE012",
-                                            "PE013", "PE014"],
-               f"pe 必须按原顺序登记十四条规则：{[r.id for r in pe.rules]}")
+                                            "PE013", "PE014", "PE015"],
+               f"pe 必须按原顺序登记十五条规则：{[r.id for r in pe.rules]}")
         expect(core.ca106_fields == frozenset() and pe.ca106_fields == frozenset(),
                "classlint 的 CL103 私有字段政策不得写进 ca106_fields")
         expect(all(r.scope == "entry" and r.entry_domain == "all_entries"
@@ -805,6 +809,8 @@ def check_registry_cl_pe_dual_run() -> int:
                   expected={"PE013", "PE014"})
     compare_world("PE013–PE014 真阴性", TESTS / "personal-clean",
                   forbidden={"PE013", "PE014"})
+    compare_world("PE015 真阳性", TESTS / "delay-bad", expected={"PE015"})
+    compare_world("PE015 真阴性", TESTS / "delay-clean", forbidden={"PE015"})
 
     with tempfile.TemporaryDirectory() as td:
         world = Path(td)
@@ -988,7 +994,7 @@ def check_registry_cl_pe_dual_run() -> int:
         expect(old == new, "init 后首次 check 双跑不同")
 
     if not failures:
-        print("PASS core-cl/pe 双跑：24 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
+        print("PASS core-cl/pe 双跑：25 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
     return failures
 
 

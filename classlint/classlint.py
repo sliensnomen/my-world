@@ -34,7 +34,7 @@ if str(_ROOT) not in sys.path:
 from store import model as shared_model  # noqa: E402
 from store import parse as shared  # noqa: E402
 
-VERSION = "0.6"
+VERSION = "0.7"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 
@@ -90,7 +90,7 @@ REQUIRED_FIELDS = ["id", "title", "type"]
 # 这些字段**只在 type: flow 的条目上合法**——写在别的卡上仍是 CL103，
 # 否则「流量」就成了任何条目都能长出来的自由字段。
 FLOW_LINES = ("logistics", "violence", "information", "people")
-FLOW_COMMON_FIELDS = {"line", "from", "to", "note", "trend"}
+FLOW_COMMON_FIELDS = {"line", "from", "to", "note", "trend", "when"}
 FLOW_LINE_FIELDS = {
     "logistics": {"what", "amount", "unit"},
     "violence": {"amount", "unit", "supply_radius", "radius_unit"},
@@ -349,6 +349,9 @@ def timeline_schema_findings(e: Entry) -> list[Finding]:
         bad("`source` 必须是字符串 id（第一条目世界外历史/设定来源，不进时间线）")
     if "note" in e.meta and not isinstance(e.meta["note"], str):
         bad("`note` 必须是字符串")
+    when = e.meta.get("when")
+    if when is not None and not _is_finite_number(when):
+        bad("`when` 必须是数字（世界内时间轴；不写则不判时延律）")
     return findings
 
 
@@ -407,6 +410,9 @@ def flow_schema_findings(e: Entry) -> list[Finding]:
         bad("`trend` 只能是 rising/flat/falling")
     if "note" in e.meta and not isinstance(e.meta["note"], str):
         bad("`note` 必须是字符串")
+    when = e.meta.get("when")
+    if when is not None and not _is_finite_number(when):
+        bad("`when` 必须是数字（世界内时间轴；不写则不判时延律）")
     return findings
 
 
@@ -959,6 +965,31 @@ def pe014(world: World, emit) -> None:
              f"庇护关系可能缓冲危机：`{to}` 从 `{frm}` 抽取 `{what}`（线在 rising），"
              f"而 `{frm}` 的 `{dwhat}` 只剩 {margin:.0%} 余量，但双方有{note}关系"
              f"——危机可能被庇护网络吸收，不应按纯市场读")
+
+
+@rule("PE015", "warning", "时延律：消息抵达前发生的变故，命令管不到")
+def pe015(world: World, emit) -> None:
+    moments = [e for e in world.entries
+               if e.meta.get("type") == "moment"
+               and _is_finite_number(e.meta.get("at"))]
+    if not moments:
+        return
+    for flow in _flow_entries(world, "information"):
+        when, delay = flow.meta.get("when"), flow.meta.get("delay")
+        if not _is_finite_number(when) or not _is_finite_number(delay):
+            continue
+        arrival = when + delay
+        to = flow.meta.get("to")
+        for moment in moments:
+            affects = moment.meta.get("affects")
+            if not isinstance(affects, list) or to not in affects:
+                continue
+            at = moment.meta["at"]
+            if when <= at < arrival:
+                emit("warning", flow.rel,
+                     f"时延倒挂：`{to}` 在 `{moment.id}`（at={at:g}）发生变故，"
+                     f"但 `{flow.id}` 的消息 when={when:g} + delay={delay:g} = {arrival:g} 才抵达"
+                     f"——命令晚于政变，抵达前发生的事它管不到")
 
 
 def load_entity_aliases(root: Path, index: dict[str, Entry]) -> dict[str, str]:

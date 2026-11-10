@@ -10,7 +10,7 @@ REQUIRED_FIELDS = ["id", "title", "type"]
 # 流量层数据模型（协议 v0.2，与 classlint.py 的 legacy 实现逐字同构）。
 # 两套实现必须给出逐条相同的 Finding——双跑测试（check_registry_cl_pe_dual_run）守着。
 FLOW_LINES = ("logistics", "violence", "information", "people")
-FLOW_COMMON_FIELDS = {"line", "from", "to", "note", "trend"}
+FLOW_COMMON_FIELDS = {"line", "from", "to", "note", "trend", "when"}
 FLOW_LINE_FIELDS = {
     "logistics": {"what", "amount", "unit"},
     "violence": {"amount", "unit", "supply_radius", "radius_unit"},

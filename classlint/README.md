@@ -17,7 +17,7 @@ id 语法、frontmatter 切分、契约词表、关系名归一化都在 [`store
 另外那处真实分歧被收成了**一个开关**（`Entry.depends_on_requires_annotations`，canonlint 开、
 classlint 关），不是两份建边代码——所以它改的时候只有一个地方要改。
 
-**状态：生产关系层已完成（PE001–PE008 + `graph` + `--impact`）；流量层的四线数据模型（CL108）、守恒律（PE010–PE012 + `demand`/`population`）、交叉规则（PE006–PE008）与个人关系层（PE013/PE014 + 五种个人关系）已就绪；时间线（`moment`/`shift`，CL109）与视图（`view`/`fork`）已就绪，本版 PE 共 PE001–PE014。**
+**状态：生产关系层已完成（PE001–PE008 + `graph` + `--impact`）；流量层的四线数据模型（CL108）、守恒律（PE010–PE012 + `demand`/`population`）、交叉规则（PE006–PE008）与个人关系层（PE013/PE014 + 五种个人关系）已就绪；时间线（`moment`/`shift`，CL109）与视图（`view`/`fork`）已就绪；信息时延律 PE015 已就位（v0.7），本版 PE 共 PE001–PE015。**
 PE004/PE005 的定量回填尚未做——排期见 [ROADMAP.md](ROADMAP.md)。
 
 ## 用法
@@ -77,7 +77,7 @@ PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以�
 
 报告级输出（永不进退出码）：`classlint graph <仓库> [--format dot|json]` 关系图；`classlint check <仓库> --impact ID...` 下游影响报告。
 
-测试：`python3 classlint/tests/run_tests.py`（27 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
+测试：`python3 classlint/tests/run_tests.py`（29 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
 
 ## 世界仓库结构
 
