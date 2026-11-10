@@ -88,6 +88,12 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("PE015", "warning", "codex/flow-order.md"),  # 政变(12)早于诏书抵达(10+3)
     ],
     "delay-clean": [],
+    "supply-bad": [
+        ("PE004", "error", "codex/town.md"),      # 剩余 200 石，抽走 300 石
+        ("PE005", "warning", "codex/hamlet.md"),  # 声称剩余，但没有任何流入
+        ("PE011", "error", "codex/rule-army.md"),  # 军需 400 石，流入 250 石
+    ],
+    "supply-clean": [],
     # 时间线层（协议 v0.6）：CL109 形状 + CL105 悬空
     "timeline-clean": [],
     "timeline-bad": [
@@ -811,6 +817,10 @@ def check_registry_cl_pe_dual_run() -> int:
                   forbidden={"PE013", "PE014"})
     compare_world("PE015 真阳性", TESTS / "delay-bad", expected={"PE015"})
     compare_world("PE015 真阴性", TESTS / "delay-clean", forbidden={"PE015"})
+    compare_world("PE004/PE011 定量真阳性", TESTS / "supply-bad",
+                  expected={"PE004", "PE005", "PE011"})
+    compare_world("PE004/PE011 定量真阴性", TESTS / "supply-clean",
+                  forbidden={"PE004", "PE005", "PE011"})
 
     with tempfile.TemporaryDirectory() as td:
         world = Path(td)
