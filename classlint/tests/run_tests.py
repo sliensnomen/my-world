@@ -75,6 +75,19 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("PE007", "warning", "codex/town.md"),  # 人口 rising 流入 + owns 关系未变
         ("PE008", "error", "codex/lord.md"),    # 领主镇压供养自己的城镇
     ],
+    # 个人关系层（协议 v0.5）：PE013/PE014 与 CL104 形状
+    "personal-bad": [
+        ("PE002", "error", "codex/lord.md"),     # 镇压供养者（critical 依赖）
+        ("PE006", "warning", "codex/town.md"),   # 顺带触发的危机积累
+        ("PE008", "error", "codex/lord.md"),     # 顺带触发的镇压自己的基础
+        ("PE013", "warning", "codex/lord.md"),   # 亲情与镇压矛盾（kin 兄弟）
+        ("PE014", "warning", "codex/flow-tax-out.md"),  # 庇护关系缓冲危机
+    ],
+    "personal-clean": [],
+    "personal-shape-bad": [
+        ("CL104", "error", "codex/plain-kin.md"),  # `kin` 不是列表
+        ("CL104", "error", "codex/bad-attr.md"),   # 未定义属性 `strength`
+    ],
     "flow-bad": [
         ("CL103", "error", "codex/bad-plain-field.md"),  # 普通条目写 line
         ("CL103", "error", "codex/bad-plain-field.md"),  # 普通条目写 amount
@@ -652,8 +665,9 @@ def check_registry_cl_pe_dual_run() -> int:
                f"core-cl 必须逐规则登记 CL100–CL108：{[r.id for r in core.rules]}")
         expect([r.id for r in pe.rules] == ["PE001", "PE002", "PE003", "PE004", "PE005",
                                             "PE006", "PE007", "PE008",
-                                            "PE009", "PE010", "PE011", "PE012"],
-               f"pe 必须按原顺序登记十二条规则：{[r.id for r in pe.rules]}")
+                                            "PE009", "PE010", "PE011", "PE012",
+                                            "PE013", "PE014"],
+               f"pe 必须按原顺序登记十四条规则：{[r.id for r in pe.rules]}")
         expect(core.ca106_fields == frozenset() and pe.ca106_fields == frozenset(),
                "classlint 的 CL103 私有字段政策不得写进 ca106_fields")
         expect(all(r.scope == "entry" and r.entry_domain == "all_entries"
@@ -727,6 +741,10 @@ def check_registry_cl_pe_dual_run() -> int:
                   expected={"PE006", "PE007", "PE008"})
     compare_world("PE006–PE008 真阴性", TESTS / "flow-clean",
                   forbidden={"PE006", "PE007", "PE008"})
+    compare_world("PE013–PE014 真阳性", TESTS / "personal-bad",
+                  expected={"PE013", "PE014"})
+    compare_world("PE013–PE014 真阴性", TESTS / "personal-clean",
+                  forbidden={"PE013", "PE014"})
 
     with tempfile.TemporaryDirectory() as td:
         world = Path(td)
@@ -910,7 +928,7 @@ def check_registry_cl_pe_dual_run() -> int:
         expect(old == new, "init 后首次 check 双跑不同")
 
     if not failures:
-        print("PASS core-cl/pe 双跑：21 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
+        print("PASS core-cl/pe 双跑：23 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
     return failures
 
 

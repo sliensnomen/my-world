@@ -305,3 +305,73 @@ def check_pe008(world, emit) -> None:
         emit("error", src_rel,
              f"镇压自己的基础：`{src}` 镇压 `{edge.target}`，但 `{edge.target}` 的物流线"
              f"在供养 `{src}`——镇压自己的供养来源")
+
+
+def _personal_edge(world, a: str, b: str, rel: str):
+    """个人关系是语境边，方向不承诺：A↔B 任一方向有这条关系就算数。"""
+    for src, edge, _r in world.edges:
+        if edge.rel != rel:
+            continue
+        if (src == a and edge.target == b) or (src == b and edge.target == a):
+            return edge
+    return None
+
+
+def check_pe013(world, emit) -> None:
+    """亲情与镇压矛盾：被镇压的供养者与镇压者有亲缘。"""
+    for src, edge, src_rel in world.edges_of("coerces"):
+        if edge.target not in world.index:
+            continue
+        if world.find_edge(src, {"depends_on"}, edge.target) is None:
+            continue
+        kin = _personal_edge(world, src, edge.target, "kin")
+        if kin is None:
+            continue
+        label = (kin.attrs.get("what") or "").strip()
+        note = f"`{label}`" if label else "亲缘"
+        emit("warning", src_rel,
+             f"亲情与镇压矛盾：`{src}` 镇压供养自己的 `{edge.target}`（PE002 报的结构矛盾），"
+             f"但双方有{note}关系——私人关系可能让镇压被容忍或延迟，审计不应按纯经济人读")
+
+
+def check_pe014(world, emit) -> None:
+    """庇护关系可能缓冲危机：抽取者与被抽取者有效忠关系。"""
+    logistics = _flow_entries(world, "logistics")
+    for flow in logistics:
+        what, trend = flow.meta.get("what"), flow.meta.get("trend")
+        if what not in ("tax", "tribute") or trend != "rising":
+            continue
+        frm, to = flow.meta.get("from"), flow.meta.get("to")
+        if frm not in world.index or to not in world.index:
+            continue
+        # 只在 PE006 的触发面上报：被抽取方有需求且同单位余量 < 10%。
+        demand = world.index[frm].meta.get("demand")
+        if not isinstance(demand, dict):
+            continue
+        crisis = None
+        for dwhat in sorted(demand):
+            spec = demand[dwhat]
+            if not isinstance(spec, dict):
+                continue
+            amount, unit = spec.get("amount"), spec.get("unit")
+            if not (_is_finite_number(amount) and _nonempty_str(unit)):
+                continue
+            inflow = sum(f.meta["amount"] for f in logistics
+                         if f.meta.get("to") == frm and f.meta.get("what") == dwhat
+                         and f.meta.get("unit") == unit)
+            if inflow >= amount and inflow < amount * 1.1:
+                crisis = (dwhat, amount, inflow)
+                break
+        if crisis is None:
+            continue
+        allegiance = _personal_edge(world, frm, to, "allegiance")
+        if allegiance is None:
+            continue
+        dwhat, amount, inflow = crisis
+        label = (allegiance.attrs.get("what") or "").strip()
+        note = f"`{label}`" if label else "效忠"
+        margin = (inflow - amount) / amount if amount else 0.0
+        emit("warning", flow.rel,
+             f"庇护关系可能缓冲危机：`{to}` 从 `{frm}` 抽取 `{what}`（线在 rising），"
+             f"而 `{frm}` 的 `{dwhat}` 只剩 {margin:.0%} 余量，但双方有{note}关系"
+             f"——危机可能被庇护网络吸收，不应按纯市场读")

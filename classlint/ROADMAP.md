@@ -7,13 +7,13 @@
 | 基础层 | 0 | 目录结构 + Markdown 解析器 + `init`/`check` | ✅ 完成（2026-09-24） |
 | 生产关系层 | 1–3 | 七种关系（owns/controls/extracts/coerces/legitimizes/owes/depends_on）+ PE001–PE005 + PE009（定性；PE009 于 v1.1 补入）+ 关系图 + 影响报告 | ✅ 完成（2026-10-02） |
 | 流量层 | 4–6 | 四种线（物流/暴力/信息/人员）+ 守恒律 + PE004/005 定量回填 + PE006–PE008 | ✅ Sprint 4–6 完成（四种线 + CL108、PE010–PE012、PE006–PE008 交叉规则） |
-| 个人关系层 | 7 | kin/allegiance/bond/affinity/history + PE 规则修正项 | ⬜ |
+| 个人关系层 | 7 | kin/allegiance/bond/affinity/history + PE 规则修正项 | ✅ 完成（2026-11-10；PE013/PE014） |
 | 时间线 + 视图 | 8–10 | 点事件/结构变迁 + 关系图/时间线/地图三视图 | ⬜ |
 | AI 辅助 | 11–12 | 实体关系提取、提问式补全（用户自带 API key） | ⬜ |
 
 **总量：** 约 12–16 周，按每周 10–15 小时估算。
 
-## 当前：流量层 Sprint 6 已完成（交叉规则 PE006–PE008）；下一阶段 Sprint 7 个人关系层待排期
+## 当前：流量层 Sprint 6 已完成（交叉规则 PE006–PE008）；Sprint 7 个人关系层完成，下一阶段 Sprint 8 时间线层待排期
 
 - PE006：剩余刚好够活 + 抽取在增加 → 危机积累
 - PE007：人口在增长 + 占有关系不变 → 结构性压力

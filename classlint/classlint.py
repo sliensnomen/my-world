@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""classlint — 马克思主义政治经济学审计工具，协议 v0.4（生产关系层 + 流量层数据模型、守恒律与交叉规则）
+"""classlint — 马克思主义政治经济学审计工具，协议 v0.5（生产关系层 + 流量层 + 个人关系层语境）
 
 用马克思主义政治经济学的规则，审计一个虚构世界的结构。
 Git + Markdown 是唯一事实来源：条目 = codex/ 下一个带 YAML frontmatter 的 Markdown 文件。
-规则编号即协议：本文件实现 PROTOCOL.md 全部规则（CL1xx 结构 + PE001–PE012）。
+规则编号即协议：本文件实现 PROTOCOL.md 全部规则（CL1xx 结构 + PE001–PE014）。
 
 用法:
   classlint.py init [目录]        初始化世界仓库（目录结构 + classlint.yaml + git）
@@ -34,7 +34,7 @@ if str(_ROOT) not in sys.path:
 from store import model as shared_model  # noqa: E402
 from store import parse as shared  # noqa: E402
 
-VERSION = "0.4"
+VERSION = "0.5"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 
@@ -73,8 +73,15 @@ def canonical_rel(name: str) -> str:
 
 # F14 修复：契约列过的九种关系及其历史拼法不再报 CL103；契约之外的关系名仍然报。
 # 判据是契约认证拼法 ∪ 规范名（而非机械变体）：自由档的自定义字段仍该被 CL103 拦下。
+# ---- 个人关系层（协议 v0.5） ---------------------------------------------------
+# 五种个人关系是 classlint 自己的语境层，不进 WGP 契约：字段只在本引擎的字段表里认，
+# 形状非法一律 CL104。每条边可带 `what` 性质标签（如「兄弟」「庇护」）与 `note`。
+PERSONAL_RELATIONS = ("kin", "allegiance", "bond", "affinity", "history")
+PERSONAL_RELATION_ATTRS = ("what", "note")
+
 KNOWN_FIELDS = ({"id", "title", "type", "relations"}
-                | set(ALL_RELATION_NAMES) | set(CONTRACT_ATTESTED))
+                | set(ALL_RELATION_NAMES) | set(CONTRACT_ATTESTED)
+                | set(PERSONAL_RELATIONS))
 REQUIRED_FIELDS = ["id", "title", "type"]
 
 # ---- 流量层数据模型（协议 v0.2）----------------------------------------------
@@ -150,6 +157,51 @@ WORLD_DIRS = [
 Edge = shared.Relation
 
 
+def _personal_relation_edges(e: "Entry") -> tuple[list[Edge], list[str]]:
+    """解析五种个人关系：简式 id 或对象式 `{id, what?, note?}`。返回 (边, 形状错误)。
+
+    这五种关系**不在**契约词表里——它们是 classlint 的语境层，所以在本引擎建边，
+    不往 store/model.py 里加（加进去会污染 canonlint 的契约面）。
+    """
+    edges: list[Edge] = []
+    errors: list[str] = []
+    for rel in PERSONAL_RELATIONS:
+        raw = e.meta.get(rel)
+        if raw is None:
+            continue
+        if not isinstance(raw, list):
+            errors.append(f"`{rel}` 必须是列表")
+            continue
+        for item in raw:
+            if isinstance(item, str):
+                if item.strip():
+                    edges.append(Edge(rel, item, {}))
+                else:
+                    errors.append(f"`{rel}` 的 id 不能是空串")
+                continue
+            if not isinstance(item, dict):
+                errors.append(f"`{rel}` 的元素必须是 id 或对象")
+                continue
+            target = item.get("id")
+            if not isinstance(target, str) or not target.strip():
+                errors.append(f"`{rel}` 的对象式元素必须含字符串 `id`")
+                continue
+            extra = sorted(set(item) - {"id", *PERSONAL_RELATION_ATTRS})
+            if extra:
+                errors.append(f"`{rel}` 关系属性 `{extra[0]}` 未定义"
+                              f"（允许 {'、'.join(PERSONAL_RELATION_ATTRS)}）")
+            attrs: dict[str, str] = {}
+            for key in PERSONAL_RELATION_ATTRS:
+                if key not in item:
+                    continue
+                if not isinstance(item[key], str):
+                    errors.append(f"`{rel}` 的 `{key}` 必须是字符串")
+                else:
+                    attrs[key] = item[key]
+            edges.append(Edge(rel, target, attrs))
+    return edges, errors
+
+
 @dataclass
 class Finding:
     rule: str
@@ -191,7 +243,11 @@ class Entry(shared_model.Entry):
         """
         errs = [Finding("CL104", "error", self.rel, e.msg)
                 for e in self.relation_shape_errors]
-        return list(self.relations), errs
+        edges = list(self.relations)
+        personal, perrors = _personal_relation_edges(self)
+        edges.extend(personal)
+        errs.extend(Finding("CL104", "error", self.rel, msg) for msg in perrors)
+        return edges, errs
 
 
 def parse_entry(path: Path, root: Path) -> Entry:
@@ -775,6 +831,74 @@ def pe008(world: World, emit) -> None:
         emit("error", src_rel,
              f"镇压自己的基础：`{src}` 镇压 `{e.target}`，但 `{e.target}` 的物流线"
              f"在供养 `{src}`——镇压自己的供养来源")
+
+
+def _personal_edge(world: World, a: str, b: str, rel: str):
+    """个人关系是语境边，方向不承诺：A↔B 任一方向有这条关系就算数。"""
+    for src, edge, _r in world.edges:
+        if edge.rel != rel:
+            continue
+        if (src == a and edge.target == b) or (src == b and edge.target == a):
+            return edge
+    return None
+
+
+@rule("PE013", "warning", "亲情与镇压矛盾：被镇压的供养者与镇压者有亲缘")
+def pe013(world: World, emit) -> None:
+    for src, e, src_rel in world.edges_of("coerces"):
+        if e.target not in world.index:
+            continue
+        if world.find_edge(src, {"depends_on"}, e.target) is None:
+            continue
+        kin = _personal_edge(world, src, e.target, "kin")
+        if kin is None:
+            continue
+        label = (kin.attrs.get("what") or "").strip()
+        note = f"`{label}`" if label else "亲缘"
+        emit("warning", src_rel,
+             f"亲情与镇压矛盾：`{src}` 镇压供养自己的 `{e.target}`（PE002 报的结构矛盾），"
+             f"但双方有{note}关系——私人关系可能让镇压被容忍或延迟，审计不应按纯经济人读")
+
+
+@rule("PE014", "warning", "庇护关系可能缓冲危机：抽取者与被抽取者有效忠关系")
+def pe014(world: World, emit) -> None:
+    logistics = _flow_entries(world, "logistics")
+    for f in logistics:
+        what, trend = f.meta.get("what"), f.meta.get("trend")
+        if what not in ("tax", "tribute") or trend != "rising":
+            continue
+        frm, to = f.meta.get("from"), f.meta.get("to")
+        if frm not in world.index or to not in world.index:
+            continue
+        # 只在 PE006 的触发面上报：被抽取方有需求且同单位余量 < 10%。
+        demand = _demand_of(world, frm)
+        crisis = None
+        for dwhat in sorted(demand):
+            spec = demand[dwhat]
+            if not isinstance(spec, dict):
+                continue
+            amount, unit = spec.get("amount"), spec.get("unit")
+            if not (_is_finite_number(amount) and _nonempty_str(unit)):
+                continue
+            inflow = sum(x.meta["amount"] for x in logistics
+                         if x.meta.get("to") == frm and x.meta.get("what") == dwhat
+                         and x.meta.get("unit") == unit)
+            if inflow >= amount and inflow < amount * 1.1:
+                crisis = (dwhat, amount, unit, inflow)
+                break
+        if crisis is None:
+            continue
+        allegiance = _personal_edge(world, frm, to, "allegiance")
+        if allegiance is None:
+            continue
+        dwhat, amount, unit, inflow = crisis
+        label = (allegiance.attrs.get("what") or "").strip()
+        note = f"`{label}`" if label else "效忠"
+        margin = (inflow - amount) / amount if amount else 0.0
+        emit("warning", f.rel,
+             f"庇护关系可能缓冲危机：`{to}` 从 `{frm}` 抽取 `{what}`（线在 rising），"
+             f"而 `{frm}` 的 `{dwhat}` 只剩 {margin:.0%} 余量，但双方有{note}关系"
+             f"——危机可能被庇护网络吸收，不应按纯市场读")
 
 
 def load_entity_aliases(root: Path, index: dict[str, Entry]) -> dict[str, str]:
