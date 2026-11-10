@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""classlint — 马克思主义政治经济学审计工具，协议 v0.4（生产关系层 + 流量层数据模型、守恒律与交叉规则）
+"""classlint — 马克思主义政治经济学审计工具，协议 v0.6（生产关系层 + 流量层 + 个人关系层语境 + 时间线层）
 
 用马克思主义政治经济学的规则，审计一个虚构世界的结构。
 Git + Markdown 是唯一事实来源：条目 = codex/ 下一个带 YAML frontmatter 的 Markdown 文件。
-规则编号即协议：本文件实现 PROTOCOL.md 全部规则（CL1xx 结构 + PE001–PE012）。
+规则编号即协议：本文件实现 PROTOCOL.md 全部规则（CL1xx 结构 + PE001–PE014）。
 
 用法:
   classlint.py init [目录]        初始化世界仓库（目录结构 + classlint.yaml + git）
@@ -34,7 +34,7 @@ if str(_ROOT) not in sys.path:
 from store import model as shared_model  # noqa: E402
 from store import parse as shared  # noqa: E402
 
-VERSION = "0.4"
+VERSION = "0.6"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 
@@ -73,8 +73,15 @@ def canonical_rel(name: str) -> str:
 
 # F14 修复：契约列过的九种关系及其历史拼法不再报 CL103；契约之外的关系名仍然报。
 # 判据是契约认证拼法 ∪ 规范名（而非机械变体）：自由档的自定义字段仍该被 CL103 拦下。
+# ---- 个人关系层（协议 v0.5） ---------------------------------------------------
+# 五种个人关系是 classlint 自己的语境层，不进 WGP 契约：字段只在本引擎的字段表里认，
+# 形状非法一律 CL104。每条边可带 `what` 性质标签（如「兄弟」「庇护」）与 `note`。
+PERSONAL_RELATIONS = ("kin", "allegiance", "bond", "affinity", "history")
+PERSONAL_RELATION_ATTRS = ("what", "note")
+
 KNOWN_FIELDS = ({"id", "title", "type", "relations"}
-                | set(ALL_RELATION_NAMES) | set(CONTRACT_ATTESTED))
+                | set(ALL_RELATION_NAMES) | set(CONTRACT_ATTESTED)
+                | set(PERSONAL_RELATIONS))
 REQUIRED_FIELDS = ["id", "title", "type"]
 
 # ---- 流量层数据模型（协议 v0.2）----------------------------------------------
@@ -92,6 +99,14 @@ FLOW_LINE_FIELDS = {
 }
 FLOW_FIELDS = set(FLOW_COMMON_FIELDS) | set().union(*FLOW_LINE_FIELDS.values())
 FLOW_TRENDS = ("rising", "flat", "falling")
+
+# ---- 时间线层（协议 v0.6） -----------------------------------------------------
+# 世界内历史：点事件与结构变迁。不是 canonlint 的 `type: event`（那是事件流水，
+# 带 event_kind 与必填腿）；时间线条目只回答「什么时候、发生了什么、牵动谁」。
+TIMELINE_TYPES = ("moment", "shift")
+TIMELINE_MOMENT_FIELDS = {"at", "text", "affects", "source", "note"}
+TIMELINE_SHIFT_FIELDS = {"begin", "end", "change", "before", "after", "source", "note"}
+TIMELINE_FIELDS = (TIMELINE_MOMENT_FIELDS | TIMELINE_SHIFT_FIELDS) - {"note"}
 
 # ---- 需求侧数据模型（协议 v0.3，给 Sprint 5 的守恒律用）------------------------
 # 实体卡可以声明自己的需求（`demand: {what: {amount, unit}}`）与人口基数
@@ -150,6 +165,51 @@ WORLD_DIRS = [
 Edge = shared.Relation
 
 
+def _personal_relation_edges(e: "Entry") -> tuple[list[Edge], list[str]]:
+    """解析五种个人关系：简式 id 或对象式 `{id, what?, note?}`。返回 (边, 形状错误)。
+
+    这五种关系**不在**契约词表里——它们是 classlint 的语境层，所以在本引擎建边，
+    不往 store/model.py 里加（加进去会污染 canonlint 的契约面）。
+    """
+    edges: list[Edge] = []
+    errors: list[str] = []
+    for rel in PERSONAL_RELATIONS:
+        raw = e.meta.get(rel)
+        if raw is None:
+            continue
+        if not isinstance(raw, list):
+            errors.append(f"`{rel}` 必须是列表")
+            continue
+        for item in raw:
+            if isinstance(item, str):
+                if item.strip():
+                    edges.append(Edge(rel, item, {}))
+                else:
+                    errors.append(f"`{rel}` 的 id 不能是空串")
+                continue
+            if not isinstance(item, dict):
+                errors.append(f"`{rel}` 的元素必须是 id 或对象")
+                continue
+            target = item.get("id")
+            if not isinstance(target, str) or not target.strip():
+                errors.append(f"`{rel}` 的对象式元素必须含字符串 `id`")
+                continue
+            extra = sorted(set(item) - {"id", *PERSONAL_RELATION_ATTRS})
+            if extra:
+                errors.append(f"`{rel}` 关系属性 `{extra[0]}` 未定义"
+                              f"（允许 {'、'.join(PERSONAL_RELATION_ATTRS)}）")
+            attrs: dict[str, str] = {}
+            for key in PERSONAL_RELATION_ATTRS:
+                if key not in item:
+                    continue
+                if not isinstance(item[key], str):
+                    errors.append(f"`{rel}` 的 `{key}` 必须是字符串")
+                else:
+                    attrs[key] = item[key]
+            edges.append(Edge(rel, target, attrs))
+    return edges, errors
+
+
 @dataclass
 class Finding:
     rule: str
@@ -191,7 +251,11 @@ class Entry(shared_model.Entry):
         """
         errs = [Finding("CL104", "error", self.rel, e.msg)
                 for e in self.relation_shape_errors]
-        return list(self.relations), errs
+        edges = list(self.relations)
+        personal, perrors = _personal_relation_edges(self)
+        edges.extend(personal)
+        errs.extend(Finding("CL104", "error", self.rel, msg) for msg in perrors)
+        return edges, errs
 
 
 def parse_entry(path: Path, root: Path) -> Entry:
@@ -237,6 +301,54 @@ def _demand_findings(e: Entry) -> list[Finding]:
         for key in spec:
             if key not in ("amount", "unit"):
                 bad(f"`demand.{what}` 不接受字段 `{key}`")
+    return findings
+
+
+def _timeline_fields_for(kind: str) -> set[str]:
+    return TIMELINE_MOMENT_FIELDS if kind == "moment" else TIMELINE_SHIFT_FIELDS
+
+
+def timeline_schema_findings(e: Entry) -> list[Finding]:
+    """CL109：时间线条目格式（协议 §2.6）。只审 `type: moment` / `type: shift`。"""
+    kind = e.meta.get("type")
+    if kind not in TIMELINE_TYPES:
+        return []
+    findings: list[Finding] = []
+
+    def bad(msg: str) -> None:
+        findings.append(Finding("CL109", "error", e.rel, msg))
+
+    allowed = _timeline_fields_for(kind)
+    for key in e.meta:
+        if key in TIMELINE_FIELDS and key not in allowed:
+            bad(f"{kind} 不接受字段 `{key}`")
+    if kind == "moment":
+        if not _is_finite_number(e.meta.get("at")):
+            bad("`at` 必须是数字（世界内时间轴，越大越晚）")
+        if not _nonempty_str(e.meta.get("text")):
+            bad("`text` 必须是非空字符串（事件描述）")
+        affects = e.meta.get("affects")
+        if not isinstance(affects, list) or not affects:
+            bad("`affects` 必须是非空列表（受影响实体的 id）")
+        else:
+            for item in affects:
+                if not _nonempty_str(item):
+                    bad("`affects` 的元素必须是字符串 id")
+    else:
+        for key in ("begin", "end"):
+            if not _is_finite_number(e.meta.get(key)):
+                bad(f"`{key}` 必须是数字（区间端点）")
+        begin, end = e.meta.get("begin"), e.meta.get("end")
+        if _is_finite_number(begin) and _is_finite_number(end) and begin > end:
+            bad("`begin` 不能晚于 `end`")
+        for key in ("change", "before", "after"):
+            if not _nonempty_str(e.meta.get(key)):
+                bad(f"`{key}` 必须是非空字符串")
+    source = e.meta.get("source")
+    if source is not None and not _nonempty_str(source):
+        bad("`source` 必须是字符串 id（第一条目世界外历史/设定来源，不进时间线）")
+    if "note" in e.meta and not isinstance(e.meta["note"], str):
+        bad("`note` 必须是字符串")
     return findings
 
 
@@ -329,6 +441,9 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
                 # 需求侧字段只在非 flow 的条目上合法（§2.4）：写进流量卡仍是 CL103。
                 if e.meta.get("type") != "flow" and k in FLOW_ENTITY_FIELDS:
                     continue
+                # 时间线字段只在对应类型上合法（§2.6）：moment 写 begin、shift 写 at 仍是 CL103。
+                if e.meta.get("type") in TIMELINE_TYPES and k in TIMELINE_FIELDS:
+                    continue
                 findings.append(Finding("CL103", "error", e.rel,
                                         f"未定义字段 `{k}`（扩展字段须 x- 前缀）"))
         # CL107：关系名拼写近失。存储层已经把这条边**按规范名建好**（所以 PE 族判得到
@@ -342,6 +457,7 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
                     f"关系名 `{raw_name}` 与规范名 `{near}` 只差一个字符，疑似拼写错误，"
                     f"已按 `{near}` 判定；确是新关系请改用其它名字或加 `x-` 前缀"))
         findings.extend(flow_schema_findings(e))
+        findings.extend(timeline_schema_findings(e))
         if e.id is not None and not ID_RE.match(e.id):
             findings.append(Finding("CL102", "error", e.rel,
                                     f"id={e.id!r} 非法（仅允许小写字母/数字/连字符）"))
@@ -777,6 +893,74 @@ def pe008(world: World, emit) -> None:
              f"在供养 `{src}`——镇压自己的供养来源")
 
 
+def _personal_edge(world: World, a: str, b: str, rel: str):
+    """个人关系是语境边，方向不承诺：A↔B 任一方向有这条关系就算数。"""
+    for src, edge, _r in world.edges:
+        if edge.rel != rel:
+            continue
+        if (src == a and edge.target == b) or (src == b and edge.target == a):
+            return edge
+    return None
+
+
+@rule("PE013", "warning", "亲情与镇压矛盾：被镇压的供养者与镇压者有亲缘")
+def pe013(world: World, emit) -> None:
+    for src, e, src_rel in world.edges_of("coerces"):
+        if e.target not in world.index:
+            continue
+        if world.find_edge(src, {"depends_on"}, e.target) is None:
+            continue
+        kin = _personal_edge(world, src, e.target, "kin")
+        if kin is None:
+            continue
+        label = (kin.attrs.get("what") or "").strip()
+        note = f"`{label}`" if label else "亲缘"
+        emit("warning", src_rel,
+             f"亲情与镇压矛盾：`{src}` 镇压供养自己的 `{e.target}`（PE002 报的结构矛盾），"
+             f"但双方有{note}关系——私人关系可能让镇压被容忍或延迟，审计不应按纯经济人读")
+
+
+@rule("PE014", "warning", "庇护关系可能缓冲危机：抽取者与被抽取者有效忠关系")
+def pe014(world: World, emit) -> None:
+    logistics = _flow_entries(world, "logistics")
+    for f in logistics:
+        what, trend = f.meta.get("what"), f.meta.get("trend")
+        if what not in ("tax", "tribute") or trend != "rising":
+            continue
+        frm, to = f.meta.get("from"), f.meta.get("to")
+        if frm not in world.index or to not in world.index:
+            continue
+        # 只在 PE006 的触发面上报：被抽取方有需求且同单位余量 < 10%。
+        demand = _demand_of(world, frm)
+        crisis = None
+        for dwhat in sorted(demand):
+            spec = demand[dwhat]
+            if not isinstance(spec, dict):
+                continue
+            amount, unit = spec.get("amount"), spec.get("unit")
+            if not (_is_finite_number(amount) and _nonempty_str(unit)):
+                continue
+            inflow = sum(x.meta["amount"] for x in logistics
+                         if x.meta.get("to") == frm and x.meta.get("what") == dwhat
+                         and x.meta.get("unit") == unit)
+            if inflow >= amount and inflow < amount * 1.1:
+                crisis = (dwhat, amount, unit, inflow)
+                break
+        if crisis is None:
+            continue
+        allegiance = _personal_edge(world, frm, to, "allegiance")
+        if allegiance is None:
+            continue
+        dwhat, amount, unit, inflow = crisis
+        label = (allegiance.attrs.get("what") or "").strip()
+        note = f"`{label}`" if label else "效忠"
+        margin = (inflow - amount) / amount if amount else 0.0
+        emit("warning", f.rel,
+             f"庇护关系可能缓冲危机：`{to}` 从 `{frm}` 抽取 `{what}`（线在 rising），"
+             f"而 `{frm}` 的 `{dwhat}` 只剩 {margin:.0%} 余量，但双方有{note}关系"
+             f"——危机可能被庇护网络吸收，不应按纯市场读")
+
+
 def load_entity_aliases(root: Path, index: dict[str, Entry]) -> dict[str, str]:
     path = root / "codex" / "entities.yaml"
     if not path.is_file():
@@ -920,6 +1104,21 @@ def run_checks(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]
         if e.target not in index:
             findings.append(Finding("CL105", "error", src_rel,
                                     f"{e.rel} 目标 `{e.target}` 不存在"))
+    # CL105（时间线层，协议 v0.6）：source 与 affects 也是跨条目引用，悬空同样要报。
+    for e in entries:
+        if e.meta.get("type") not in TIMELINE_TYPES:
+            continue
+        source = e.meta.get("source")
+        if isinstance(source, str) and source not in index:
+            findings.append(Finding("CL105", "error", e.rel,
+                                    f"时间线来源 `{source}` 不存在"))
+        affects = e.meta.get("affects")
+        if isinstance(affects, list):
+            for target in affects:
+                if isinstance(target, str) and target not in index:
+                    findings.append(Finding("CL105", "error", e.rel,
+                                            f"时间线受影响实体 `{target}` 不存在"))
+
     # CL105（流量层，协议 v0.2）：流量条目的 from/to 也是跨条目引用，悬空同样要报。
     for e in entries:
         if e.meta.get("type") != "flow":

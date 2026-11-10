@@ -9,7 +9,7 @@ from . import structure
 
 PACK = Pack(
     name="core-cl",
-    version="0.2",
+    version="0.3",
     engine="classlint",
     ca106_fields=frozenset(),
     rules=(
@@ -40,6 +40,9 @@ PACK = Pack(
         Rule(id="CL108", pack="core-cl", scope="entry", entry_domain="all_entries",
              check=structure.check_cl108, default_level="error",
              levels=frozenset({"error"}), order=108),
+        Rule(id="CL109", pack="core-cl", scope="entry", entry_domain="all_entries",
+             check=structure.check_cl109, default_level="error",
+             levels=frozenset({"error"}), order=109),
     ),
 )
 
@@ -80,6 +83,7 @@ def apply_core_cl(pack: Pack, entries, index, model, known_fields, emit) -> None
         run_entry("CL103", entry, known_fields=known_fields)
         run_entry("CL107", entry)
         run_entry("CL108", entry)
+        run_entry("CL109", entry)
         run_entry("CL102", entry, index=index)
         run_entry("CL104", entry)
     for entry in entries:

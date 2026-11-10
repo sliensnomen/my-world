@@ -75,6 +75,30 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("PE007", "warning", "codex/town.md"),  # 人口 rising 流入 + owns 关系未变
         ("PE008", "error", "codex/lord.md"),    # 领主镇压供养自己的城镇
     ],
+    # 个人关系层（协议 v0.5）：PE013/PE014 与 CL104 形状
+    "personal-bad": [
+        ("PE002", "error", "codex/lord.md"),     # 镇压供养者（critical 依赖）
+        ("PE006", "warning", "codex/town.md"),   # 顺带触发的危机积累
+        ("PE008", "error", "codex/lord.md"),     # 顺带触发的镇压自己的基础
+        ("PE013", "warning", "codex/lord.md"),   # 亲情与镇压矛盾（kin 兄弟）
+        ("PE014", "warning", "codex/flow-tax-out.md"),  # 庇护关系缓冲危机
+    ],
+    "personal-clean": [],
+    # 时间线层（协议 v0.6）：CL109 形状 + CL105 悬空
+    "timeline-clean": [],
+    "timeline-bad": [
+        ("CL109", "error", "codex/bad-at.md"),           # at 不是数字
+        ("CL109", "error", "codex/bad-moment-field.md"), # moment 写 begin
+        ("CL109", "error", "codex/bad-affects.md"),      # affects 为空
+        ("CL109", "error", "codex/bad-shift-range.md"),  # begin > end
+        ("CL109", "error", "codex/bad-shift-field.md"),  # shift 写 at
+        ("CL105", "error", "codex/bad-source.md"),       # source 悬空
+        ("CL105", "error", "codex/bad-affects-ref.md"),  # affects 悬空
+    ],
+    "personal-shape-bad": [
+        ("CL104", "error", "codex/plain-kin.md"),  # `kin` 不是列表
+        ("CL104", "error", "codex/bad-attr.md"),   # 未定义属性 `strength`
+    ],
     "flow-bad": [
         ("CL103", "error", "codex/bad-plain-field.md"),  # 普通条目写 line
         ("CL103", "error", "codex/bad-plain-field.md"),  # 普通条目写 amount
@@ -648,17 +672,18 @@ def check_registry_cl_pe_dual_run() -> int:
     try:
         registry = select_packs("classlint", ["core-cl", "pe"])
         core, pe = registry.selected
-        expect([r.id for r in core.rules] == [f"CL{n}" for n in range(100, 109)],
-               f"core-cl 必须逐规则登记 CL100–CL108：{[r.id for r in core.rules]}")
+        expect([r.id for r in core.rules] == [f"CL{n}" for n in range(100, 110)],
+               f"core-cl 必须逐规则登记 CL100–CL109：{[r.id for r in core.rules]}")
         expect([r.id for r in pe.rules] == ["PE001", "PE002", "PE003", "PE004", "PE005",
                                             "PE006", "PE007", "PE008",
-                                            "PE009", "PE010", "PE011", "PE012"],
-               f"pe 必须按原顺序登记十二条规则：{[r.id for r in pe.rules]}")
+                                            "PE009", "PE010", "PE011", "PE012",
+                                            "PE013", "PE014"],
+               f"pe 必须按原顺序登记十四条规则：{[r.id for r in pe.rules]}")
         expect(core.ca106_fields == frozenset() and pe.ca106_fields == frozenset(),
                "classlint 的 CL103 私有字段政策不得写进 ca106_fields")
         expect(all(r.scope == "entry" and r.entry_domain == "all_entries"
                    for r in core.rules if r.id != "CL105"),
-               "CL100–CL104/106/107/108 必须逐条目遍历 all_entries（含被遮蔽条目）")
+               "CL100–CL104/106/107/108/109 必须逐条目遍历 all_entries（含被遮蔽条目）")
     except Exception as exc:
         expect(False, f"classlint Registry Pack 应可独立加载：{type(exc).__name__}: {exc}")
 
@@ -704,12 +729,14 @@ def check_registry_cl_pe_dual_run() -> int:
             new = _capture_backend(world, "registry", operation)
             expect(old == new, f"{len(worlds)} 世界/{world.name}/{label}：CLI 双跑不同")
 
-    cl_rules = {f"CL{n}" for n in range(100, 109)}
+    cl_rules = {f"CL{n}" for n in range(100, 110)}
     compare_world("CL 真阴性", TESTS / "clean", forbidden=cl_rules)
     compare_world("CL101–CL105 真阳性", TESTS / "structure-bad",
                   expected={"CL101", "CL102", "CL103", "CL104", "CL105"})
     compare_world("CL108 真阳性", TESTS / "flow-bad", expected={"CL108"})
     compare_world("CL108 真阴性", TESTS / "flow-clean", forbidden=cl_rules)
+    compare_world("CL109 真阳性", TESTS / "timeline-bad", expected={"CL109"})
+    compare_world("CL109 真阴性", TESTS / "timeline-clean", forbidden=cl_rules)
     for name, rule in (("pe001", "PE001"), ("pe002", "PE002"), ("pe003", "PE003")):
         compare_world(f"{rule} 真阳性", TESTS / f"{name}-bad", expected={rule})
         compare_world(f"{rule} 真阴性", TESTS / f"{name}-ok", forbidden={rule})
@@ -727,6 +754,10 @@ def check_registry_cl_pe_dual_run() -> int:
                   expected={"PE006", "PE007", "PE008"})
     compare_world("PE006–PE008 真阴性", TESTS / "flow-clean",
                   forbidden={"PE006", "PE007", "PE008"})
+    compare_world("PE013–PE014 真阳性", TESTS / "personal-bad",
+                  expected={"PE013", "PE014"})
+    compare_world("PE013–PE014 真阴性", TESTS / "personal-clean",
+                  forbidden={"PE013", "PE014"})
 
     with tempfile.TemporaryDirectory() as td:
         world = Path(td)
@@ -910,7 +941,7 @@ def check_registry_cl_pe_dual_run() -> int:
         expect(old == new, "init 后首次 check 双跑不同")
 
     if not failures:
-        print("PASS core-cl/pe 双跑：21 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
+        print("PASS core-cl/pe 双跑：24 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
     return failures
 
 

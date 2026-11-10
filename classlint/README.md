@@ -17,7 +17,7 @@ id 语法、frontmatter 切分、契约词表、关系名归一化都在 [`store
 另外那处真实分歧被收成了**一个开关**（`Entry.depends_on_requires_annotations`，canonlint 开、
 classlint 关），不是两份建边代码——所以它改的时候只有一个地方要改。
 
-**状态：生产关系层已完成（PE001–PE008 + `graph` + `--impact`）；流量层的四线数据模型（CL108）、守恒律（PE010–PE012 + `demand`/`population`）与交叉规则（PE006–PE008）已就绪，本版 PE 共 PE001–PE012。**
+**状态：生产关系层已完成（PE001–PE008 + `graph` + `--impact`）；流量层的四线数据模型（CL108）、守恒律（PE010–PE012 + `demand`/`population`）、交叉规则（PE006–PE008）与个人关系层（PE013/PE014 + 五种个人关系）已就绪，本版 PE 共 PE001–PE014。**
 PE004/PE005 的定量回填尚未做——排期见 [ROADMAP.md](ROADMAP.md)。
 
 ## 用法
@@ -34,7 +34,7 @@ python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（
 
 退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误（含指错目录与非法 `WGP_JUDGE_BACKEND`）；`3` 判定通过，但有 PE 规则被 `rules: off` 关掉——「通过」只覆盖仍开着的规则，确认是有意关闭的加 `--accept-disabled-rules` 才回到 0（见 [PROTOCOL.md](PROTOCOL.md) §4）。
 
-判定默认由 Registry 的 `core-cl` 与 `pe` 两个 Pack 执行：CL100–CL108 逐规则注册，扫描/建索引与判定分离，PE 保持编号顺序和 `rules: off` 语义。紧急回退使用 `WGP_JUDGE_BACKEND=legacy python3 classlint/classlint.py check <仓库>`；legacy 仍保留，尚未到发布周期后的删除签核阶段。
+判定默认由 Registry 的 `core-cl` 与 `pe` 两个 Pack 执行：CL100–CL109 逐规则注册，扫描/建索引与判定分离，PE 保持编号顺序和 `rules: off` 语义。紧急回退使用 `WGP_JUDGE_BACKEND=legacy python3 classlint/classlint.py check <仓库>`；legacy 仍保留，尚未到发布周期后的删除签核阶段。
 
 ### `--json` 输出字段（`check --json`）
 
@@ -62,7 +62,7 @@ PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以�
 
 报告级输出（永不进退出码）：`classlint graph <仓库> [--format dot|json]` 关系图；`classlint check <仓库> --impact ID...` 下游影响报告。
 
-测试：`python3 classlint/tests/run_tests.py`（22 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
+测试：`python3 classlint/tests/run_tests.py`（27 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
 
 ## 世界仓库结构
 
