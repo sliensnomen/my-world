@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""classlint — 马克思主义政治经济学审计工具，协议 v0.5（生产关系层 + 流量层 + 个人关系层语境）
+"""classlint — 马克思主义政治经济学审计工具，协议 v0.6（生产关系层 + 流量层 + 个人关系层语境 + 时间线层）
 
 用马克思主义政治经济学的规则，审计一个虚构世界的结构。
 Git + Markdown 是唯一事实来源：条目 = codex/ 下一个带 YAML frontmatter 的 Markdown 文件。
@@ -34,7 +34,7 @@ if str(_ROOT) not in sys.path:
 from store import model as shared_model  # noqa: E402
 from store import parse as shared  # noqa: E402
 
-VERSION = "0.5"
+VERSION = "0.6"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 
@@ -99,6 +99,14 @@ FLOW_LINE_FIELDS = {
 }
 FLOW_FIELDS = set(FLOW_COMMON_FIELDS) | set().union(*FLOW_LINE_FIELDS.values())
 FLOW_TRENDS = ("rising", "flat", "falling")
+
+# ---- 时间线层（协议 v0.6） -----------------------------------------------------
+# 世界内历史：点事件与结构变迁。不是 canonlint 的 `type: event`（那是事件流水，
+# 带 event_kind 与必填腿）；时间线条目只回答「什么时候、发生了什么、牵动谁」。
+TIMELINE_TYPES = ("moment", "shift")
+TIMELINE_MOMENT_FIELDS = {"at", "text", "affects", "source", "note"}
+TIMELINE_SHIFT_FIELDS = {"begin", "end", "change", "before", "after", "source", "note"}
+TIMELINE_FIELDS = (TIMELINE_MOMENT_FIELDS | TIMELINE_SHIFT_FIELDS) - {"note"}
 
 # ---- 需求侧数据模型（协议 v0.3，给 Sprint 5 的守恒律用）------------------------
 # 实体卡可以声明自己的需求（`demand: {what: {amount, unit}}`）与人口基数
@@ -296,6 +304,54 @@ def _demand_findings(e: Entry) -> list[Finding]:
     return findings
 
 
+def _timeline_fields_for(kind: str) -> set[str]:
+    return TIMELINE_MOMENT_FIELDS if kind == "moment" else TIMELINE_SHIFT_FIELDS
+
+
+def timeline_schema_findings(e: Entry) -> list[Finding]:
+    """CL109：时间线条目格式（协议 §2.6）。只审 `type: moment` / `type: shift`。"""
+    kind = e.meta.get("type")
+    if kind not in TIMELINE_TYPES:
+        return []
+    findings: list[Finding] = []
+
+    def bad(msg: str) -> None:
+        findings.append(Finding("CL109", "error", e.rel, msg))
+
+    allowed = _timeline_fields_for(kind)
+    for key in e.meta:
+        if key in TIMELINE_FIELDS and key not in allowed:
+            bad(f"{kind} 不接受字段 `{key}`")
+    if kind == "moment":
+        if not _is_finite_number(e.meta.get("at")):
+            bad("`at` 必须是数字（世界内时间轴，越大越晚）")
+        if not _nonempty_str(e.meta.get("text")):
+            bad("`text` 必须是非空字符串（事件描述）")
+        affects = e.meta.get("affects")
+        if not isinstance(affects, list) or not affects:
+            bad("`affects` 必须是非空列表（受影响实体的 id）")
+        else:
+            for item in affects:
+                if not _nonempty_str(item):
+                    bad("`affects` 的元素必须是字符串 id")
+    else:
+        for key in ("begin", "end"):
+            if not _is_finite_number(e.meta.get(key)):
+                bad(f"`{key}` 必须是数字（区间端点）")
+        begin, end = e.meta.get("begin"), e.meta.get("end")
+        if _is_finite_number(begin) and _is_finite_number(end) and begin > end:
+            bad("`begin` 不能晚于 `end`")
+        for key in ("change", "before", "after"):
+            if not _nonempty_str(e.meta.get(key)):
+                bad(f"`{key}` 必须是非空字符串")
+    source = e.meta.get("source")
+    if source is not None and not _nonempty_str(source):
+        bad("`source` 必须是字符串 id（第一条目世界外历史/设定来源，不进时间线）")
+    if "note" in e.meta and not isinstance(e.meta["note"], str):
+        bad("`note` 必须是字符串")
+    return findings
+
+
 def flow_schema_findings(e: Entry) -> list[Finding]:
     """CL108：流量条目的四线 schema（协议 §2.3）与实体卡需求声明（§2.4）。
 
@@ -385,6 +441,9 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
                 # 需求侧字段只在非 flow 的条目上合法（§2.4）：写进流量卡仍是 CL103。
                 if e.meta.get("type") != "flow" and k in FLOW_ENTITY_FIELDS:
                     continue
+                # 时间线字段只在对应类型上合法（§2.6）：moment 写 begin、shift 写 at 仍是 CL103。
+                if e.meta.get("type") in TIMELINE_TYPES and k in TIMELINE_FIELDS:
+                    continue
                 findings.append(Finding("CL103", "error", e.rel,
                                         f"未定义字段 `{k}`（扩展字段须 x- 前缀）"))
         # CL107：关系名拼写近失。存储层已经把这条边**按规范名建好**（所以 PE 族判得到
@@ -398,6 +457,7 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
                     f"关系名 `{raw_name}` 与规范名 `{near}` 只差一个字符，疑似拼写错误，"
                     f"已按 `{near}` 判定；确是新关系请改用其它名字或加 `x-` 前缀"))
         findings.extend(flow_schema_findings(e))
+        findings.extend(timeline_schema_findings(e))
         if e.id is not None and not ID_RE.match(e.id):
             findings.append(Finding("CL102", "error", e.rel,
                                     f"id={e.id!r} 非法（仅允许小写字母/数字/连字符）"))
@@ -1044,6 +1104,21 @@ def run_checks(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]
         if e.target not in index:
             findings.append(Finding("CL105", "error", src_rel,
                                     f"{e.rel} 目标 `{e.target}` 不存在"))
+    # CL105（时间线层，协议 v0.6）：source 与 affects 也是跨条目引用，悬空同样要报。
+    for e in entries:
+        if e.meta.get("type") not in TIMELINE_TYPES:
+            continue
+        source = e.meta.get("source")
+        if isinstance(source, str) and source not in index:
+            findings.append(Finding("CL105", "error", e.rel,
+                                    f"时间线来源 `{source}` 不存在"))
+        affects = e.meta.get("affects")
+        if isinstance(affects, list):
+            for target in affects:
+                if isinstance(target, str) and target not in index:
+                    findings.append(Finding("CL105", "error", e.rel,
+                                            f"时间线受影响实体 `{target}` 不存在"))
+
     # CL105（流量层，协议 v0.2）：流量条目的 from/to 也是跨条目引用，悬空同样要报。
     for e in entries:
         if e.meta.get("type") != "flow":

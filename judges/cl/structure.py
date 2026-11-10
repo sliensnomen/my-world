@@ -22,6 +22,16 @@ FLOW_TRENDS = ("rising", "flat", "falling")
 
 # 需求侧数据模型（协议 v0.3）：`demand`/`population` 只允许出现在非 flow 条目上。
 FLOW_ENTITY_FIELDS = {"demand", "population"}
+# ---- 时间线层（协议 v0.6） -----------------------------------------------------
+TIMELINE_TYPES = ("moment", "shift")
+TIMELINE_MOMENT_FIELDS = {"at", "text", "affects", "source", "note"}
+TIMELINE_SHIFT_FIELDS = {"begin", "end", "change", "before", "after", "source", "note"}
+TIMELINE_FIELDS = (TIMELINE_MOMENT_FIELDS | TIMELINE_SHIFT_FIELDS) - {"note"}
+
+
+def _timeline_fields_for(kind):
+    return TIMELINE_MOMENT_FIELDS if kind == "moment" else TIMELINE_SHIFT_FIELDS
+
 
 
 def _is_finite_number(value) -> bool:
@@ -65,6 +75,51 @@ def _demand_errors(entry) -> list[str]:
             if key not in ("amount", "unit"):
                 errors.append(f"`demand.{what}` 不接受字段 `{key}`")
     return errors
+
+
+def timeline_schema_errors(entry) -> list[str]:
+    """CL109 的全部消息：时间线条目格式（协议 §2.6）。"""
+    kind = entry.meta.get("type")
+    if kind not in TIMELINE_TYPES:
+        return []
+    errors: list[str] = []
+    allowed = _timeline_fields_for(kind)
+    for key in entry.meta:
+        if key in TIMELINE_FIELDS and key not in allowed:
+            errors.append(f"{kind} 不接受字段 `{key}`")
+    if kind == "moment":
+        if not _is_finite_number(entry.meta.get("at")):
+            errors.append("`at` 必须是数字（世界内时间轴，越大越晚）")
+        if not _nonempty_str(entry.meta.get("text")):
+            errors.append("`text` 必须是非空字符串（事件描述）")
+        affects = entry.meta.get("affects")
+        if not isinstance(affects, list) or not affects:
+            errors.append("`affects` 必须是非空列表（受影响实体的 id）")
+        else:
+            for item in affects:
+                if not _nonempty_str(item):
+                    errors.append("`affects` 的元素必须是字符串 id")
+    else:
+        for key in ("begin", "end"):
+            if not _is_finite_number(entry.meta.get(key)):
+                errors.append(f"`{key}` 必须是数字（区间端点）")
+        begin, end = entry.meta.get("begin"), entry.meta.get("end")
+        if _is_finite_number(begin) and _is_finite_number(end) and begin > end:
+            errors.append("`begin` 不能晚于 `end`")
+        for key in ("change", "before", "after"):
+            if not _nonempty_str(entry.meta.get(key)):
+                errors.append(f"`{key}` 必须是非空字符串")
+    source = entry.meta.get("source")
+    if source is not None and not _nonempty_str(source):
+        errors.append("`source` 必须是字符串 id（第一条目世界外历史/设定来源，不进时间线）")
+    if "note" in entry.meta and not isinstance(entry.meta["note"], str):
+        errors.append("`note` 必须是字符串")
+    return errors
+
+
+def check_cl109(entry, rel, add) -> None:
+    for error in timeline_schema_errors(entry):
+        add("error", error)
 
 
 def flow_schema_errors(entry) -> list[str]:
@@ -164,6 +219,9 @@ def check_cl103(entry, rel, add, known_fields) -> None:
             # 需求侧字段只在非 flow 的条目上合法（协议 v0.3 §2.4）。
             if entry.meta.get("type") != "flow" and key in FLOW_ENTITY_FIELDS:
                 continue
+            # 时间线字段只在对应类型上合法（协议 v0.6 §2.6）。
+            if entry.meta.get("type") in TIMELINE_TYPES and key in TIMELINE_FIELDS:
+                continue
             add("error", f"未定义字段 `{key}`（扩展字段须 x- 前缀）")
 
 
@@ -178,6 +236,19 @@ def check_cl105(context, emit) -> None:
     for _src, edge, src_rel in model.edges:
         if edge.target not in index:
             emit("error", src_rel, f"{edge.rel} 目标 `{edge.target}` 不存在")
+    # 时间线条目的 source/affects 同样是跨条目引用（协议 v0.6 §2.6）。
+    for entry in context["all_entries"]:
+        if entry.meta.get("type") not in TIMELINE_TYPES:
+            continue
+        source = entry.meta.get("source")
+        if isinstance(source, str) and source not in index:
+            emit("error", entry.rel, f"时间线来源 `{source}` 不存在")
+        affects = entry.meta.get("affects")
+        if isinstance(affects, list):
+            for target in affects:
+                if isinstance(target, str) and target not in index:
+                    emit("error", entry.rel, f"时间线受影响实体 `{target}` 不存在")
+
     # 流量条目的 from/to 同样是跨条目引用（协议 v0.2 §2.3）。
     for entry in context["all_entries"]:
         if entry.meta.get("type") != "flow":
