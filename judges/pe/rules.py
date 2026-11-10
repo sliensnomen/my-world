@@ -234,3 +234,74 @@ def check_pe012(world, emit) -> None:
             emit(None, flow.rel,
                  f"人口律：`{frm}` 与 `{to}` 都没有声明 population——流失规模无法对账"
                  f"（给至少一端加 population）")
+
+
+def check_pe006(world, emit) -> None:
+    """危机积累：剩余刚好够活 + 抽取在上升。"""
+    logistics = _flow_entries(world, "logistics")
+    for entry in world.entries:
+        if entry.id is None or entry.meta.get("type") == "flow":
+            continue
+        demand = entry.meta.get("demand")
+        if not isinstance(demand, dict):
+            continue
+        extraction = sorted((flow for flow in logistics
+                             if flow.meta.get("from") == entry.id
+                             and flow.meta.get("what") in ("tax", "tribute")
+                             and flow.meta.get("trend") == "rising"),
+                            key=lambda flow: flow.id or "")
+        if not extraction:
+            continue
+        for what in sorted(demand):
+            spec = demand[what]
+            if not isinstance(spec, dict):
+                continue
+            amount, unit = spec.get("amount"), spec.get("unit")
+            if not (_is_finite_number(amount) and _nonempty_str(unit)):
+                continue
+            inflow = sum(flow.meta["amount"] for flow in logistics
+                         if flow.meta.get("to") == entry.id and flow.meta.get("what") == what
+                         and flow.meta.get("unit") == unit)
+            if not (inflow >= amount and inflow < amount * 1.1):
+                continue
+            flow = extraction[0]
+            margin = (inflow - amount) / amount if amount else 0.0
+            emit("warning", entry.rel,
+                 f"危机积累：`{entry.id}` 的 `{what}` 需求 {amount:g} {unit} 只有同单位流入 "
+                 f"{inflow:g} {unit}（余量 {margin:.0%}），而抽往 `{flow.meta.get('to')}` 的 "
+                 f"`{flow.meta.get('what')}` 线还在 rising——剩余刚好够活，抽取再加就断")
+            break
+
+
+def check_pe007(world, emit) -> None:
+    """结构性压力：人口在增长 + 占有关系未变。"""
+    growing = sorted({flow.meta.get("to") for flow in _flow_entries(world, "people")
+                      if flow.meta.get("trend") == "rising"
+                      and flow.meta.get("to") in world.index})
+    for eid in growing:
+        involved = any((src == eid or edge.target == eid)
+                       for src, edge, _rel in world.edges if edge.rel == "owns")
+        if not involved:
+            continue
+        emit("warning", world.index[eid].rel,
+             f"结构性压力：`{eid}` 人口在增长（people 流入 trend=rising），"
+             f"但占有关系未变——人多了，占有格局还是旧的")
+
+
+def check_pe008(world, emit) -> None:
+    """镇压自己的基础：暴力镇压的对象同时是物流供养来源。"""
+    logistics = _flow_entries(world, "logistics")
+    seen: set[tuple[str, str]] = set()
+    for src, edge, src_rel in world.edges_of("coerces"):
+        if edge.target not in world.index:
+            continue
+        key = (src, edge.target)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not any(flow.meta.get("from") == edge.target and flow.meta.get("to") == src
+                   for flow in logistics):
+            continue
+        emit("error", src_rel,
+             f"镇压自己的基础：`{src}` 镇压 `{edge.target}`，但 `{edge.target}` 的物流线"
+             f"在供养 `{src}`——镇压自己的供养来源")
