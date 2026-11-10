@@ -1,4 +1,4 @@
-# classlint 协议 · 生产关系层 + 流量层数据模型与守恒律 v0.3
+# classlint 协议 · 生产关系层 + 流量层数据模型、守恒律与交叉规则 v0.4
 
 **状态：草案 ｜ 日期：2026-09-24 ｜ 读者：协议实现者**
 **条款用词"必须/应当/可以"为规范性词汇，含义同 RFC 2119 的 MUST/SHOULD/MAY。**
@@ -108,7 +108,7 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 五值定集（v1.1
 | `line` | **必须** | `logistics` / `violence` / `information` / `people` 之一 |
 | `from` / `to` | **必须** | 起点/母体、终点/驻地的条目 id（同 §1.2，悬空由 CL105 报） |
 | `note` | 可选 | string |
-| `trend` | 可选 | `rising` / `flat` / `falling`；给 Sprint 6 的 PE006 用，时序层就位前由作者手工标注 |
+| `trend` | 可选 | `rising` / `flat` / `falling`；给 PE006（抽取在上升）与 PE007（人口在增长）用，时序层就位前由作者手工标注 |
 
 每条线的必填字段：
 
@@ -167,7 +167,7 @@ demand:
 
 1. 目标实体声明了 `demand`：同单位流入求和，`流入 < 需求` = error（断供）；流入存在但单位全都对不上 = warning（单位不可比，无法判定）；完全没有流入 = error（断供）。
 2. 目标实体没有声明 `demand`：这条流入无法对账 = warning——不静默。静默等于把「没写」判成「够用」，正是 CA704 在协议 1.10 之前 fail-open 的教训。
-3. `population` 只作为**估算依据**：目前不参与 PE010 的硬判定（Sprint 5 先做「有需求就判、没需求留痕」；人口推算的定量守恒留待 Sprint 6 交叉规则时再定口径）。
+3. `population` 是规模参照：PE012 用它判断人口流失的端点是否可对账；PE010 的硬判定仍只用 `demand`（人口推算的定量守恒仍未定口径，不冒充需求数）。
 4. `demand`/`population` 形状坏掉 = CL108（结构错误），PE010/PE012 不拿坏数据下判——否则会出现「用 0 参与求和」的误导性断供。
 
 信息时延律（信息线）需要事件时间，classlint 没有时间字段，**推后到 Sprint 8 时间线层**，本版不实现。
@@ -179,7 +179,7 @@ demand:
 | 段 | 类别 |
 |---|---|
 | CL1xx | 结构（解析/frontmatter/schema/引用存在性） |
-| PE0xx | 政治经济学规则（规划八条：本版已实现 PE001–PE005、PE009–PE012；PE006–PE008 属流量层交叉规则，待 Sprint 6；债务那条是生产关系层的新增，占下一个空号，不改已规划的编号） |
+| PE0xx | 政治经济学规则（规划八条：PE001–PE008 是核心，PE009 是生产关系层新增（占空号不改已规划编号），PE010–PE012 是流量层守恒律；本版已全部实现 PE001–PE012） |
 
 ### 3.2 结构规则（确定性）
 
@@ -204,6 +204,9 @@ demand:
 | PE003 | error | **合法性不得无锚闭环**：`legitimizes` 图的强连通分量（含自环）若没有任何来自分量外的 `legitimizes` 输入，报警。有外部锚点的互锁合法（依据：WGP v0.5 魔戒 dogfood，规范性互锁是常态）。**`derives_legitimacy_from` 写的那条也在这张图里**（翻译成反向的 `legitimizes`，判定与旧写法逐条相同）——名分是关系名，不再是 `depends_on` 的 `kind` 值 |
 | PE004 | error | **剩余必须收敛（定性版）**：`extracts` 子图存在环（含自环）——剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。定量判定（抽取量 vs 剩余量）待流量层数据就位后回填 |
 | PE005 | warning | **劳动者必须被覆盖（定性版）**：存在 `A —extracts→ B` 且 B 没有任何**物质**来源侧边——被抽取者的剩余/再生产在模型里不可见（隐形剥削嫌疑）。「物质来源侧边」= `extracts`、`exchanges_with`、或带物质类别 `kind`（`resource`/`production`/`economy`/`fiscal`/`manpower`，见 `world.schema.json` 的 `x-strict-vocabulary.depends_on.kind`）的 `depends_on`。一条裸 `depends_on`（无 kind，如 `depends_on: [weather]`）**不**消音：自然条件既不是生产关系也不承担再生产，消音必须是一次物质关系的声明。报在 B 侧：修法是补上带 kind 的物质来源，或确认 B 为终端生产者。定量判定待流量层回填 |
+| PE006 | warning | **危机积累**（v0.4）：实体卡声明了 `demand`，同单位流入 ≥ 需求但余量 < 10%（剩余刚好够活），且该实体有一条 `what` 为 `tax`/`tribute`、`trend: rising` 的物流外流（抽取在上升）——报在实体侧。其它自由词（`grain` 等）的上涨外流算贸易，不据此判危机；classlint 没有时间轴，`trend` 是作者标注的定性方向，不是增长率 |
+| PE007 | warning | **结构性压力**（v0.4）：`people` 流入某实体且 `trend: rising`（人口在增长），而该实体涉及 `owns` 关系（自己占有别人、或被别人占有——占有关系未变）——报在该实体侧。这是结构判据，不推算人口增长率 |
+| PE008 | error | **镇压自己的基础**（v0.4）：存在 `A —coerces→ B`，且物流线从 `B` 流向 `A`（B 在供养 A）——镇压对象同时是供养来源，报在 A 侧。PE002 的流量层结构版：PE002 看承重依赖，PE008 看实际物流 |
 | PE009 | warning | **债务必须收得回来**：存在 `A —owes→ B` 而模型里没有任何收账通道。通道有两条：**债主对债务人的支配**（`B —controls/coerces/extracts/legitimizes→ A` 任一条——能指挥、能强制、能抽取偿付、能撤回正当性），或**债务人对债主的承重依赖**（`A —depends_on→ B`，且这条依赖 `critical: true` 或带物质类别 `kind`：`resource`/`production`/`economy`/`fiscal`/`manpower`）。裸 `depends_on` 与 `x-` 实验类别不算通道。两条都没有 = 这笔债在模型里无法兑现，只是一句记账。报在 A 侧。注意 `owes` 与 `depends_on` 是两条不同的边（债务不等于供养），所以这里**不**因为写了 `owes` 就假定欠债方依赖债主——依赖得另外写出来 |
 | PE010 | error/warning | **物流守恒**（v0.3）：实体卡声明了 `demand` 时，同单位 `logistics` 流入之和必须 ≥ 需求，不够 = error（断供）；流入存在但单位全不可比 = warning；完全没流入 = error。目标没有声明该 `what` 的需求 = warning（这条流入无法对账，不静默）。`demand` 形状坏掉由 CL108 报，本条不判 |
 | PE011 | error | **补给律**（v0.3）：存在 `A —violence→ B` 但没有任何 `logistics` 流量以 `B` 为终点——驻军地没有物流线到达，军队跨线无补给（结构判据，不需要数值） |
@@ -246,4 +249,4 @@ rules:
 
 ## 5. 边界声明
 
-本层证明**结构完整性**，不证明数值自洽（抽取量是否真超过剩余）。数值审计属流量层：Sprint 4 做数据模型（CL108 四线流量 + demand/population），Sprint 5 做守恒律（PE010–PE012）——量是否守恒由 PE010–PE012 判；信息时延律需要事件时间，待 Sprint 8 时间线层。AI 辅助判断将来同样只递建议条子，永不进退出码。
+本层证明**结构完整性**，不证明数值自洽（抽取量是否真超过剩余）。数值审计属流量层：Sprint 4 做数据模型（CL108 四线流量 + demand/population），Sprint 5 做守恒律（PE010–PE012），Sprint 6 做交叉规则（PE006–PE008）——量是否守恒由 PE010–PE012 判，结构是否互相拆台由 PE006–PE008 判；信息时延律需要事件时间，待 Sprint 8 时间线层。AI 辅助判断将来同样只递建议条子，永不进退出码。

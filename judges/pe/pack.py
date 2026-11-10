@@ -9,7 +9,7 @@ from . import rules as pe_rules
 
 PACK = Pack(
     name="pe",
-    version="0.2",
+    version="0.3",
     engine="classlint",
     ca106_fields=frozenset(),
     rules=(
@@ -28,6 +28,15 @@ PACK = Pack(
         Rule(id="PE005", pack="pe", scope="world", entry_domain="",
              check=pe_rules.check_pe005, default_level="warning",
              levels=frozenset({"warning"}), order=5),
+        Rule(id="PE006", pack="pe", scope="world", entry_domain="",
+             check=pe_rules.check_pe006, default_level="warning",
+             levels=frozenset({"warning"}), order=6),
+        Rule(id="PE007", pack="pe", scope="world", entry_domain="",
+             check=pe_rules.check_pe007, default_level="warning",
+             levels=frozenset({"warning"}), order=7),
+        Rule(id="PE008", pack="pe", scope="world", entry_domain="",
+             check=pe_rules.check_pe008, default_level="error",
+             levels=frozenset({"error"}), order=8),
         Rule(id="PE009", pack="pe", scope="world", entry_domain="",
              check=pe_rules.check_pe009, default_level="warning",
              levels=frozenset({"warning"}), order=9),

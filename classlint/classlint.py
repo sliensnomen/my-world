@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""classlint — 马克思主义政治经济学审计工具，协议 v0.3（生产关系层 + 流量层数据模型与守恒律）
+"""classlint — 马克思主义政治经济学审计工具，协议 v0.4（生产关系层 + 流量层数据模型、守恒律与交叉规则）
 
 用马克思主义政治经济学的规则，审计一个虚构世界的结构。
 Git + Markdown 是唯一事实来源：条目 = codex/ 下一个带 YAML frontmatter 的 Markdown 文件。
-规则编号即协议：本文件实现 PROTOCOL.md 全部规则（CL1xx 结构 + PE001–PE005、PE009–PE012）。
+规则编号即协议：本文件实现 PROTOCOL.md 全部规则（CL1xx 结构 + PE001–PE012）。
 
 用法:
   classlint.py init [目录]        初始化世界仓库（目录结构 + classlint.yaml + git）
@@ -34,7 +34,7 @@ if str(_ROOT) not in sys.path:
 from store import model as shared_model  # noqa: E402
 from store import parse as shared  # noqa: E402
 
-VERSION = "0.3"
+VERSION = "0.4"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 
@@ -702,6 +702,79 @@ def pe012(world: World, emit) -> None:
             emit(None, p.rel,
                  f"人口律：`{frm}` 与 `{to}` 都没有声明 population——流失规模无法对账"
                  f"（给至少一端加 population）")
+
+
+@rule("PE006", "warning", "危机积累：剩余刚好够活 + 抽取在上升")
+def pe006(world: World, emit) -> None:
+    logistics = _flow_entries(world, "logistics")
+    for e in world.entries:
+        if e.id is None or e.meta.get("type") == "flow":
+            continue
+        demand = e.meta.get("demand")
+        if not isinstance(demand, dict):
+            continue
+        # 「抽取在增加」只认 tax/tribute 这两类协议建议词的外流；
+        # 其余自由词（grain 等）算贸易，不据此报危机积累。
+        extraction = sorted((f for f in logistics
+                             if f.meta.get("from") == e.id
+                             and f.meta.get("what") in ("tax", "tribute")
+                             and f.meta.get("trend") == "rising"),
+                            key=lambda f: f.id or "")
+        if not extraction:
+            continue
+        for what in sorted(demand):
+            spec = demand[what]
+            if not isinstance(spec, dict):
+                continue
+            amount, unit = spec.get("amount"), spec.get("unit")
+            if not (_is_finite_number(amount) and _nonempty_str(unit)):
+                continue
+            inflow = sum(f.meta["amount"] for f in logistics
+                         if f.meta.get("to") == e.id and f.meta.get("what") == what
+                         and f.meta.get("unit") == unit)
+            if not (inflow >= amount and inflow < amount * 1.1):
+                continue
+            f = extraction[0]
+            margin = (inflow - amount) / amount if amount else 0.0
+            emit("warning", e.rel,
+                 f"危机积累：`{e.id}` 的 `{what}` 需求 {amount:g} {unit} 只有同单位流入 "
+                 f"{inflow:g} {unit}（余量 {margin:.0%}），而抽往 `{f.meta.get('to')}` 的 "
+                 f"`{f.meta.get('what')}` 线还在 rising——剩余刚好够活，抽取再加就断")
+            break
+
+
+@rule("PE007", "warning", "结构性压力：人口在增长 + 占有关系未变")
+def pe007(world: World, emit) -> None:
+    growing = sorted({p.meta.get("to") for p in _flow_entries(world, "people")
+                      if p.meta.get("trend") == "rising"
+                      and p.meta.get("to") in world.index})
+    for eid in growing:
+        involved = any((s == eid or e.target == eid)
+                       for s, e, _r in world.edges if e.rel == "owns")
+        if not involved:
+            continue
+        emit("warning", world.index[eid].rel,
+             f"结构性压力：`{eid}` 人口在增长（people 流入 trend=rising），"
+             f"但占有关系未变——人多了，占有格局还是旧的")
+
+
+@rule("PE008", "error", "镇压自己的基础：暴力镇压的对象同时是物流供养来源")
+def pe008(world: World, emit) -> None:
+    logistics = _flow_entries(world, "logistics")
+    seen: set[tuple[str, str]] = set()
+    for src, e, src_rel in world.edges_of("coerces"):
+        if e.target not in world.index:
+            continue
+        key = (src, e.target)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not any(f.meta.get("from") == e.target and f.meta.get("to") == src
+                   for f in logistics):
+            continue
+        emit("error", src_rel,
+             f"镇压自己的基础：`{src}` 镇压 `{e.target}`，但 `{e.target}` 的物流线"
+             f"在供养 `{src}`——镇压自己的供养来源")
 
 
 def load_entity_aliases(root: Path, index: dict[str, Entry]) -> dict[str, str]:

@@ -69,6 +69,12 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("PE011", "error", "codex/rule-no-supply.md"),   # 驻军地没有任何物流线
         ("PE012", "warning", "codex/rule-no-endpoint.md"),  # 两端都没有 population
     ],
+    # 流量层交叉规则（协议 v0.4）：PE006–PE008 的真阳性样例
+    "flow-cross-bad": [
+        ("PE006", "warning", "codex/town.md"),  # 口粮余量 2%，税线还在 rising
+        ("PE007", "warning", "codex/town.md"),  # 人口 rising 流入 + owns 关系未变
+        ("PE008", "error", "codex/lord.md"),    # 领主镇压供养自己的城镇
+    ],
     "flow-bad": [
         ("CL103", "error", "codex/bad-plain-field.md"),  # 普通条目写 line
         ("CL103", "error", "codex/bad-plain-field.md"),  # 普通条目写 amount
@@ -645,8 +651,9 @@ def check_registry_cl_pe_dual_run() -> int:
         expect([r.id for r in core.rules] == [f"CL{n}" for n in range(100, 109)],
                f"core-cl 必须逐规则登记 CL100–CL108：{[r.id for r in core.rules]}")
         expect([r.id for r in pe.rules] == ["PE001", "PE002", "PE003", "PE004", "PE005",
+                                            "PE006", "PE007", "PE008",
                                             "PE009", "PE010", "PE011", "PE012"],
-               f"pe 必须按原顺序登记九条规则：{[r.id for r in pe.rules]}")
+               f"pe 必须按原顺序登记十二条规则：{[r.id for r in pe.rules]}")
         expect(core.ca106_fields == frozenset() and pe.ca106_fields == frozenset(),
                "classlint 的 CL103 私有字段政策不得写进 ca106_fields")
         expect(all(r.scope == "entry" and r.entry_domain == "all_entries"
@@ -716,6 +723,10 @@ def check_registry_cl_pe_dual_run() -> int:
                   expected={"PE010", "PE011", "PE012"})
     compare_world("PE010–PE012 真阴性", TESTS / "flow-clean",
                   forbidden={"PE010", "PE011", "PE012"})
+    compare_world("PE006–PE008 真阳性", TESTS / "flow-cross-bad",
+                  expected={"PE006", "PE007", "PE008"})
+    compare_world("PE006–PE008 真阴性", TESTS / "flow-clean",
+                  forbidden={"PE006", "PE007", "PE008"})
 
     with tempfile.TemporaryDirectory() as td:
         world = Path(td)
@@ -899,7 +910,7 @@ def check_registry_cl_pe_dual_run() -> int:
         expect(old == new, "init 后首次 check 双跑不同")
 
     if not failures:
-        print("PASS core-cl/pe 双跑：18 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
+        print("PASS core-cl/pe 双跑：21 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
     return failures
 
 
