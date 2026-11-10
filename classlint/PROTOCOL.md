@@ -1,4 +1,4 @@
-# classlint 协议 · 生产关系层 v0.1
+# classlint 协议 · 生产关系层 + 流量层数据模型 v0.2
 
 **状态：草案 ｜ 日期：2026-09-24 ｜ 读者：协议实现者**
 **条款用词"必须/应当/可以"为规范性词汇，含义同 RFC 2119 的 MUST/SHOULD/MAY。**
@@ -38,6 +38,8 @@ depends_on:
 | `x-*` | 可选 | 任意 | 扩展字段必须带 `x-` 前缀，审计器放行 |
 
 除上表与 `x-` 前缀字段外，任何字段**必须**被审计器拒绝（CL103）。
+
+例外只有一种：`type: flow` 的条目额外接受 §2.3 列的流量字段；同样的字段写进其它条目仍按 CL103 拒绝——流量字段的合法性由**条目类型**决定，不是把词表放宽。
 
 ### 1.2 引用语法
 
@@ -92,6 +94,51 @@ depends_on:
 
 WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 五值定集（v1.1 起 `legitimacy` 已搬成独立关系名 `derives_legitimacy_from`）；classlint 将二者降为可选、kind 改自由词汇——八层链与 kind 分族是 WGP 治理层的建模工具，classlint 的审计只关心边的存在性与方向。这条差异是契约 `x-stricter-than-contract` 登记过的，实现在存储层的**一个开关**上（`store/model.py` 的 `Entry.depends_on_requires_annotations`，本引擎置 `False`）——不是两份建边代码：边层（`Entry.relations` / `relation_shape_errors`）与 canonlint 共用同一份，`tests/test_store.py` 的「两个引擎建同一张边图」钉住它。
 
+
+### 2.3 流量层数据模型（v0.2）
+
+流量 = **`type: flow` 的 codex 条目**，声明一笔有方向的流量。四条线各有自己的必填字段，公共字段四条线一致。
+
+公共字段：
+
+| 字段 | 必填 | 约束 |
+|---|---|---|
+| `line` | **必须** | `logistics` / `violence` / `information` / `people` 之一 |
+| `from` / `to` | **必须** | 起点/母体、终点/驻地的条目 id（同 §1.2，悬空由 CL105 报） |
+| `note` | 可选 | string |
+| `trend` | 可选 | `rising` / `flat` / `falling`；给 Sprint 6 的 PE006 用，时序层就位前由作者手工标注 |
+
+每条线的必填字段：
+
+| `line` | 含义 | 本线必填字段 |
+|---|---|---|
+| `logistics` | 物流：粮食、税、贡赋 | `what`（自由词，建议 `grain`/`tax`/`tribute`）、`amount`（>0 的数字）、`unit`（非空字符串） |
+| `violence` | 暴力：驻军、补给半径 | `amount`（>0）、`unit`、`supply_radius`（≥0 的数字）、`radius_unit`（非空字符串） |
+| `information` | 信息：驿路、情报时延 | `delay`（≥0 的数字，日） |
+| `people` | 人员：迁徙、流放、朝圣 | `what`（自由词，建议 `migration`/`exile`/`pilgrimage`）、`amount`（>0）、`unit` |
+
+`amount` 这类数字字段必须是**有限数字**；`bool` 不算数字（YAML 的 `true` 解析成 bool，不能冒充 1）。写了别的线的字段（比如物流条目的 `delay`）同样非法。以上任何一条不满足 = CL108。
+
+```yaml
+---
+id: flow-grain
+title: 岁贡线
+type: flow
+line: logistics
+from: grain-store
+to: capital
+what: grain
+amount: 1200
+unit: 石
+trend: flat
+note: 每年秋后北仓解送
+---
+
+正文。
+```
+
+这一层只回答「这条流量表述是否完整」；「这条流量在数值上是否自洽」（流入够不够需求、军队跨线有没有补给）属于 Sprint 5 的守恒律，不在 v0.2 内。
+
 ## 3. 审计规则注册表
 
 ### 3.1 编号段
@@ -99,7 +146,7 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 五值定集（v1.1
 | 段 | 类别 |
 |---|---|
 | CL1xx | 结构（解析/frontmatter/schema/引用存在性） |
-| PE0xx | 政治经济学规则（规划八条：本版已实现 PE001–PE005 与 PE009；PE006–PE008 属流量层，待数据模型就位——债务那条是生产关系层的新增，占下一个空号，不改已规划的编号） |
+| PE0xx | 政治经济学规则（规划八条：本版已实现 PE001–PE005 与 PE009；PE006–PE008 属流量层——数据模型已就位（§2.3），待 Sprint 5–6 的守恒律/交叉规则；债务那条是生产关系层的新增，占下一个空号，不改已规划的编号） |
 
 ### 3.2 结构规则（确定性）
 
@@ -110,9 +157,10 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 五值定集（v1.1
 | CL102 | error | `id` 非法格式或全库重复 |
 | CL103 | error | 存在不带 `x-` 前缀的未定义字段 |
 | CL104 | error | 关系字段违反 §2.1 schema |
-| CL105 | error | 关系目标 `id` 不存在 |
+| CL105 | error | 关系目标 `id` 不存在（含流量条目的 `from`/`to`） |
 | CL106 | warning | 拆分前的旧写法（`depends_on` + `kind: legitimacy`）——已按新关系名判定，只在输出里提示改写法（同 canonlint 的 CA111） |
 | CL107 | warning | 关系名拼写近失：`relations[].type` 与某个规范名只差一个字符（去掉连字符/下划线后算，如 `extractss`、`depend_on`）。边**已按规范名建好**（所以 PE 族判得到它），本条只提示疑似拼写错误；距离 ≥2 的自定义关系名原样保留、不提示（同 canonlint 的 CA110） |
+| CL108 | error | 流量条目格式非法（§2.3）：`line` 缺失/非法、`from`/`to` 缺失或非字符串、本线必填字段不全或类型不对、写了别的线的字段、`trend` 不在词表、`note` 非字符串 |
 
 ### 3.3 政治经济学规则
 
@@ -162,4 +210,4 @@ rules:
 
 ## 5. 边界声明
 
-本层证明**结构完整性**，不证明数值自洽（抽取量是否真超过剩余）。数值审计属流量层（Sprint 4–6）。AI 辅助判断将来同样只递建议条子，永不进退出码。
+本层证明**结构完整性**，不证明数值自洽（抽取量是否真超过剩余）。数值审计属流量层：Sprint 4 只做数据模型（CL108），量是否守恒由 Sprint 5 的守恒律判。AI 辅助判断将来同样只递建议条子，永不进退出码。
