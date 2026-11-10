@@ -17,7 +17,7 @@ id 语法、frontmatter 切分、契约词表、关系名归一化都在 [`store
 另外那处真实分歧被收成了**一个开关**（`Entry.depends_on_requires_annotations`，canonlint 开、
 classlint 关），不是两份建边代码——所以它改的时候只有一个地方要改。
 
-**状态：生产关系层已完成（PE001–PE008 + `graph` + `--impact`）；流量层的四线数据模型（CL108）、守恒律（PE010–PE012 + `demand`/`population`）、交叉规则（PE006–PE008）与个人关系层（PE013/PE014 + 五种个人关系）已就绪，本版 PE 共 PE001–PE014。**
+**状态：生产关系层已完成（PE001–PE008 + `graph` + `--impact`）；流量层的四线数据模型（CL108）、守恒律（PE010–PE012 + `demand`/`population`）、交叉规则（PE006–PE008）与个人关系层（PE013/PE014 + 五种个人关系）已就绪；时间线（`moment`/`shift`，CL109）与视图（`view`/`fork`）已就绪；信息时延律 PE015 已就位（v0.7），本版 PE 共 PE001–PE015。**
 PE004/PE005 的定量回填尚未做——排期见 [ROADMAP.md](ROADMAP.md)。
 
 ## 用法
@@ -29,12 +29,27 @@ python3 classlint/classlint.py init ~/worlds/econ          # 初始化世界仓�
 # ……在 codex/ 下写条目……
 python3 classlint/classlint.py check ~/worlds/econ         # 读取全部条目，输出结构化数据
 python3 classlint/classlint.py check ~/worlds/econ --json  # 机器可读输出
-python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（只读）
+python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（DOT 或 JSON）
+python3 classlint/classlint.py view ~/worlds/econ                 # 关系图 + 时间线视图（<repo>/view.html，自包含）
+python3 classlint/classlint.py fork ~/worlds/econ alt-history     # 反事实推演：把当前世界开成一条 Git 分支
 ```
 
 退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误（含指错目录与非法 `WGP_JUDGE_BACKEND`）；`3` 判定通过，但有 PE 规则被 `rules: off` 关掉——「通过」只覆盖仍开着的规则，确认是有意关闭的加 `--accept-disabled-rules` 才回到 0（见 [PROTOCOL.md](PROTOCOL.md) §4）。
 
 判定默认由 Registry 的 `core-cl` 与 `pe` 两个 Pack 执行：CL100–CL109 逐规则注册，扫描/建索引与判定分离，PE 保持编号顺序和 `rules: off` 语义。紧急回退使用 `WGP_JUDGE_BACKEND=legacy python3 classlint/classlint.py check <仓库>`；legacy 仍保留，尚未到发布周期后的删除签核阶段。
+
+### 视图与反事实推演（Sprint 9）
+
+`view` 生成一个**自包含 HTML**（默认 `<repo>/view.html`，`--out` 可改路径）：两页签——**关系图**（节点 = 条目，边 = 七种生产关系 + 个人关系）与**时间线**（`moment` 点上事件、`shift` 结构变迁区间）。没有外链、没有 CDN，世界目录拷到离线机器也能双击打开；渲染用原生 SVG，不引 D3/Cytoscape（视图数据在 `<script id="view-data">` 里，想换库/接前端直接读它）。
+
+`fork` 把世界当前状态开成一条 Git 分支——**反事实推演就是 Git 分支**：
+
+```bash
+python3 classlint/classlint.py fork ~/worlds/econ alt-history   # 在 alt-history 里改设定、看世界怎么塌
+git -C ~/worlds/econ diff main..alt-history                     # 看两条世界的分歧
+```
+
+世界内分歧点建议在时间线里补一条 `shift` 记录（「如果 X 没发生」），让视图也画得出岔路；世界外历史（谁改了什么）本来就在 `git log` 里。
 
 ### `--json` 输出字段（`check --json`）
 
@@ -62,7 +77,7 @@ PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以�
 
 报告级输出（永不进退出码）：`classlint graph <仓库> [--format dot|json]` 关系图；`classlint check <仓库> --impact ID...` 下游影响报告。
 
-测试：`python3 classlint/tests/run_tests.py`（27 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
+测试：`python3 classlint/tests/run_tests.py`（29 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
 
 ## 世界仓库结构
 

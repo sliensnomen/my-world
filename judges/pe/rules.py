@@ -375,3 +375,28 @@ def check_pe014(world, emit) -> None:
              f"庇护关系可能缓冲危机：`{to}` 从 `{frm}` 抽取 `{what}`（线在 rising），"
              f"而 `{frm}` 的 `{dwhat}` 只剩 {margin:.0%} 余量，但双方有{note}关系"
              f"——危机可能被庇护网络吸收，不应按纯市场读")
+
+
+def check_pe015(world, emit) -> None:
+    """时延律：消息抵达前发生的变故，命令管不到。"""
+    moments = [e for e in world.entries
+               if e.meta.get("type") == "moment"
+               and _is_finite_number(e.meta.get("at"))]
+    if not moments:
+        return
+    for flow in _flow_entries(world, "information"):
+        when, delay = flow.meta.get("when"), flow.meta.get("delay")
+        if not _is_finite_number(when) or not _is_finite_number(delay):
+            continue
+        arrival = when + delay
+        to = flow.meta.get("to")
+        for moment in moments:
+            affects = moment.meta.get("affects")
+            if not isinstance(affects, list) or to not in affects:
+                continue
+            at = moment.meta["at"]
+            if when <= at < arrival:
+                emit("warning", flow.rel,
+                     f"时延倒挂：`{to}` 在 `{moment.id}`（at={at:g}）发生变故，"
+                     f"但 `{flow.id}` 的消息 when={when:g} + delay={delay:g} = {arrival:g} 才抵达"
+                     f"——命令晚于政变，抵达前发生的事它管不到")

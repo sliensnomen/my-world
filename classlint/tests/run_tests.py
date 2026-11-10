@@ -84,6 +84,10 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("PE014", "warning", "codex/flow-tax-out.md"),  # 庇护关系缓冲危机
     ],
     "personal-clean": [],
+    "delay-bad": [
+        ("PE015", "warning", "codex/flow-order.md"),  # 政变(12)早于诏书抵达(10+3)
+    ],
+    "delay-clean": [],
     # 时间线层（协议 v0.6）：CL109 形状 + CL105 悬空
     "timeline-clean": [],
     "timeline-bad": [
@@ -654,6 +658,53 @@ def _capture_backend(world: Path, backend: str, operation):
     return normalized_cli_result(code, out.getvalue(), err.getvalue(), world)
 
 
+
+def check_view_html_generation() -> int:
+    """视图：`view` 生成自包含 HTML（关系图 + 时间线两页签，不外链）。"""
+    failures = 0
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "view.html"
+        code = classlint.cmd_view(TESTS / "timeline-clean", out)
+        if code != 0:
+            print(f"FAIL 视图生成：cmd_view 返回 {code}，应为 0")
+            return 1
+        html = out.read_text(encoding="utf-8")
+        for marker in ("关系图", "时间线", "view-data", "moment-open", "shift-rent"):
+            if marker not in html:
+                print(f"FAIL 视图 HTML 缺标记 {marker!r}")
+                failures += 1
+        for bad in ('src="http', "href=\"http", "@import", "url(http", "<link"):
+            if bad in html:
+                print(f"FAIL 视图 HTML 含外链资源 {bad!r}（必须自包含）")
+                failures += 1
+        start = html.find('<script id="view-data" type="application/json">')
+        end = html.find("</script>", start)
+        if start < 0 or end < 0:
+            print("FAIL 视图 HTML 缺嵌入数据块")
+            failures += 1
+        else:
+            blob = html[start:end].split(">", 1)[1]
+            try:
+                data = json.loads(blob)
+            except json.JSONDecodeError as e:
+                print(f"FAIL 视图嵌入数据不是合法 JSON：{e}")
+                failures += 1
+                data = {}
+            nodes = {n["id"] for n in data.get("nodes", [])}
+            if not {"town", "moment-open", "shift-rent"} <= nodes:
+                print(f"FAIL 视图节点不全：{sorted(nodes)}")
+                failures += 1
+            if [m["id"] for m in data.get("moments", [])] != ["moment-open"]:
+                print(f"FAIL 视图点事件不对：{data.get('moments')}")
+                failures += 1
+            if [x["id"] for x in data.get("shifts", [])] != ["shift-rent"]:
+                print(f"FAIL 视图结构变迁不对：{data.get('shifts')}")
+                failures += 1
+    if not failures:
+        print("PASS 视图生成（自包含 HTML，关系图 + 时间线数据齐全）")
+    return failures
+
+
 def check_registry_cl_pe_dual_run() -> int:
     """每条 CL/PE 的真实正反例、原始顺序和完整外部行为都必须双跑一致。"""
     import os
@@ -677,8 +728,8 @@ def check_registry_cl_pe_dual_run() -> int:
         expect([r.id for r in pe.rules] == ["PE001", "PE002", "PE003", "PE004", "PE005",
                                             "PE006", "PE007", "PE008",
                                             "PE009", "PE010", "PE011", "PE012",
-                                            "PE013", "PE014"],
-               f"pe 必须按原顺序登记十四条规则：{[r.id for r in pe.rules]}")
+                                            "PE013", "PE014", "PE015"],
+               f"pe 必须按原顺序登记十五条规则：{[r.id for r in pe.rules]}")
         expect(core.ca106_fields == frozenset() and pe.ca106_fields == frozenset(),
                "classlint 的 CL103 私有字段政策不得写进 ca106_fields")
         expect(all(r.scope == "entry" and r.entry_domain == "all_entries"
@@ -758,6 +809,8 @@ def check_registry_cl_pe_dual_run() -> int:
                   expected={"PE013", "PE014"})
     compare_world("PE013–PE014 真阴性", TESTS / "personal-clean",
                   forbidden={"PE013", "PE014"})
+    compare_world("PE015 真阳性", TESTS / "delay-bad", expected={"PE015"})
+    compare_world("PE015 真阴性", TESTS / "delay-clean", forbidden={"PE015"})
 
     with tempfile.TemporaryDirectory() as td:
         world = Path(td)
@@ -941,7 +994,7 @@ def check_registry_cl_pe_dual_run() -> int:
         expect(old == new, "init 后首次 check 双跑不同")
 
     if not failures:
-        print("PASS core-cl/pe 双跑：24 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
+        print("PASS core-cl/pe 双跑：25 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
     return failures
 
 
@@ -979,6 +1032,7 @@ def main() -> int:
     failures += check_entity_registry_errors_are_config_errors()
     failures += check_finding_order_matters()
     failures += check_registry_cl_pe_dual_run()
+    failures += check_view_html_generation()
     extra = set(EXPECTED) - set(worlds)
     for name in sorted(extra):
         print(f"FAIL {name}: EXPECTED 登记了期望但夹具目录不存在")

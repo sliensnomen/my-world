@@ -15,7 +15,7 @@
 | | 负责 | 现在有什么 |
 |---|---|---|
 | **存** | 条目格式、id、目录布局、关系、写入命令 | `store/` · `world.schema.json`（格式契约） |
-| **判** | 结构规则 + 政治经济学规则 | 40 条 CA 规则（`judges/` 的 `core-ca` 包，`canonlint.py` 驱动）· 10 条 CL + 14 条 PE 规则（`judges/` 的 `core-cl`/`pe` 包，`classlint/` 驱动；CL100–CL109，PE001–PE014） |
+| **判** | 结构规则 + 政治经济学规则 | 40 条 CA 规则（`judges/` 的 `core-ca` 包，`canonlint.py` 驱动）· 10 条 CL + 15 条 PE 规则（`judges/` 的 `core-cl`/`pe` 包，`classlint/` 驱动；CL100–CL109，PE001–PE015） |
 
 **两者之间有一条线**：`store/` 里不许出现政治经济学词汇。改存储的人不该被迫先学会八层链和 PE003——
 政治经济学只住在规则、`classlint/` 和文档里。这条线由 `tests/test_store.py` 用 AST 检查守着（越线即红）。
@@ -42,10 +42,12 @@ WGP_JUDGE_BACKEND=legacy python3 canonlint.py ~/worlds/grey-harbor  # 紧急回�
 
 # ── 政治经济学层：classlint（条目住 codex/，目前是另一个仓库根）
 python3 classlint/classlint.py init ~/worlds/grey-harbor-econ
-python3 classlint/classlint.py check ~/worlds/grey-harbor-econ      # CL1xx + PE001–PE014
+python3 classlint/classlint.py check ~/worlds/grey-harbor-econ      # CL1xx + PE001–PE015
 python3 classlint/classlint.py check ~/worlds/grey-harbor-econ --json
 python3 classlint/classlint.py check ~/worlds/grey-harbor-econ --impact some-id   # 只读
 python3 classlint/classlint.py graph ~/worlds/grey-harbor-econ --format dot       # 只读
+python3 classlint/classlint.py view ~/worlds/grey-harbor-econ                       # 关系图 + 时间线（自包含 HTML）
+python3 classlint/classlint.py fork ~/worlds/grey-harbor-econ alt-history           # 反事实推演（Git 分支）
 ```
 
 ```bash
@@ -80,14 +82,14 @@ python3 serve.py ~/worlds/grey-harbor --port 8000 --writable        # 默认只�
    其余叙述是当时的意图。与代码不一致时**以代码为准**。
 4. **`项目文书.md` / `classlint/项目文书.md`** —— 定位与路线图，属于「想法」，不是契约。
 
-`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与检查项数（39 条 CA、10 条 CL、14 条 PE、五套检查的 74 + 12 + 26 + 35 + 15），`README.md` / `CONTRIBUTING.md` / `classlint/README.md` 里的 27 个 classlint 夹具，以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
+`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与检查项数（39 条 CA、10 条 CL、15 条 PE、五套检查的 74 + 12 + 26 + 35 + 15），`README.md` / `CONTRIBUTING.md` / `classlint/README.md` 里的 29 个 classlint 夹具，以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
 它**不**是全文校验：层数、字段数、示例世界的条目数、退出码说明这些没被钉住，改代码时请顺手 `grep` 一遍文档。
 
 ## 现状（不吹）
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
-- ✅ **能判**：40 条 CA 规则（结构 / 引用 / 承重链条 / 事件流水 / 重复 / 影响报告）+ CL1xx + PE001–PE014
-- ✅ **有回归网**：`tests/` 五套（74 + 12 + 26 + 35 + 15 项检查）+ `classlint/tests/` 一套（27 个夹具世界），
+- ✅ **能判**：40 条 CA 规则（结构 / 引用 / 承重链条 / 事件流水 / 重复 / 影响报告）+ CL1xx + PE001–PE015
+- ✅ **有回归网**：`tests/` 五套（74 + 12 + 26 + 35 + 15 项检查）+ `classlint/tests/` 一套（29 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ✅ **判定器注册表**：`judges/` 用统一 Rule/Pack 元数据装载 CA/CL/PE/econ，默认后端为 registry；`WGP_JUDGE_BACKEND=legacy` 可整批回退，非法值在审计或端口绑定前以退出码 2 失败。迁移期用 `judges/compare.py` 双跑旧/新后端，Finding、CLI、HTTP 与审计日志归一化后逐项判等
 - ✅ **界面 v0.2**：`web/index.html`（台账 / 审计 / 流水三视图 + 记账表单 + 升格/降级工单，零依赖零构建，`serve.py` 同源伺候）；默认只读，`--writable` 时界面才显示写入口
