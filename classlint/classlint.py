@@ -1210,6 +1210,237 @@ def cmd_graph(root: Path, fmt: str) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# 视图层（Sprint 9）：关系图 + 时间线，自包含 HTML（不外链）
+# ---------------------------------------------------------------------------
+
+VIEW_TEMPLATE = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>__TITLE__ · classlint 视图</title>
+<style>
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #222; background: #fafafa; }
+  header { padding: 14px 20px 6px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #666; font-size: 12px; }
+  .tabs { display: flex; gap: 6px; padding: 8px 20px 0; }
+  .tab { border: 1px solid #ccc; background: #fff; padding: 6px 14px; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 13px; }
+  .tab.active { background: #fff; border-bottom-color: #fff; font-weight: 600; }
+  .panel { background: #fff; border: 1px solid #ccc; margin: 0 20px 20px; border-radius: 0 6px 6px 6px; }
+  svg { display: block; width: 100%; height: auto; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 14px; font-size: 12px; color: #555; border-top: 1px solid #eee; }
+  .legend span.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<header>
+  <h1>__TITLE__</h1>
+  <div class="sub">classlint v__VERSION__ · 关系图与时间线（自包含视图；数据来自 codex/ 条目）</div>
+</header>
+<div class="tabs">
+  <button class="tab active" data-page="page-graph">关系图</button>
+  <button class="tab" data-page="page-timeline">时间线</button>
+</div>
+<div class="panel"><div id="page-graph"><svg id="graph" viewBox="0 0 860 620"></svg><div class="legend" id="legend"></div></div></div>
+<div class="panel" hidden><div id="page-timeline"><svg id="timeline" viewBox="0 0 860 380"></svg></div></div>
+<script id="view-data" type="application/json">__DATA__</script>
+<script>
+const DATA = JSON.parse(document.getElementById('view-data').textContent);
+const NS = 'http://www.w3.org/2000/svg';
+function h(tag, attrs, text) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (text != null) n.textContent = text;
+  return n;
+}
+function typeColor(t) {
+  const palette = ['#6c8ebf','#82b366','#d79b00','#9673a6','#b85450','#3c8dbc','#7f8c8d','#c0392b'];
+  let s = 0; for (const c of (t || 'entry')) s = (s * 31 + c.charCodeAt(0)) | 0;
+  return palette[Math.abs(s) % palette.length];
+}
+function trunc(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+function drawGraph() {
+  const svg = document.getElementById('graph');
+  svg.innerHTML = '';
+  const nodes = DATA.nodes.slice().sort((a,b) => String(a.type||'').localeCompare(String(b.type||'')) || a.id.localeCompare(b.id));
+  if (!nodes.length) { svg.appendChild(h('text', {x:430,y:310,'text-anchor':'middle',fill:'#888'}, '暂无条目')); return; }
+  const cx = 430, cy = 305, R = nodes.length > 1 ? Math.min(250, 110 + 9 * nodes.length) : 0;
+  const pos = {};
+  nodes.forEach((node, i) => {
+    const a = -Math.PI / 2 + 2 * Math.PI * i / nodes.length;
+    pos[node.id] = {x: cx + R * Math.cos(a), y: cy + R * Math.sin(a)};
+  });
+  const edgeLayer = h('g', {stroke:'#999','stroke-width':1.2});
+  DATA.edges.forEach(e => {
+    const a = pos[e.src], b = pos[e.dst];
+    if (!a || !b) return;
+    edgeLayer.appendChild(h('line', {x1:a.x, y1:a.y, x2:b.x, y2:b.y, opacity:0.55}));
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if (DATA.edges.length <= 90) {
+      const label = h('text', {x:mx, y:my - 3, 'text-anchor':'middle', 'font-size':9, fill:'#777'}, trunc(e.rel, 18));
+      label.appendChild(h('title', {}, e.rel));
+      edgeLayer.appendChild(label);
+    }
+  });
+  svg.appendChild(edgeLayer);
+  nodes.forEach(node => {
+    const p = pos[node.id];
+    const g = h('g', {});
+    g.appendChild(h('circle', {cx:p.x, cy:p.y, r:9, fill:typeColor(node.type), stroke:'#fff', 'stroke-width':1.5}));
+    const t = h('text', {x:p.x, y:p.y + 22, 'text-anchor':'middle', 'font-size':11, fill:'#333'}, trunc(node.title || node.id, 20));
+    t.appendChild(h('title', {}, (node.title || node.id) + '\\n' + node.id + (node.type ? ' · ' + node.type : '')));
+    g.appendChild(t);
+    svg.appendChild(g);
+  });
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  const types = [...new Set(nodes.map(n => n.type || 'entry'))].sort();
+  types.forEach(t => {
+    const span = document.createElement('span');
+    const dot = document.createElement('span');
+    dot.className = 'dot'; dot.style.background = typeColor(t);
+    span.appendChild(dot); span.appendChild(document.createTextNode(t + '（' + nodes.filter(n => (n.type || 'entry') === t).length + '）'));
+    legend.appendChild(span);
+  });
+}
+
+function drawTimeline() {
+  const svg = document.getElementById('timeline');
+  svg.innerHTML = '';
+  const times = [];
+  DATA.moments.forEach(m => { if (typeof m.at === 'number') times.push(m.at); });
+  DATA.shifts.forEach(s => { if (typeof s.begin === 'number') times.push(s.begin); if (typeof s.end === 'number') times.push(s.end); });
+  if (!times.length) { svg.appendChild(h('text', {x:430,y:190,'text-anchor':'middle',fill:'#888'}, '暂无时间线条目（moment / shift）')); return; }
+  const lo = Math.min.apply(null, times), hi = Math.max.apply(null, times);
+  const span = (hi - lo) || 1;
+  const x = t => 70 + (t - lo) / span * 720;
+  const axisY = 185;
+  svg.appendChild(h('line', {x1:60, y1:axisY, x2:800, y2:axisY, stroke:'#999'}));
+  [lo, hi].forEach((t, i) => {
+    svg.appendChild(h('text', {x:x(t), y:axisY + 16, 'text-anchor':'middle', 'font-size':10, fill:'#888'}, String(+t.toFixed(2))));
+    svg.appendChild(h('line', {x1:x(t), y1:axisY - 4, x2:x(t), y2:axisY + 4, stroke:'#999'}));
+  });
+  DATA.moments.forEach(m => {
+    if (typeof m.at !== 'number') return;
+    svg.appendChild(h('circle', {cx:x(m.at), cy:axisY, r:5, fill:'#b85450', stroke:'#fff', 'stroke-width':1}));
+    const label = h('text', {x:x(m.at), y:axisY - 12, 'text-anchor':'middle', 'font-size':10, fill:'#b85450'}, trunc(m.text || m.id, 22));
+    label.appendChild(h('title', {}, (m.text || m.id) + (m.source ? '\\n来源：' + m.source : '')));
+    svg.appendChild(label);
+  });
+  const laneY = 300;
+  DATA.shifts.forEach((s, i) => {
+    if (typeof s.begin !== 'number' || typeof s.end !== 'number') return;
+    const y = laneY + (i % 3) * 30;
+    const w = Math.max(2, x(s.end) - x(s.begin));
+    const rect = h('rect', {x:x(s.begin), y:y - 10, width:w, height:20, rx:4, fill:'#dbeafe', stroke:'#6c8ebf'});
+    rect.appendChild(h('title', {}, (s.change || s.id) + '\\n' + (s.before || '') + ' → ' + (s.after || '')));
+    svg.appendChild(rect);
+    svg.appendChild(h('text', {x:x(s.begin) + 4, y:y + 4, 'font-size':10, fill:'#2c5282'}, trunc(s.change || s.id, 24)));
+  });
+  if (DATA.shifts.length) {
+    svg.appendChild(h('text', {x:60, y:laneY - 22, 'font-size':11, fill:'#555'}, '结构变迁（shift）'));
+  }
+}
+
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.panel').forEach((p, i) => {
+      const sections = ['page-graph', 'page-timeline'];
+      p.hidden = sections[i] !== btn.dataset.page;
+    });
+  });
+});
+drawGraph();
+drawTimeline();
+</script>
+</body>
+</html>
+"""
+
+
+def _view_data(root: Path) -> dict:
+    _, index, _, _ = run_checks(root)
+    nodes = [{"id": e.id, "title": e.meta.get("title") or e.id,
+              "type": e.meta.get("type")} for e in index.values()]
+    edges = [{"src": e.id, "rel": edge.rel, "dst": edge.target,
+              "attrs": edge.attrs}
+             for e in index.values() for edge in e.edges[0]
+             if edge.target in index]
+    moments, shifts = [], []
+    for e in index.values():
+        t = e.meta.get("type")
+        if t == "moment" and _is_finite_number(e.meta.get("at")):
+            moments.append({"id": e.id, "at": e.meta["at"],
+                            "text": e.meta.get("text"),
+                            "affects": e.meta.get("affects"),
+                            "source": e.meta.get("source")})
+        elif t == "shift" and _is_finite_number(e.meta.get("begin")) and _is_finite_number(e.meta.get("end")):
+            shifts.append({"id": e.id, "begin": e.meta["begin"],
+                           "end": e.meta["end"],
+                           "change": e.meta.get("change"),
+                           "before": e.meta.get("before"),
+                           "after": e.meta.get("after"),
+                           "source": e.meta.get("source")})
+    moments.sort(key=lambda m: (m["at"], m["id"]))
+    shifts.sort(key=lambda s: (s["begin"], s["id"]))
+    return {"nodes": nodes, "edges": edges, "moments": moments, "shifts": shifts}
+
+
+def cmd_view(root: Path, out: Path | None = None) -> int:
+    """生成关系图 + 时间线的自包含 HTML（无外链、无 CDN，可直接双击打开）。"""
+    if not (root / "classlint.yaml").is_file():
+        print(f"error: {root} 不是 classlint 世界仓库（缺 classlint.yaml）",
+              file=sys.stderr)
+        return 2
+    try:
+        data = _view_data(root)
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    target = out if out is not None else root / "view.html"
+    blob = json.dumps(data, ensure_ascii=False, default=str).replace("</", "<\\/")
+    html = (VIEW_TEMPLATE.replace("__TITLE__", str(data.get("world") or root.name))
+            .replace("__VERSION__", VERSION).replace("__DATA__", blob))
+    target.write_text(html, encoding="utf-8")
+    print(f"视图已生成: {target}")
+    return 0
+
+
+def cmd_fork(root: Path, name: str) -> int:
+    """反事实推演：把世界当前状态开成一条 Git 分支（世界内时间线的分叉点由作者在条目里记录）。"""
+    if not (root / "classlint.yaml").is_file():
+        print(f"error: {root} 不是 classlint 世界仓库（缺 classlint.yaml）",
+              file=sys.stderr)
+        return 2
+    if not (root / ".git").is_dir():
+        print(f"error: {root} 不是 Git 仓库——反事实推演依赖 Git 分支",
+              file=sys.stderr)
+        return 2
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "HEAD"],
+                       cwd=root, capture_output=True)
+    if r.returncode != 0:
+        print("error: 世界仓库还没有任何提交（HEAD 为空）——先 git add . && git commit，再开反事实分支",
+              file=sys.stderr)
+        return 2
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet",
+                        f"refs/heads/{name}"], cwd=root, capture_output=True)
+    if r.returncode == 0:
+        print(f"error: 分支 {name} 已存在", file=sys.stderr)
+        return 1
+    r = subprocess.run(["git", "branch", name], cwd=root,
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"error: git branch 失败：{r.stderr.strip()}", file=sys.stderr)
+        return 2
+    print(f"已从当前世界开出反事实分支：{name}")
+    print("下一步：在该分支里改设定；时间线里用一条 shift 记下分歧点。")
+    print(f"看分歧：git diff main..{name}；看世界外历史：git log --oneline")
+    return 0
+
+
 def cmd_init(root: Path) -> int:
     """初始化世界仓库：目录结构 + classlint.yaml + entities.yaml + git。"""
     root.mkdir(parents=True, exist_ok=True)
@@ -1318,6 +1549,13 @@ def main() -> int:
     p_graph = sp.add_parser("graph", help="关系图生成（DOT 或 JSON）")
     p_graph.add_argument("root", type=Path, nargs="?", default=Path("."))
     p_graph.add_argument("--format", choices=["dot", "json"], default="dot")
+    p_view = sp.add_parser("view", help="生成关系图与时间线视图（自包含 HTML）")
+    p_view.add_argument("root", type=Path, nargs="?", default=Path("."))
+    p_view.add_argument("--out", type=Path, default=None,
+                        help="输出路径（默认 <root>/view.html）")
+    p_fork = sp.add_parser("fork", help="开一条反事实分支（Git branch）")
+    p_fork.add_argument("root", type=Path, nargs="?", default=Path("."))
+    p_fork.add_argument("name", help="新分支名")
     args = ap.parse_args()
 
     root = args.root.resolve()
@@ -1328,6 +1566,10 @@ def main() -> int:
         return 2
     if args.cmd == "graph":
         return cmd_graph(root, args.format)
+    if args.cmd == "view":
+        return cmd_view(root, args.out)
+    if args.cmd == "fork":
+        return cmd_fork(root, args.name)
     return cmd_check(root, args.json, args.impact, args.accept_disabled_rules)
 
 

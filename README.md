@@ -46,6 +46,8 @@ python3 classlint/classlint.py check ~/worlds/grey-harbor-econ      # CL1xx + PE
 python3 classlint/classlint.py check ~/worlds/grey-harbor-econ --json
 python3 classlint/classlint.py check ~/worlds/grey-harbor-econ --impact some-id   # 只读
 python3 classlint/classlint.py graph ~/worlds/grey-harbor-econ --format dot       # 只读
+python3 classlint/classlint.py view ~/worlds/grey-harbor-econ                       # 关系图 + 时间线（自包含 HTML）
+python3 classlint/classlint.py fork ~/worlds/grey-harbor-econ alt-history           # 反事实推演（Git 分支）
 ```
 
 ```bash
