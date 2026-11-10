@@ -1,4 +1,4 @@
-# classlint 协议 · 生产关系层 + 流量层 + 个人关系层 v0.5
+# classlint 协议 · 生产关系层 + 流量层 + 个人关系层 + 时间线层 v0.6
 
 **状态：草案 ｜ 日期：2026-09-24 ｜ 读者：协议实现者**
 **条款用词"必须/应当/可以"为规范性词汇，含义同 RFC 2119 的 MUST/SHOULD/MAY。**
@@ -187,13 +187,58 @@ demand:
 元素形式与 §2.1 相同：简式纯 id，或对象式 `{id, what?, note?}`；未定义属性（如 `strength`）= CL104。`what`/`note` 是自由文本，规则只按「有没有这条边」判，不读标签内容——标签是给人和前端看的语境。
 
 
+### 2.6 时间线层（v0.6）
+
+时间线记录的是**世界内历史**——「什么时候、发生了什么、牵动谁」。它和 canonlint 的事件流水（`type: event`，带 `event_kind` 与必填腿）是两件事：时间线不要求事件腿，只要求时间与受影响条目。第 3 版灰港设定属于 **Git log（世界外历史）**，不进时间线；时间线条目的 `source` 指回 codex 条目 id，给「某条设定/事件卡」挂钩。
+
+**点事件（`type: moment`）**
+
+| 字段 | 必填 | 含义 |
+|---|---|---|
+| `at` | ✅ | 世界内时间轴上的位置（数字，越大越晚；允许小数） |
+| `text` | ✅ | 事件描述（非空字符串） |
+| `affects` | ✅ | 受影响实体的 id 列表（非空；悬空由 CL105 报） |
+| `source` | 可选 | 这条时间线所依据的 codex 条目 id（悬空由 CL105 报） |
+| `note` | 可选 | 备注字符串 |
+
+```yaml
+id: moment-open
+type: moment
+at: 5.5
+text: 灰港开埠，商船第一次进港。
+affects: [town]
+source: town
+```
+
+**结构变迁（`type: shift`）**
+
+| 字段 | 必填 | 含义 |
+|---|---|---|
+| `begin` / `end` | ✅ | 区间的两端（数字；`begin` 不能晚于 `end`） |
+| `change` | ✅ | 变了什么（非空字符串） |
+| `before` / `after` | ✅ | 前态 / 后态（非空字符串） |
+| `source` | 可选 | 依据的 codex 条目 id |
+| `note` | 可选 | 备注字符串 |
+
+```yaml
+id: shift-rent
+type: shift
+begin: 10
+end: 20
+change: 封建地租让位于商业资本。
+before: 领主收租
+after: 商行抽成
+```
+
+两种类型**各收各的字段**：`moment` 写 `begin`、`shift` 写 `at` 都是 CL109；`source`/`affects` 的目标不存在是 CL105。时间线不排序、不推演（反事实推演是 Sprint 9 的视图层 + Git branch），`check --json` 原样透出字段，供前端画轴。
+
 ## 3. 审计规则注册表
 
 ### 3.1 编号段
 
 | 段 | 类别 |
 |---|---|
-| CL1xx | 结构（解析/frontmatter/schema/引用存在性） |
+| CL1xx | 结构（解析/frontmatter/schema/引用存在性；含流量层 CL108、时间线 CL109） |
 | PE0xx | 政治经济学规则（规划八条：PE001–PE008 是核心，PE009 是生产关系层新增（占空号不改已规划编号），PE010–PE012 是流量层守恒律；本版已全部实现 PE001–PE014） |
 
 ### 3.2 结构规则（确定性）
@@ -205,10 +250,11 @@ demand:
 | CL102 | error | `id` 非法格式或全库重复 |
 | CL103 | error | 存在不带 `x-` 前缀的未定义字段 |
 | CL104 | error | 关系字段违反 §2.1 schema（含 §2.5 个人关系：必须是列表；对象式必须含 `id`；属性限 `what`/`note`） |
-| CL105 | error | 关系目标 `id` 不存在（含流量条目的 `from`/`to`） |
+| CL105 | error | 关系目标 `id` 不存在（含流量条目的 `from`/`to`、时间线条目的 `source`/`affects`） |
 | CL106 | warning | 拆分前的旧写法（`depends_on` + `kind: legitimacy`）——已按新关系名判定，只在输出里提示改写法（同 canonlint 的 CA111） |
 | CL107 | warning | 关系名拼写近失：`relations[].type` 与某个规范名只差一个字符（去掉连字符/下划线后算，如 `extractss`、`depend_on`）。边**已按规范名建好**（所以 PE 族判得到它），本条只提示疑似拼写错误；距离 ≥2 的自定义关系名原样保留、不提示（同 canonlint 的 CA110） |
 | CL108 | error | 流量层格式非法：`flow` 条目违反 §2.3（`line` 缺失/非法、`from`/`to` 缺失或非字符串、本线必填字段不全或类型不对、写了别的线的字段、`trend` 不在词表、`note` 非字符串）；或实体卡的需求侧声明违反 §2.4（`demand` 不是映射、物资名为空、`amount` 不是 >0 的有限数字、`unit` 非空字符串、多余键、`population` 不是 >0 的数字） |
+| CL109 | error | 时间线条目格式非法：`moment` 的 `at` 不是数字、`text` 不是非空字符串、`affects` 不是非空 id 列表；`shift` 的 `begin`/`end` 不是数字或倒置（`begin > end`）、`change`/`before`/`after` 不是非空字符串；写了另一类型的字段（`moment` 写 `begin`、`shift` 写 `at`）；`source`/`note` 类型不对。`source`/`affects` 悬空由 CL105 报 |
 
 ### 3.3 政治经济学规则
 
@@ -266,4 +312,4 @@ rules:
 
 ## 5. 边界声明
 
-本层证明**结构完整性**，不证明数值自洽（抽取量是否真超过剩余）。数值审计属流量层：Sprint 4 做数据模型（CL108 四线流量 + demand/population），Sprint 5 做守恒律（PE010–PE012），Sprint 6 做交叉规则（PE006–PE008），Sprint 7 做个人关系层（五种关系 + PE013/PE014）——量是否守恒由 PE010–PE012 判，结构是否互相拆台由 PE006–PE008 判，私人语境是否缓冲了结构矛盾由 PE013/PE014 提示；信息时延律需要事件时间，待 Sprint 8 时间线层。AI 辅助判断将来同样只递建议条子，永不进退出码。
+本层证明**结构完整性**，不证明数值自洽（抽取量是否真超过剩余）。数值审计属流量层：Sprint 4 做数据模型（CL108 四线流量 + demand/population），Sprint 5 做守恒律（PE010–PE012），Sprint 6 做交叉规则（PE006–PE008），Sprint 7 做个人关系层（五种关系 + PE013/PE014），Sprint 8 做时间线数据模型（`moment`/`shift` + CL109）——量是否守恒由 PE010–PE012 判，结构是否互相拆台由 PE006–PE008 判，私人语境是否缓冲了结构矛盾由 PE013/PE014 提示；信息时延律需要事件时间，待 Sprint 8 时间线层。AI 辅助判断将来同样只递建议条子，永不进退出码。
