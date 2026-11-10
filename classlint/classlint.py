@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""classlint — 马克思主义政治经济学审计工具，协议 v0.1（生产关系层）
+"""classlint — 马克思主义政治经济学审计工具，协议 v0.2（生产关系层 + 流量层数据模型）
 
 用马克思主义政治经济学的规则，审计一个虚构世界的结构。
 Git + Markdown 是唯一事实来源：条目 = codex/ 下一个带 YAML frontmatter 的 Markdown 文件。
@@ -34,7 +34,7 @@ if str(_ROOT) not in sys.path:
 from store import model as shared_model  # noqa: E402
 from store import parse as shared  # noqa: E402
 
-VERSION = "0.1"
+VERSION = "0.2"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 
@@ -76,6 +76,32 @@ def canonical_rel(name: str) -> str:
 KNOWN_FIELDS = ({"id", "title", "type", "relations"}
                 | set(ALL_RELATION_NAMES) | set(CONTRACT_ATTESTED))
 REQUIRED_FIELDS = ["id", "title", "type"]
+
+# ---- 流量层数据模型（协议 v0.2）----------------------------------------------
+# 四条线共用一套「流量条目」：`type: flow` 的卡片声明一笔有方向的流量。
+# 字段分两层：四线公有（line/from/to/note/trend）与每条线自己的必填字段。
+# 这些字段**只在 type: flow 的条目上合法**——写在别的卡上仍是 CL103，
+# 否则「流量」就成了任何条目都能长出来的自由字段。
+FLOW_LINES = ("logistics", "violence", "information", "people")
+FLOW_COMMON_FIELDS = {"line", "from", "to", "note", "trend"}
+FLOW_LINE_FIELDS = {
+    "logistics": {"what", "amount", "unit"},
+    "violence": {"amount", "unit", "supply_radius", "radius_unit"},
+    "information": {"delay"},
+    "people": {"what", "amount", "unit"},
+}
+FLOW_FIELDS = set(FLOW_COMMON_FIELDS) | set().union(*FLOW_LINE_FIELDS.values())
+FLOW_TRENDS = ("rising", "flat", "falling")
+
+
+def _is_finite_number(value) -> bool:
+    """bool 是 int 的子类，不能当数字收下（同 canonlint 的 CA601）。"""
+    return (isinstance(value, int | float) and not isinstance(value, bool)
+            and value == value and value not in (float("inf"), float("-inf")))
+
+
+def _nonempty_str(value) -> bool:
+    return isinstance(value, str) and value.strip() != ""
 
 # 物资类别表（契约 x-strict-vocabulary.depends_on.kind）。PE005 用它判断「来源侧边算不算数」。
 MATERIAL_KINDS: frozenset[str] = _load_material_kinds()
@@ -167,6 +193,63 @@ def parse_entry(path: Path, root: Path) -> Entry:
     return shared.read_frontmatter(path, root).as_entry(Entry)
 
 
+def flow_schema_findings(e: Entry) -> list[Finding]:
+    """CL108：流量条目的四线 schema（协议 §2.3）。
+
+    只审 `type: flow` 的条目；字段词表是流量层自己的，不写进契约的 KNOWN_FIELDS——
+    所以「哪些字段合法」是**按条目类型**决定的：flow 卡上放行 FLOW_FIELDS，
+    别的卡上写 `line` / `amount` 仍然被 CL103 拦下。双后端（legacy 与 core-cl）
+    必须给出逐条相同的 Finding，由 classlint/tests/run_tests.py 的双跑守住。
+    """
+    if e.meta.get("type") != "flow":
+        return []
+
+    findings: list[Finding] = []
+
+    def bad(msg: str) -> None:
+        findings.append(Finding("CL108", "error", e.rel, msg))
+
+    line = e.meta.get("line")
+    if line is None:
+        bad("流量条目必须声明 `line`（logistics/violence/information/people）")
+    elif line not in FLOW_LINES:
+        bad(f"`line` 必须是 logistics/violence/information/people 之一，收到 {line!r}")
+
+    for leg, label in (("from", "起点"), ("to", "终点")):
+        value = e.meta.get(leg)
+        if value is None:
+            bad(f"流量条目缺少必填字段 `{leg}`（{label} id）")
+        elif not isinstance(value, str):
+            bad(f"`{leg}` 必须是字符串 id")
+
+    if isinstance(line, str) and line in FLOW_LINES:
+        allowed = FLOW_COMMON_FIELDS | FLOW_LINE_FIELDS[line]
+        for key in e.meta:
+            if key in FLOW_FIELDS and key not in allowed:
+                bad(f"line={line} 的流量不接受字段 `{key}`")
+        for key in sorted(FLOW_LINE_FIELDS[line]):
+            if key not in e.meta:
+                bad(f"{line} 流量缺少必填字段 `{key}`")
+            elif key == "amount":
+                value = e.meta[key]
+                if not _is_finite_number(value) or value <= 0:
+                    bad("`amount` 必须是大于 0 的数字")
+            elif key in ("supply_radius", "delay"):
+                value = e.meta[key]
+                if not _is_finite_number(value) or value < 0:
+                    bad(f"`{key}` 必须是 ≥0 的数字")
+            elif key in ("unit", "radius_unit", "what"):
+                if not _nonempty_str(e.meta[key]):
+                    bad(f"`{key}` 必须是非空字符串")
+
+    trend = e.meta.get("trend")
+    if trend is not None and trend not in FLOW_TRENDS:
+        bad("`trend` 只能是 rising/flat/falling")
+    if "note" in e.meta and not isinstance(e.meta["note"], str):
+        bad("`note` 必须是字符串")
+    return findings
+
+
 def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
     """扫描 codex/ 下全部条目 + CL100–CL103 结构规则。
     重复 id：首个（按路径序）入索引，后续不入索引（报 CL102）。"""
@@ -192,6 +275,9 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
                 findings.append(Finding("CL101", "error", e.rel, f"缺少必填字段 `{f}`"))
         for k in e.meta:
             if k not in KNOWN_FIELDS and not str(k).startswith("x-"):
+                # 流量层字段只在 `type: flow` 的条目上合法（§2.3）：写进实体卡仍是 CL103。
+                if e.meta.get("type") == "flow" and k in FLOW_FIELDS:
+                    continue
                 findings.append(Finding("CL103", "error", e.rel,
                                         f"未定义字段 `{k}`（扩展字段须 x- 前缀）"))
         # CL107：关系名拼写近失。存储层已经把这条边**按规范名建好**（所以 PE 族判得到
@@ -204,6 +290,7 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
                     "CL107", "warning", e.rel,
                     f"关系名 `{raw_name}` 与规范名 `{near}` 只差一个字符，疑似拼写错误，"
                     f"已按 `{near}` 判定；确是新关系请改用其它名字或加 `x-` 前缀"))
+        findings.extend(flow_schema_findings(e))
         if e.id is not None and not ID_RE.match(e.id):
             findings.append(Finding("CL102", "error", e.rel,
                                     f"id={e.id!r} 非法（仅允许小写字母/数字/连字符）"))
@@ -608,6 +695,15 @@ def run_checks(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]
         if e.target not in index:
             findings.append(Finding("CL105", "error", src_rel,
                                     f"{e.rel} 目标 `{e.target}` 不存在"))
+    # CL105（流量层，协议 v0.2）：流量条目的 from/to 也是跨条目引用，悬空同样要报。
+    for e in entries:
+        if e.meta.get("type") != "flow":
+            continue
+        for leg, label in (("from", "流量起点"), ("to", "流量终点")):
+            target = e.meta.get(leg)
+            if isinstance(target, str) and target not in index:
+                findings.append(Finding("CL105", "error", e.rel,
+                                        f"{label} `{target}` 不存在"))
 
     for rid in sorted(RULES):
         if rid in cfg["disabled"]:

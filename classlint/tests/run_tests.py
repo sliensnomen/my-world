@@ -59,6 +59,26 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
     "feudal-rent": [],
     "merchant-capital": [],
     "state-redistribution": [],
+    # 流量层数据模型（协议 v0.2）：四条线的合法样例应当全绿
+    "flow-clean": [],
+    "flow-bad": [
+        ("CL103", "error", "codex/bad-plain-field.md"),  # 普通条目写 line
+        ("CL103", "error", "codex/bad-plain-field.md"),  # 普通条目写 amount
+        ("CL105", "error", "codex/bad-dangling.md"),
+        ("CL108", "error", "codex/bad-amount-bool.md"),
+        ("CL108", "error", "codex/bad-delay.md"),
+        ("CL108", "error", "codex/bad-field-line.md"),
+        ("CL108", "error", "codex/bad-from-type.md"),
+        ("CL108", "error", "codex/bad-line-value.md"),
+        ("CL108", "error", "codex/bad-logistics.md"),  # amount=0
+        ("CL108", "error", "codex/bad-logistics.md"),  # unit 空串
+        ("CL108", "error", "codex/bad-no-from.md"),
+        ("CL108", "error", "codex/bad-no-line.md"),
+        ("CL108", "error", "codex/bad-note.md"),
+        ("CL108", "error", "codex/bad-people.md"),
+        ("CL108", "error", "codex/bad-trend.md"),
+        ("CL108", "error", "codex/bad-violence.md"),
+    ],
     "structure-bad": [
         ("CL101", "error", "codex/no-title.md"),
         ("CL102", "error", "codex/dup-b.md"),
@@ -611,15 +631,15 @@ def check_registry_cl_pe_dual_run() -> int:
     try:
         registry = select_packs("classlint", ["core-cl", "pe"])
         core, pe = registry.selected
-        expect([r.id for r in core.rules] == [f"CL{n}" for n in range(100, 108)],
-               f"core-cl 必须逐规则登记 CL100–CL107：{[r.id for r in core.rules]}")
+        expect([r.id for r in core.rules] == [f"CL{n}" for n in range(100, 109)],
+               f"core-cl 必须逐规则登记 CL100–CL108：{[r.id for r in core.rules]}")
         expect([r.id for r in pe.rules] == ["PE001", "PE002", "PE003", "PE004", "PE005", "PE009"],
                f"pe 必须按原顺序登记六条规则：{[r.id for r in pe.rules]}")
         expect(core.ca106_fields == frozenset() and pe.ca106_fields == frozenset(),
                "classlint 的 CL103 私有字段政策不得写进 ca106_fields")
         expect(all(r.scope == "entry" and r.entry_domain == "all_entries"
                    for r in core.rules if r.id != "CL105"),
-               "CL100–CL104/106/107 必须逐条目遍历 all_entries（含被遮蔽条目）")
+               "CL100–CL104/106/107/108 必须逐条目遍历 all_entries（含被遮蔽条目）")
     except Exception as exc:
         expect(False, f"classlint Registry Pack 应可独立加载：{type(exc).__name__}: {exc}")
 
@@ -654,7 +674,7 @@ def check_registry_cl_pe_dual_run() -> int:
     worlds = sorted(p for p in TESTS.iterdir()
                     if p.is_dir() and (p / "classlint.yaml").is_file())
     for world in worlds:
-        compare_world(f"18 世界/{world.name}", world)
+        compare_world(f"20 世界/{world.name}", world)
         for label, operation in (
             ("check-text", lambda w=world: classlint.cmd_check(w, False, [])),
             ("check-json", lambda w=world: classlint.cmd_check(w, True, [])),
@@ -663,12 +683,14 @@ def check_registry_cl_pe_dual_run() -> int:
         ):
             old = _capture_backend(world, "legacy", operation)
             new = _capture_backend(world, "registry", operation)
-            expect(old == new, f"18 世界/{world.name}/{label}：CLI 双跑不同")
+            expect(old == new, f"20 世界/{world.name}/{label}：CLI 双跑不同")
 
-    cl_rules = {f"CL{n}" for n in range(100, 108)}
+    cl_rules = {f"CL{n}" for n in range(100, 109)}
     compare_world("CL 真阴性", TESTS / "clean", forbidden=cl_rules)
     compare_world("CL101–CL105 真阳性", TESTS / "structure-bad",
                   expected={"CL101", "CL102", "CL103", "CL104", "CL105"})
+    compare_world("CL108 真阳性", TESTS / "flow-bad", expected={"CL108"})
+    compare_world("CL108 真阴性", TESTS / "flow-clean", forbidden=cl_rules)
     for name, rule in (("pe001", "PE001"), ("pe002", "PE002"), ("pe003", "PE003")):
         compare_world(f"{rule} 真阳性", TESTS / f"{name}-bad", expected={rule})
         compare_world(f"{rule} 真阴性", TESTS / f"{name}-ok", forbidden={rule})
@@ -861,7 +883,7 @@ def check_registry_cl_pe_dual_run() -> int:
         expect(old == new, "init 后首次 check 双跑不同")
 
     if not failures:
-        print("PASS core-cl/pe 双跑：14 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
+        print("PASS core-cl/pe 双跑：15 条规则正反例、原始顺序、JSON/graph/mentions/init 全一致")
     return failures
 
 
