@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""classlint — 马克思主义政治经济学审计工具，协议 v0.2（生产关系层 + 流量层数据模型）
+"""classlint — 马克思主义政治经济学审计工具，协议 v0.3（生产关系层 + 流量层数据模型与守恒律）
 
 用马克思主义政治经济学的规则，审计一个虚构世界的结构。
 Git + Markdown 是唯一事实来源：条目 = codex/ 下一个带 YAML frontmatter 的 Markdown 文件。
-规则编号即协议：本文件实现 PROTOCOL.md 全部规则（CL1xx 结构 + PE001–PE005 + PE009）。
+规则编号即协议：本文件实现 PROTOCOL.md 全部规则（CL1xx 结构 + PE001–PE005、PE009–PE012）。
 
 用法:
   classlint.py init [目录]        初始化世界仓库（目录结构 + classlint.yaml + git）
@@ -34,7 +34,7 @@ if str(_ROOT) not in sys.path:
 from store import model as shared_model  # noqa: E402
 from store import parse as shared  # noqa: E402
 
-VERSION = "0.2"
+VERSION = "0.3"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 
@@ -92,6 +92,12 @@ FLOW_LINE_FIELDS = {
 }
 FLOW_FIELDS = set(FLOW_COMMON_FIELDS) | set().union(*FLOW_LINE_FIELDS.values())
 FLOW_TRENDS = ("rising", "flat", "falling")
+
+# ---- 需求侧数据模型（协议 v0.3，给 Sprint 5 的守恒律用）------------------------
+# 实体卡可以声明自己的需求（`demand: {what: {amount, unit}}`）与人口基数
+# （`population: 数字`）。这两个字段只允许出现在**非 flow** 的条目上——需求属于消费方，
+# 流量条目自己不带需求（写在 flow 卡上仍是 CL103）。格式由 CL108 校验。
+FLOW_ENTITY_FIELDS = {"demand", "population"}
 
 
 def _is_finite_number(value) -> bool:
@@ -193,16 +199,58 @@ def parse_entry(path: Path, root: Path) -> Entry:
     return shared.read_frontmatter(path, root).as_entry(Entry)
 
 
+def _demand_findings(e: Entry) -> list[Finding]:
+    """CL108（v0.3 扩展）：实体卡的需求侧声明格式。
+
+    只审非 flow 条目；`demand` 是 `{物资名: {amount, unit}}`，`population` 是正数。
+    形状坏了由这里报 error——PE010/PE012 只在形状合法时才拿它做守恒判定，
+    否则会出现「用坏数据下重判」的误导。
+    """
+    findings: list[Finding] = []
+
+    def bad(msg: str) -> None:
+        findings.append(Finding("CL108", "error", e.rel, msg))
+
+    if "population" in e.meta:
+        value = e.meta["population"]
+        if not _is_finite_number(value) or value <= 0:
+            bad("`population` 必须是大于 0 的数字")
+
+    demand = e.meta.get("demand")
+    if demand is None:
+        return findings
+    if not isinstance(demand, dict):
+        bad("`demand` 必须是映射（物资名 → {amount, unit}）")
+        return findings
+    for what, spec in demand.items():
+        if not _nonempty_str(what):
+            bad("`demand` 的物资名必须是非空字符串")
+            continue
+        if not isinstance(spec, dict):
+            bad(f"`demand.{what}` 必须是映射（含 amount/unit）")
+            continue
+        amount = spec.get("amount")
+        if not _is_finite_number(amount) or amount <= 0:
+            bad(f"`demand.{what}.amount` 必须是大于 0 的数字")
+        if not _nonempty_str(spec.get("unit")):
+            bad(f"`demand.{what}.unit` 必须是非空字符串")
+        for key in spec:
+            if key not in ("amount", "unit"):
+                bad(f"`demand.{what}` 不接受字段 `{key}`")
+    return findings
+
+
 def flow_schema_findings(e: Entry) -> list[Finding]:
-    """CL108：流量条目的四线 schema（协议 §2.3）。
+    """CL108：流量条目的四线 schema（协议 §2.3）与实体卡需求声明（§2.4）。
 
     只审 `type: flow` 的条目；字段词表是流量层自己的，不写进契约的 KNOWN_FIELDS——
     所以「哪些字段合法」是**按条目类型**决定的：flow 卡上放行 FLOW_FIELDS，
-    别的卡上写 `line` / `amount` 仍然被 CL103 拦下。双后端（legacy 与 core-cl）
-    必须给出逐条相同的 Finding，由 classlint/tests/run_tests.py 的双跑守住。
+    别的卡上写 `line` / `amount` 仍然被 CL103 拦下；反过来 `demand`/`population`
+    只在非 flow 卡上合法。双后端（legacy 与 core-cl）必须给出逐条相同的 Finding，
+    由 classlint/tests/run_tests.py 的双跑守住。
     """
     if e.meta.get("type") != "flow":
-        return []
+        return _demand_findings(e)
 
     findings: list[Finding] = []
 
@@ -277,6 +325,9 @@ def collect(root: Path) -> tuple[list[Entry], dict[str, Entry], list[Finding]]:
             if k not in KNOWN_FIELDS and not str(k).startswith("x-"):
                 # 流量层字段只在 `type: flow` 的条目上合法（§2.3）：写进实体卡仍是 CL103。
                 if e.meta.get("type") == "flow" and k in FLOW_FIELDS:
+                    continue
+                # 需求侧字段只在非 flow 的条目上合法（§2.4）：写进流量卡仍是 CL103。
+                if e.meta.get("type") != "flow" and k in FLOW_ENTITY_FIELDS:
                     continue
                 findings.append(Finding("CL103", "error", e.rel,
                                         f"未定义字段 `{k}`（扩展字段须 x- 前缀）"))
@@ -550,6 +601,107 @@ def pe009(world: World, emit) -> None:
 
 
 
+
+
+def _flow_entries(world: World, line: str) -> list[Entry]:
+    """可判的流量条目：line 对得上、from/to 都是存在字符串、且本线字段形状合法。
+
+    形状坏掉的流量由 CL108 报，这里不拿它做守恒计算——否则「amount 写成 bool」
+    会变成 0 参与求和，报出一条误导性的断供。
+    """
+    out: list[Entry] = []
+    for e in world.entries:
+        if e.meta.get("type") != "flow" or e.meta.get("line") != line:
+            continue
+        frm, to = e.meta.get("from"), e.meta.get("to")
+        if not isinstance(frm, str) or not isinstance(to, str):
+            continue
+        if frm not in world.index or to not in world.index:
+            continue
+        if any(f.rule == "CL108" for f in flow_schema_findings(e)):
+            continue
+        out.append(e)
+    return out
+
+
+def _demand_of(world: World, eid: str) -> dict:
+    demand = world.index[eid].meta.get("demand")
+    return demand if isinstance(demand, dict) else {}
+
+
+@rule("PE010", "error", "物流守恒：流入必须满足需求（数据不足时报 warning，不静默）")
+def pe010(world: World, emit) -> None:
+    logistics = _flow_entries(world, "logistics")
+
+    # 从需求侧看：有 demand 的实体，同单位流入必须够量。
+    for e in world.entries:
+        if e.id is None or e.meta.get("type") == "flow":
+            continue
+        demand = e.meta.get("demand")
+        if not isinstance(demand, dict):
+            continue
+        for what, spec in demand.items():
+            if not isinstance(spec, dict):
+                continue
+            amount, unit = spec.get("amount"), spec.get("unit")
+            if not (_is_finite_number(amount) and _nonempty_str(unit)):
+                continue
+            incoming = [f for f in logistics
+                        if f.meta.get("to") == e.id and f.meta.get("what") == what]
+            same = [f for f in incoming if f.meta.get("unit") == unit]
+            if same:
+                inflow = sum(f.meta["amount"] for f in same)
+                if inflow < amount:
+                    emit("error", e.rel,
+                         f"物流守恒：`{e.id}` 对 `{what}` 的需求是 {amount:g} {unit}，"
+                         f"同单位流入只有 {inflow:g} {unit}——断供")
+            elif incoming:
+                units = "、".join(sorted({str(f.meta.get("unit")) for f in incoming}))
+                emit("warning", e.rel,
+                     f"物流守恒：`{e.id}` 对 `{what}` 的需求单位是 `{unit}`，"
+                     f"流入线单位是 {units}——单位不可比，无法判定")
+            else:
+                emit("error", e.rel,
+                     f"物流守恒：`{e.id}` 声明了 `{what}` 需求 {amount:g} {unit}，"
+                     f"但没有任何物流线流入——断供")
+
+    # 从流量侧看：每条流入都要有对账对象——目标没声明该需求，就无法判断够不够。
+    for f in logistics:
+        to, what = f.meta.get("to"), f.meta.get("what")
+        if what in _demand_of(world, to):
+            continue
+        emit("warning", f.rel,
+             f"物流守恒：`{to}` 没有声明对 `{what}` 的需求，这条流入无法对账"
+             f"（给 `{to}` 加 demand，或确认它不需要）")
+
+
+@rule("PE011", "error", "补给律：暴力线的驻军地必须有物流线到达")
+def pe011(world: World, emit) -> None:
+    logistics = _flow_entries(world, "logistics")
+    for v in _flow_entries(world, "violence"):
+        to = v.meta.get("to")
+        if any(l.meta.get("to") == to for l in logistics):
+            continue
+        emit(None, v.rel,
+             f"补给律：暴力线驻守 `{to}`，但没有任何物流线送到 `{to}`——军队跨线无补给")
+
+
+@rule("PE012", "warning", "人口律：流失必须有可对账的端点")
+def pe012(world: World, emit) -> None:
+    for p in _flow_entries(world, "people"):
+        frm, to = p.meta.get("from"), p.meta.get("to")
+        if frm == to:
+            emit(None, p.rel, "人口律：起点与终点是同一实体——流失没有去向")
+            continue
+
+        def has_population(eid: str) -> bool:
+            value = world.index[eid].meta.get("population")
+            return _is_finite_number(value) and value > 0
+
+        if not has_population(frm) and not has_population(to):
+            emit(None, p.rel,
+                 f"人口律：`{frm}` 与 `{to}` 都没有声明 population——流失规模无法对账"
+                 f"（给至少一端加 population）")
 
 
 def load_entity_aliases(root: Path, index: dict[str, Entry]) -> dict[str, str]:

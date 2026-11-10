@@ -20,6 +20,9 @@ FLOW_LINE_FIELDS = {
 FLOW_FIELDS = set(FLOW_COMMON_FIELDS) | set().union(*FLOW_LINE_FIELDS.values())
 FLOW_TRENDS = ("rising", "flat", "falling")
 
+# 需求侧数据模型（协议 v0.3）：`demand`/`population` 只允许出现在非 flow 条目上。
+FLOW_ENTITY_FIELDS = {"demand", "population"}
+
 
 def _is_finite_number(value) -> bool:
     """bool 是 int 的子类，不能当数字收下（同 canonlint 的 CA601）。"""
@@ -31,10 +34,43 @@ def _nonempty_str(value) -> bool:
     return isinstance(value, str) and value.strip() != ""
 
 
+def _demand_errors(entry) -> list[str]:
+    """CL108（v0.3 扩展）：实体卡需求侧声明的格式；顺序与 legacy 的 _demand_findings 相同。"""
+    errors: list[str] = []
+
+    if "population" in entry.meta:
+        value = entry.meta["population"]
+        if not _is_finite_number(value) or value <= 0:
+            errors.append("`population` 必须是大于 0 的数字")
+
+    demand = entry.meta.get("demand")
+    if demand is None:
+        return errors
+    if not isinstance(demand, dict):
+        errors.append("`demand` 必须是映射（物资名 → {amount, unit}）")
+        return errors
+    for what, spec in demand.items():
+        if not _nonempty_str(what):
+            errors.append("`demand` 的物资名必须是非空字符串")
+            continue
+        if not isinstance(spec, dict):
+            errors.append(f"`demand.{what}` 必须是映射（含 amount/unit）")
+            continue
+        amount = spec.get("amount")
+        if not _is_finite_number(amount) or amount <= 0:
+            errors.append(f"`demand.{what}.amount` 必须是大于 0 的数字")
+        if not _nonempty_str(spec.get("unit")):
+            errors.append(f"`demand.{what}.unit` 必须是非空字符串")
+        for key in spec:
+            if key not in ("amount", "unit"):
+                errors.append(f"`demand.{what}` 不接受字段 `{key}`")
+    return errors
+
+
 def flow_schema_errors(entry) -> list[str]:
-    """CL108 的全部消息（非 flow 条目返回空）；顺序与 legacy 的 flow_schema_findings 相同。"""
+    """CL108 的全部消息（flow 条目：四线 schema；其它条目：需求侧声明）。"""
     if entry.meta.get("type") != "flow":
-        return []
+        return _demand_errors(entry)
 
     errors: list[str] = []
 
@@ -124,6 +160,9 @@ def check_cl103(entry, rel, add, known_fields) -> None:
         if key not in known_fields and not str(key).startswith("x-"):
             # 流量层字段只在 `type: flow` 的条目上合法（协议 v0.2 §2.3）。
             if entry.meta.get("type") == "flow" and key in FLOW_FIELDS:
+                continue
+            # 需求侧字段只在非 flow 的条目上合法（协议 v0.3 §2.4）。
+            if entry.meta.get("type") != "flow" and key in FLOW_ENTITY_FIELDS:
                 continue
             add("error", f"未定义字段 `{key}`（扩展字段须 x- 前缀）")
 
