@@ -17,8 +17,8 @@ id 语法、frontmatter 切分、契约词表、关系名归一化都在 [`store
 另外那处真实分歧被收成了**一个开关**（`Entry.depends_on_requires_annotations`，canonlint 开、
 classlint 关），不是两份建边代码——所以它改的时候只有一个地方要改。
 
-**状态：生产关系层已完成（PE001–PE005 + PE009 + `graph` + `--impact`）；流量层 Sprint 4 的数据模型已就绪（四种线 + CL108）。**
-守恒律（Sprint 5）、PE004/PE005 的定量回填与 PE006–PE008 未开始——排期见 [ROADMAP.md](ROADMAP.md)。
+**状态：生产关系层已完成（PE001–PE008 + `graph` + `--impact`）；流量层的四线数据模型（CL108）、守恒律（PE010–PE012 + `demand`/`population`）与交叉规则（PE006–PE008）已就绪，本版 PE 共 PE001–PE012。**
+PE004/PE005 的定量回填尚未做——排期见 [ROADMAP.md](ROADMAP.md)。
 
 ## 用法
 
@@ -53,16 +53,16 @@ python3 classlint/classlint.py graph ~/worlds/econ --format dot   # 关系图（
 
 `--impact ID...` 只改 `reports`：不改 `findings`，也不改退出码。
 
-## 审计规则（协议 v0.1，见 [PROTOCOL.md](PROTOCOL.md)）
+## 审计规则（协议 v0.4，见 [PROTOCOL.md](PROTOCOL.md)）
 
 - **CL1xx 结构规则**（不可关）：解析失败、缺必填字段、id 非法/重复、未定义字段、关系 schema 违规、关系目标不存在、流量条目格式（CL108）。
-- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）；**PE004** 剩余必须收敛（extracts 子图无环，定性版）；**PE005** 劳动者必须被覆盖（被抽取者须有来源侧边，定性版 warning）；**PE009** 债务必须收得回来（`owes` 要有收账通道：债主能支配/强制/抽取/撤回正当性，或债务人对债主持有 `critical: true` 或带物质类别 `kind` 的 `depends_on`，warning）。
+- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）；**PE004** 剩余必须收敛（extracts 子图无环，定性版）；**PE005** 劳动者必须被覆盖（被抽取者须有来源侧边，定性版 warning）；**PE009** 债务必须收得回来（`owes` 要有收账通道：债主能支配/强制/抽取/撤回正当性，或债务人对债主持有 `critical: true` 或带物质类别 `kind` 的 `depends_on`，warning）；**PE010** 物流守恒（同单位流入 ≥ 需求，缺数据报 warning 不静默）；**PE011** 补给律（暴力线驻军地必须有物流线到达）；**PE012** 人口律（流失要有可对账的端点）；**PE006** 危机积累（剩余刚好够活 + `tax`/`tribute` 外流上升）；**PE007** 结构性压力（人口上升 + 占有关系未变）；**PE008** 镇压自己的基础（`coerces` 的对象同时用物流供养自己）。
 
 PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以关，不能改定义。
 
 报告级输出（永不进退出码）：`classlint graph <仓库> [--format dot|json]` 关系图；`classlint check <仓库> --impact ID...` 下游影响报告。
 
-测试：`python3 classlint/tests/run_tests.py`（20 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
+测试：`python3 classlint/tests/run_tests.py`（22 个夹具世界：正反例 + 三个经典结构 + 两个真实作品 dogfood + 名分依据的规范形写法，期望判定钉死）。
 
 ## 世界仓库结构
 
