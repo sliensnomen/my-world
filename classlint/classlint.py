@@ -34,7 +34,7 @@ if str(_ROOT) not in sys.path:
 from store import model as shared_model  # noqa: E402
 from store import parse as shared  # noqa: E402
 
-VERSION = "0.7"
+VERSION = "0.8"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 
@@ -97,7 +97,9 @@ FLOW_LINE_FIELDS = {
     "information": {"delay"},
     "people": {"what", "amount", "unit"},
 }
-FLOW_FIELDS = set(FLOW_COMMON_FIELDS) | set().union(*FLOW_LINE_FIELDS.values())
+FLOW_OPTIONAL_FIELDS = {"needs"}
+FLOW_FIELDS = (set(FLOW_COMMON_FIELDS) | set().union(*FLOW_LINE_FIELDS.values())
+               | FLOW_OPTIONAL_FIELDS)
 FLOW_TRENDS = ("rising", "flat", "falling")
 
 # ---- 时间线层（协议 v0.6） -----------------------------------------------------
@@ -112,7 +114,7 @@ TIMELINE_FIELDS = (TIMELINE_MOMENT_FIELDS | TIMELINE_SHIFT_FIELDS) - {"note"}
 # 实体卡可以声明自己的需求（`demand: {what: {amount, unit}}`）与人口基数
 # （`population: 数字`）。这两个字段只允许出现在**非 flow** 的条目上——需求属于消费方，
 # 流量条目自己不带需求（写在 flow 卡上仍是 CL103）。格式由 CL108 校验。
-FLOW_ENTITY_FIELDS = {"demand", "population"}
+FLOW_ENTITY_FIELDS = {"demand", "population", "surplus"}
 
 
 def _is_finite_number(value) -> bool:
@@ -264,43 +266,47 @@ def parse_entry(path: Path, root: Path) -> Entry:
 
 
 def _demand_findings(e: Entry) -> list[Finding]:
-    """CL108（v0.3 扩展）：实体卡的需求侧声明格式。
+    """CL108（v0.3/v0.8 扩展）：实体卡的需求侧声明格式。
 
-    只审非 flow 条目；`demand` 是 `{物资名: {amount, unit}}`，`population` 是正数。
-    形状坏了由这里报 error——PE010/PE012 只在形状合法时才拿它做守恒判定，
-    否则会出现「用坏数据下重判」的误导。
+    只审非 flow 条目；`demand` 是 `{物资名: {amount, unit}}`，`surplus` 同形状
+    （满足需求后还能被抽走的上限），`population` 是正数。形状坏了由这里报 error——
+    PE004/PE010/PE012 只在形状合法时才拿它做定量判定，否则会出现「用坏数据下重判」的误导。
     """
     findings: list[Finding] = []
 
     def bad(msg: str) -> None:
         findings.append(Finding("CL108", "error", e.rel, msg))
 
+    def check_quantity_map(field: str) -> None:
+        value = e.meta.get(field)
+        if value is None:
+            return
+        if not isinstance(value, dict):
+            bad(f"`{field}` 必须是映射（物资名 → {{amount, unit}}）")
+            return
+        for what, spec in value.items():
+            if not _nonempty_str(what):
+                bad(f"`{field}` 的物资名必须是非空字符串")
+                continue
+            if not isinstance(spec, dict):
+                bad(f"`{field}.{what}` 必须是映射（含 amount/unit）")
+                continue
+            amount = spec.get("amount")
+            if not _is_finite_number(amount) or amount <= 0:
+                bad(f"`{field}.{what}.amount` 必须是大于 0 的数字")
+            if not _nonempty_str(spec.get("unit")):
+                bad(f"`{field}.{what}.unit` 必须是非空字符串")
+            for key in spec:
+                if key not in ("amount", "unit"):
+                    bad(f"`{field}.{what}` 不接受字段 `{key}`")
+
     if "population" in e.meta:
         value = e.meta["population"]
         if not _is_finite_number(value) or value <= 0:
             bad("`population` 必须是大于 0 的数字")
 
-    demand = e.meta.get("demand")
-    if demand is None:
-        return findings
-    if not isinstance(demand, dict):
-        bad("`demand` 必须是映射（物资名 → {amount, unit}）")
-        return findings
-    for what, spec in demand.items():
-        if not _nonempty_str(what):
-            bad("`demand` 的物资名必须是非空字符串")
-            continue
-        if not isinstance(spec, dict):
-            bad(f"`demand.{what}` 必须是映射（含 amount/unit）")
-            continue
-        amount = spec.get("amount")
-        if not _is_finite_number(amount) or amount <= 0:
-            bad(f"`demand.{what}.amount` 必须是大于 0 的数字")
-        if not _nonempty_str(spec.get("unit")):
-            bad(f"`demand.{what}.unit` 必须是非空字符串")
-        for key in spec:
-            if key not in ("amount", "unit"):
-                bad(f"`demand.{what}` 不接受字段 `{key}`")
+    check_quantity_map("demand")
+    check_quantity_map("surplus")
     return findings
 
 
@@ -387,6 +393,8 @@ def flow_schema_findings(e: Entry) -> list[Finding]:
 
     if isinstance(line, str) and line in FLOW_LINES:
         allowed = FLOW_COMMON_FIELDS | FLOW_LINE_FIELDS[line]
+        if line == "violence":
+            allowed = allowed | FLOW_OPTIONAL_FIELDS
         for key in e.meta:
             if key in FLOW_FIELDS and key not in allowed:
                 bad(f"line={line} 的流量不接受字段 `{key}`")
@@ -410,6 +418,34 @@ def flow_schema_findings(e: Entry) -> list[Finding]:
         bad("`trend` 只能是 rising/flat/falling")
     if "note" in e.meta and not isinstance(e.meta["note"], str):
         bad("`note` 必须是字符串")
+    if "needs" in e.meta and line == "violence":
+        needs = e.meta.get("needs")
+        if not isinstance(needs, dict):
+            bad("`needs` 必须是映射（含 what/amount/unit）")
+        else:
+            if not _nonempty_str(needs.get("what")):
+                bad("`needs.what` 必须是非空字符串")
+            if not _is_finite_number(needs.get("amount")) or needs.get("amount") <= 0:
+                bad("`needs.amount` 必须是大于 0 的数字")
+            if not _nonempty_str(needs.get("unit")):
+                bad("`needs.unit` 必须是非空字符串")
+            for key in needs:
+                if key not in ("what", "amount", "unit"):
+                    bad(f"`needs` 不接受字段 `{key}`")
+    if "needs" in e.meta and line == "violence":
+        needs = e.meta.get("needs")
+        if not isinstance(needs, dict):
+            bad("`needs` 必须是映射（含 what/amount/unit）")
+        else:
+            if not _nonempty_str(needs.get("what")):
+                bad("`needs.what` 必须是非空字符串")
+            if not _is_finite_number(needs.get("amount")) or needs.get("amount") <= 0:
+                bad("`needs.amount` 必须是大于 0 的数字")
+            if not _nonempty_str(needs.get("unit")):
+                bad("`needs.unit` 必须是非空字符串")
+            for key in needs:
+                if key not in ("what", "amount", "unit"):
+                    bad(f"`needs` 不接受字段 `{key}`")
     when = e.meta.get("when")
     if when is not None and not _is_finite_number(when):
         bad("`when` 必须是数字（世界内时间轴；不写则不判时延律）")
@@ -632,10 +668,12 @@ def pe003(world: World, emit) -> None:
              f"legitimizes 闭环无外部锚点: {loop}——合法性不能凭空互证")
 
 
-@rule("PE004", "error", "剩余必须收敛：extracts 子图无环（定性版）")
+@rule("PE004", "error", "剩余必须收敛：抽取不能超过剩余（定量：surplus 声明）")
 def pe004(world: World, emit) -> None:
-    """定性版：环状 extracts SCC = 剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。
-    定量判定（抽取量 vs 剩余量）待流量层数据就位后回填。"""
+    """定量版（v0.8）：实体卡 `surplus: {what: {amount, unit}}` = 满足需求后还能被抽走的
+    上限；从该实体流出的同 what 同单位物流总量超过它 → error（剩余不收敛）。单位不可比 →
+    warning，不静默。定性版保留：环状 extracts SCC = 剩余在循环中互相凭空抽取（黑洞）。
+    """
     adj: dict[str, set[str]] = {}
     for src, e, src_rel in world.edges_of("extracts"):
         if e.target in world.index:
@@ -647,6 +685,33 @@ def pe004(world: World, emit) -> None:
         loop = " ↔ ".join(sorted(members)) if len(members) > 1 else f"{members[0]}（自环）"
         emit(None, world.rel_of[rep],
              f"extracts 存在环: {loop}——剩余在循环中不落地于生产（黑洞）")
+
+    logistics = _flow_entries(world, "logistics")
+    for entity in world.entries:
+        surplus = entity.meta.get("surplus")
+        if not isinstance(surplus, dict):
+            continue
+        outflows = [f for f in logistics if f.meta.get("from") == entity.id]
+        for what, spec in surplus.items():
+            if not isinstance(spec, dict):
+                continue
+            amount, unit = spec.get("amount"), spec.get("unit")
+            if not _is_finite_number(amount) or not _nonempty_str(unit):
+                continue  # CL108 已报形状
+            outs = [f for f in outflows if f.meta.get("what") == what]
+            same = [f for f in outs if f.meta.get("unit") == unit]
+            total = sum(float(f.meta["amount"]) for f in same
+                        if _is_finite_number(f.meta.get("amount")))
+            if total > amount + 1e-9:
+                emit("error", entity.rel,
+                     f"抽取超过剩余：`{entity.id}` 的 `{what}` 剩余只有 {amount:g} {unit}，"
+                     f"但有 {total:g} {unit} 被抽走（{', '.join(f.id for f in same)}）"
+                     f"——剩余不收敛")
+            elif outs and not same:
+                units = sorted({str(f.meta.get("unit")) for f in outs})
+                emit("warning", entity.rel,
+                     f"抽取超过剩余：`{entity.id}` 的 `{what}` 剩余单位是 `{unit}`，"
+                     f"抽走线单位是 {units}——单位不可比，无法判定")
 
 
 @rule("PE005", "warning", "劳动者必须被覆盖：被抽取者的再生产必须可见（定性版）")
@@ -680,6 +745,27 @@ def pe005(world: World, emit) -> None:
                  f"被 `{src}` 抽取，但本条目没有任何**物质**来源侧边（不抽取谁、不交换、"
                  f"也不靠带类别的物质依赖活着）——剩余从哪来不可见（请标注本条的 "
                  f"extracts/exchanges_with/带 kind 的 depends_on，或确认为终端生产者）")
+
+    # 定量版（v0.8）：声称有剩余，却没有任何该物资的物流流入——剩余从哪来不可见。
+    logistics = _flow_entries(world, "logistics")
+    warned: set[tuple[str, str]] = set()
+    for entity in world.entries:
+        target = entity.id
+        if target is None or entity.meta.get("type") == "flow":
+            continue
+        surplus = entity.meta.get("surplus")
+        if not isinstance(surplus, dict):
+            continue
+        for what in surplus:
+            if not _nonempty_str(what) or (target, what) in warned:
+                continue
+            has_inflow = any(f.meta.get("to") == target and f.meta.get("what") == what
+                             for f in logistics)
+            if not has_inflow:
+                warned.add((target, what))
+                emit("warning", entity.rel,
+                     f"声称 `{what}` 有剩余，但没有任何 `{what}` 物流线流入"
+                     f"——剩余从哪来不可见（定量版；请标注来源线，或确认为终端生产者）")
 
 
 class ConfigError(Exception):
@@ -797,11 +883,41 @@ def pe010(world: World, emit) -> None:
              f"（给 `{to}` 加 demand，或确认它不需要）")
 
 
-@rule("PE011", "error", "补给律：暴力线的驻军地必须有物流线到达")
+@rule("PE011", "error", "补给律：暴力线的驻军地必须有物流线到达；有 needs 时按量判")
 def pe011(world: World, emit) -> None:
+    """定性版：暴力线驻守地必须有物流线到达。定量版（v0.8）：violence 可声明
+    `needs: {what, amount, unit}`（驻军所需）；同目的地同 what 同单位的物流流入不足 →
+    error（断粮），单位不可比 → warning，不静默。
+    """
     logistics = _flow_entries(world, "logistics")
     for v in _flow_entries(world, "violence"):
         to = v.meta.get("to")
+        needs = v.meta.get("needs")
+        if isinstance(needs, dict):
+            what, amount, unit = (needs.get("what"), needs.get("amount"),
+                                  needs.get("unit"))
+            if not (_nonempty_str(what) and _is_finite_number(amount)
+                    and _nonempty_str(unit)):
+                continue  # CL108 已报形状
+            ins = [l for l in logistics
+                   if l.meta.get("to") == to and l.meta.get("what") == what]
+            same = [l for l in ins if l.meta.get("unit") == unit]
+            total = sum(float(l.meta["amount"]) for l in same
+                        if _is_finite_number(l.meta.get("amount")))
+            if not ins:
+                emit("error", v.rel,
+                     f"驻军补给不足：`{to}` 需要 {amount:g} {unit} `{what}`，"
+                     f"但没有任何 `{what}` 物流线送到——断粮")
+            elif not same:
+                units = sorted({str(l.meta.get("unit")) for l in ins})
+                emit("warning", v.rel,
+                     f"驻军补给不足：`{to}` 需要 {amount:g} {unit}，"
+                     f"流入线单位是 {units}——单位不可比，无法判定")
+            elif total < amount - 1e-9:
+                emit("error", v.rel,
+                     f"驻军补给不足：`{to}` 的 `{what}` 需要 {amount:g} {unit}，"
+                     f"同单位流入只有 {total:g} {unit}——断粮")
+            continue
         if any(l.meta.get("to") == to for l in logistics):
             continue
         emit(None, v.rel,

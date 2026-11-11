@@ -1,4 +1,4 @@
-# classlint 协议 · 生产关系层 + 流量层 + 个人关系层 + 时间线层 v0.7
+# classlint 协议 · 生产关系层 + 流量层 + 个人关系层 + 时间线层 v0.8
 
 **状态：草案 ｜ 日期：2026-09-24 ｜ 读者：协议实现者**
 **条款用词"必须/应当/可以"为规范性词汇，含义同 RFC 2119 的 MUST/SHOULD/MAY。**
@@ -120,6 +120,8 @@ WGP 的 `depends_on` 要求 `kind`/`critical` 必填且 kind 五值定集（v1.1
 | `information` | 信息：驿路、情报时延 | `delay`（≥0 的数字，日）；可选 `when`（出发时间） |
 | `people` | 人员：迁徙、流放、朝圣 | `what`（自由词，建议 `migration`/`exile`/`pilgrimage`）、`amount`（>0）、`unit` |
 
+`violence` 线另有一个**可选**字段 `needs: {what, amount, unit}`（驻军所需物资）：写了它，PE011 按「所需 vs 实际同单位物流流入」定量判；不写则退回结构判据（有没有物流线到达）。
+
 `amount` 这类数字字段必须是**有限数字**；`bool` 不算数字（YAML 的 `true` 解析成 bool，不能冒充 1）。写了别的线的字段（比如物流条目的 `delay`）同样非法。以上任何一条不满足 = CL108。
 
 ```yaml
@@ -162,6 +164,7 @@ demand:
 | 字段 | 必填 | 约束 |
 |---|---|---|
 | `demand` | 可选 | 映射：物资名 → `{amount: >0 的有限数字, unit: 非空字符串}`；不接受其它键 |
+| `surplus` | 可选 | 同上形状：**满足自身需求后还能被抽走的上限**；PE004 定量用它判「抽取是否超过剩余」，PE005 定量用它判「声称有剩余却看不到该物资流入」 |
 | `population` | 可选 | 大于 0 的有限数字（bool 不算） |
 
 **数据分级**（PE010 的判定口径）：
@@ -169,7 +172,8 @@ demand:
 1. 目标实体声明了 `demand`：同单位流入求和，`流入 < 需求` = error（断供）；流入存在但单位全都对不上 = warning（单位不可比，无法判定）；完全没有流入 = error（断供）。
 2. 目标实体没有声明 `demand`：这条流入无法对账 = warning——不静默。静默等于把「没写」判成「够用」，正是 CA704 在协议 1.10 之前 fail-open 的教训。
 3. `population` 是规模参照：PE012 用它判断人口流失的端点是否可对账；PE010 的硬判定仍只用 `demand`（人口推算的定量守恒仍未定口径，不冒充需求数）。
-4. `demand`/`population` 形状坏掉 = CL108（结构错误），PE010/PE012 不拿坏数据下判——否则会出现「用 0 参与求和」的误导性断供。
+4. `demand`/`surplus`/`population` 形状坏掉 = CL108（结构错误），PE004/PE010/PE012 不拿坏数据下判——否则会出现「用 0 参与求和」的误导性断供。
+5. `surplus` 是「剩余口径」的显式声明（v0.8）：没有它时 PE004/PE005 只做定性检查，不做定量；有它时 PE004 比较同单位物流流出总量与剩余上限，PE005 检查剩余是否有对应流入。
 
 信息时延律（信息线）需要事件时间，classlint 没有时间字段，**推后到 Sprint 8 时间线层**，本版不实现。
 
@@ -254,7 +258,7 @@ after: 商行抽成
 | CL105 | error | 关系目标 `id` 不存在（含流量条目的 `from`/`to`、时间线条目的 `source`/`affects`） |
 | CL106 | warning | 拆分前的旧写法（`depends_on` + `kind: legitimacy`）——已按新关系名判定，只在输出里提示改写法（同 canonlint 的 CA111） |
 | CL107 | warning | 关系名拼写近失：`relations[].type` 与某个规范名只差一个字符（去掉连字符/下划线后算，如 `extractss`、`depend_on`）。边**已按规范名建好**（所以 PE 族判得到它），本条只提示疑似拼写错误；距离 ≥2 的自定义关系名原样保留、不提示（同 canonlint 的 CA110） |
-| CL108 | error | 流量层格式非法：`flow` 条目违反 §2.3（`line` 缺失/非法、`from`/`to` 缺失或非字符串、本线必填字段不全或类型不对、写了别的线的字段、`trend` 不在词表、`note` 非字符串）；或实体卡的需求侧声明违反 §2.4（`demand` 不是映射、物资名为空、`amount` 不是 >0 的有限数字、`unit` 非空字符串、多余键、`population` 不是 >0 的数字） |
+| CL108 | error | 流量层格式非法：`flow` 条目违反 §2.3（`line` 缺失/非法、`from`/`to` 缺失或非字符串、本线必填字段不全或类型不对、写了别的线的字段、`trend` 不在词表、`note` 非字符串）；或实体卡的需求/剩余声明违反 §2.4（`demand`/`surplus` 不是映射、物资名为空、`amount` 不是 >0 的有限数字、`unit` 非空字符串、多余键、`population` 不是 >0 的数字），或 violence 的 `needs` 形状非法 |
 | CL109 | error | 时间线条目格式非法：`moment` 的 `at` 不是数字、`text` 不是非空字符串、`affects` 不是非空 id 列表；`shift` 的 `begin`/`end` 不是数字或倒置（`begin > end`）、`change`/`before`/`after` 不是非空字符串；写了另一类型的字段（`moment` 写 `begin`、`shift` 写 `at`）；`source`/`note` 类型不对。`source`/`affects` 悬空由 CL105 报 |
 
 ### 3.3 政治经济学规则
@@ -264,14 +268,14 @@ after: 商行抽成
 | PE001 | error | **抽取必须有基础**：存在 `A —extracts→ B` 但 A 对 B 没有任何 `controls` / `coerces` / `owns` 边。目标 `B` 不存在时**不判本条**（CL105 已报，「对不存在的东西论证它没有基础」是空话） |
 | PE002 | error/warning | **不能镇压自己的供养者**：存在 `A —coerces→ B` 且 `A —depends_on→ B`。`critical: true` = error，否则 warning |
 | PE003 | error | **合法性不得无锚闭环**：`legitimizes` 图的强连通分量（含自环）若没有任何来自分量外的 `legitimizes` 输入，报警。有外部锚点的互锁合法（依据：WGP v0.5 魔戒 dogfood，规范性互锁是常态）。**`derives_legitimacy_from` 写的那条也在这张图里**（翻译成反向的 `legitimizes`，判定与旧写法逐条相同）——名分是关系名，不再是 `depends_on` 的 `kind` 值 |
-| PE004 | error | **剩余必须收敛（定性版）**：`extracts` 子图存在环（含自环）——剩余在循环中互相凭空抽取、不落地于任何生产（黑洞）。定量判定（抽取量 vs 剩余量）待流量层数据就位后回填 |
-| PE005 | warning | **劳动者必须被覆盖（定性版）**：存在 `A —extracts→ B` 且 B 没有任何**物质**来源侧边——被抽取者的剩余/再生产在模型里不可见（隐形剥削嫌疑）。「物质来源侧边」= `extracts`、`exchanges_with`、或带物质类别 `kind`（`resource`/`production`/`economy`/`fiscal`/`manpower`，见 `world.schema.json` 的 `x-strict-vocabulary.depends_on.kind`）的 `depends_on`。一条裸 `depends_on`（无 kind，如 `depends_on: [weather]`）**不**消音：自然条件既不是生产关系也不承担再生产，消音必须是一次物质关系的声明。报在 B 侧：修法是补上带 kind 的物质来源，或确认 B 为终端生产者。定量判定待流量层回填 |
+| PE004 | error | **剩余必须收敛**：定性版——`extracts` 子图存在环（含自环），剩余在循环中互相凭空抽取、不落地于生产（黑洞）；定量版（v0.8）——实体声明了 `surplus` 时，从该实体流出的同 `what` 同单位物流总量 > 剩余上限 = error（剩余不收敛），流出存在但单位全不可比 = warning |
+| PE005 | warning | **劳动者必须被覆盖（定性版）**：存在 `A —extracts→ B` 且 B 没有任何**物质**来源侧边——被抽取者的剩余/再生产在模型里不可见（隐形剥削嫌疑）。「物质来源侧边」= `extracts`、`exchanges_with`、或带物质类别 `kind`（`resource`/`production`/`economy`/`fiscal`/`manpower`，见 `world.schema.json` 的 `x-strict-vocabulary.depends_on.kind`）的 `depends_on`。一条裸 `depends_on`（无 kind，如 `depends_on: [weather]`）**不**消音：自然条件既不是生产关系也不承担再生产，消音必须是一次物质关系的声明。报在 B 侧：修法是补上带 kind 的物质来源，或确认 B 为终端生产者。定量版（v0.8）：声称有 `surplus` 却没有任何该物资的物流流入 = warning（剩余从哪来不可见） |
 | PE006 | warning | **危机积累**（v0.4）：实体卡声明了 `demand`，同单位流入 ≥ 需求但余量 < 10%（剩余刚好够活），且该实体有一条 `what` 为 `tax`/`tribute`、`trend: rising` 的物流外流（抽取在上升）——报在实体侧。其它自由词（`grain` 等）的上涨外流算贸易，不据此判危机；classlint 没有时间轴，`trend` 是作者标注的定性方向，不是增长率 |
 | PE007 | warning | **结构性压力**（v0.4）：`people` 流入某实体且 `trend: rising`（人口在增长），而该实体涉及 `owns` 关系（自己占有别人、或被别人占有——占有关系未变）——报在该实体侧。这是结构判据，不推算人口增长率 |
 | PE008 | error | **镇压自己的基础**（v0.4）：存在 `A —coerces→ B`，且物流线从 `B` 流向 `A`（B 在供养 A）——镇压对象同时是供养来源，报在 A 侧。PE002 的流量层结构版：PE002 看承重依赖，PE008 看实际物流 |
 | PE009 | warning | **债务必须收得回来**：存在 `A —owes→ B` 而模型里没有任何收账通道。通道有两条：**债主对债务人的支配**（`B —controls/coerces/extracts/legitimizes→ A` 任一条——能指挥、能强制、能抽取偿付、能撤回正当性），或**债务人对债主的承重依赖**（`A —depends_on→ B`，且这条依赖 `critical: true` 或带物质类别 `kind`：`resource`/`production`/`economy`/`fiscal`/`manpower`）。裸 `depends_on` 与 `x-` 实验类别不算通道。两条都没有 = 这笔债在模型里无法兑现，只是一句记账。报在 A 侧。注意 `owes` 与 `depends_on` 是两条不同的边（债务不等于供养），所以这里**不**因为写了 `owes` 就假定欠债方依赖债主——依赖得另外写出来 |
 | PE010 | error/warning | **物流守恒**（v0.3）：实体卡声明了 `demand` 时，同单位 `logistics` 流入之和必须 ≥ 需求，不够 = error（断供）；流入存在但单位全不可比 = warning；完全没流入 = error。目标没有声明该 `what` 的需求 = warning（这条流入无法对账，不静默）。`demand` 形状坏掉由 CL108 报，本条不判 |
-| PE011 | error | **补给律**（v0.3）：存在 `A —violence→ B` 但没有任何 `logistics` 流量以 `B` 为终点——驻军地没有物流线到达，军队跨线无补给（结构判据，不需要数值） |
+| PE011 | error | **补给律**（v0.3；v0.8 定量）：暴力线的驻军地必须有物流线到达（结构判据）；若 violence 声明了 `needs: {what, amount, unit}`，则同目的地同 `what` 同单位物流流入必须 ≥ 所需——不够 = error（断粮），单位全不可比 = warning，完全没流入 = error |
 | PE012 | warning | **人口律**（v0.3）：`people` 流量的起点与终点是同一实体（流失没有去向），或两端都没有声明 `population`（流失规模无法对账；给至少一端加 population）。结构判据为主，规模核账待人口推算口径定稿 |
 | PE013 | warning | **亲情与镇压矛盾**（v0.5）：存在 `A —coerces→ B` 且 `A —depends_on→ B`（PE002 已报的结构矛盾），而 A 与 B 之间有 `kin`——镇压对象是供养者，同时又是亲人。私人关系可能让镇压被容忍或延迟，审计不应按纯经济人读；报在 A 侧 |
 | PE014 | warning | **庇护关系可能缓冲危机**（v0.5）：PE006 的触发面（被抽取方 `demand` 余量 < 10%）上，若抽取方与被抽取方之间有 `allegiance`——危机可能被庇护网络吸收，不应按纯市场读；报在抽取流量卡侧 |
@@ -314,4 +318,4 @@ rules:
 
 ## 5. 边界声明
 
-本层证明**结构完整性**，不证明数值自洽（抽取量是否真超过剩余）。数值审计属流量层：Sprint 4 做数据模型（CL108 四线流量 + demand/population），Sprint 5 做守恒律（PE010–PE012），Sprint 6 做交叉规则（PE006–PE008），Sprint 7 做个人关系层（五种关系 + PE013/PE014），Sprint 8 做时间线数据模型（`moment`/`shift` + CL109）——量是否守恒由 PE010–PE012 判，结构是否互相拆台由 PE006–PE008 判，私人语境是否缓冲了结构矛盾由 PE013/PE014 提示；信息时延律（PE015，v0.7）用 `moment.at` 与信息线的 `when`/`delay` 对账：抵达 = `when + delay`，目的地在这之前发生变故就是「命令晚于政变」。AI 辅助判断将来同样只递建议条子，永不进退出码。
+本层证明**结构完整性**，不证明数值自洽（抽取量是否真超过剩余）。数值审计属流量层：Sprint 4 做数据模型（CL108 四线流量 + demand/population），Sprint 5 做守恒律（PE010–PE012），Sprint 6 做交叉规则（PE006–PE008），Sprint 7 做个人关系层（五种关系 + PE013/PE014），Sprint 8 做时间线数据模型（`moment`/`shift` + CL109）——PE004/PE005/PE011 的定量回填（v0.8）在剩余口径定稿后完成；量是否守恒由 PE010–PE012 判，结构是否互相拆台由 PE006–PE008 判，私人语境是否缓冲了结构矛盾由 PE013/PE014 提示；信息时延律（PE015，v0.7）用 `moment.at` 与信息线的 `when`/`delay` 对账：抵达 = `when + delay`，目的地在这之前发生变故就是「命令晚于政变」。AI 辅助判断将来同样只递建议条子，永不进退出码。
