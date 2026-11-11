@@ -13,7 +13,6 @@ Git + Markdown 是唯一事实来源：条目 = codex/ 下一个带 YAML frontma
 from __future__ import annotations
 
 import argparse
-from html import escape as html_escape
 import json
 import subprocess
 import sys
@@ -1536,7 +1535,9 @@ def cmd_view(root: Path, out: Path | None = None) -> int:
         return 2
     target = out if out is not None else root / "view.html"
     blob = json.dumps(data, ensure_ascii=False, default=str).replace("</", "<\\/")
-    html = (VIEW_TEMPLATE.replace("__TITLE__", html_escape(str(data.get("world") or root.name)))
+    title = (str(data.get("world") or root.name).replace("&", "&amp;")
+             .replace("<", "&lt;").replace(">", "&gt;"))
+    html = (VIEW_TEMPLATE.replace("__TITLE__", title)
             .replace("__VERSION__", VERSION).replace("__DATA__", blob))
     target.write_text(html, encoding="utf-8")
     print(f"视图已生成: {target}")
