@@ -82,6 +82,7 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("PE008", "error", "codex/lord.md"),     # 顺带触发的镇压自己的基础
         ("PE013", "warning", "codex/lord.md"),   # 亲情与镇压矛盾（kin 兄弟）
         ("PE014", "warning", "codex/flow-tax-out.md"),  # 庇护关系缓冲危机
+        ("CL108", "error", "codex/town.md"),     # demand 混入非字符串键（PE 不得崩）
     ],
     "personal-clean": [],
     "delay-bad": [
@@ -92,6 +93,7 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("PE004", "error", "codex/town.md"),      # 剩余 200 石，抽走 300 石
         ("PE005", "warning", "codex/hamlet.md"),  # 声称剩余，但没有任何流入
         ("PE011", "error", "codex/rule-army.md"),  # 军需 400 石，流入 250 石
+        ("CL101", "error", "codex/flow-noid.md"),  # 流量缺 id（PE004 不得崩）
     ],
     "supply-clean": [],
     # 时间线层（协议 v0.6）：CL109 形状 + CL105 悬空
@@ -104,6 +106,7 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("CL109", "error", "codex/bad-shift-field.md"),  # shift 写 at
         ("CL105", "error", "codex/bad-source.md"),       # source 悬空
         ("CL105", "error", "codex/bad-affects-ref.md"),  # affects 悬空
+        ("CL103", "error", "codex/bad-when.md"),         # 时间线卡写 when（字段未定义）
     ],
     "personal-shape-bad": [
         ("CL104", "error", "codex/plain-kin.md"),  # `kin` 不是列表
@@ -128,6 +131,7 @@ EXPECTED: dict[str, list[tuple[str, str, str]]] = {
         ("CL108", "error", "codex/bad-violence.md"),
         ("CL108", "error", "codex/bad-demand.md"),       # demand 不是映射
         ("CL108", "error", "codex/bad-population.md"),   # population 不是数字
+        ("CL108", "error", "codex/bad-needs.md"),        # needs 不是映射（legacy 曾重复报）
         ("CL103", "error", "codex/bad-flow-demand.md"),  # 流量条目写 demand
     ],
     "structure-bad": [
@@ -706,8 +710,59 @@ def check_view_html_generation() -> int:
             if [x["id"] for x in data.get("shifts", [])] != ["shift-rent"]:
                 print(f"FAIL 视图结构变迁不对：{data.get('shifts')}")
                 failures += 1
+    # 标题转义：世界目录名可控时不能把标签原样写进 HTML
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "<b>rel"
+        (root / "codex").mkdir(parents=True)
+        (root / "classlint.yaml").write_text('name: probe\nclasslint: "0.8"\n',
+                                             encoding="utf-8")
+        (root / "codex" / "town.md").write_text(
+            "---\nid: town\ntitle: 城镇\ntype: location\n---\n", encoding="utf-8")
+        out = Path(td) / "escaped.html"
+        if classlint.cmd_view(root, out) != 0:
+            print("FAIL 视图标题转义：cmd_view 返回非 0")
+            failures += 1
+        else:
+            html = out.read_text(encoding="utf-8")
+            if "<b>rel" in html:
+                print("FAIL 视图标题未转义：世界目录名原样写进 HTML")
+                failures += 1
+            if "&lt;b&gt;rel" not in html:
+                print("FAIL 视图标题转义结果未出现 `&lt;b&gt;rel`")
+                failures += 1
     if not failures:
-        print("PASS 视图生成（自包含 HTML，关系图 + 时间线数据齐全）")
+        print("PASS 视图生成（自包含 HTML，关系图 + 时间线数据齐全，标题转义）")
+    return failures
+
+
+def check_fork_branch() -> int:
+    """fork：从当前世界开反事实分支；同名分支已存在时拒绝。"""
+    import subprocess
+    failures = 0
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "world"
+        (root / "codex").mkdir(parents=True)
+        (root / "classlint.yaml").write_text('name: probe\nclasslint: "0.8"\n',
+                                             encoding="utf-8")
+        (root / "codex" / "town.md").write_text(
+            "---\nid: town\ntitle: 城镇\ntype: location\n---\n", encoding="utf-8")
+        git = ["git", "-c", "user.email=t@example.com", "-c", "user.name=t"]
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(git + ["add", "."], cwd=root, check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "init"], cwd=root, check=True)
+        if classlint.cmd_fork(root, "alt") != 0:
+            print("FAIL fork：首次开分支应返回 0")
+            failures += 1
+        branches = subprocess.run(["git", "branch", "--list", "alt"], cwd=root,
+                                  capture_output=True, text=True).stdout
+        if "alt" not in branches:
+            print("FAIL fork：分支 alt 没有创建")
+            failures += 1
+        if classlint.cmd_fork(root, "alt") != 1:
+            print("FAIL fork：同名分支已存在时应返回 1")
+            failures += 1
+    if not failures:
+        print("PASS fork：反事实分支可创建，重名被拒绝")
     return failures
 
 
@@ -1043,6 +1098,7 @@ def main() -> int:
     failures += check_finding_order_matters()
     failures += check_registry_cl_pe_dual_run()
     failures += check_view_html_generation()
+    failures += check_fork_branch()
     extra = set(EXPECTED) - set(worlds)
     for name in sorted(extra):
         print(f"FAIL {name}: EXPECTED 登记了期望但夹具目录不存在")

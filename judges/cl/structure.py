@@ -28,7 +28,7 @@ FLOW_ENTITY_FIELDS = {"demand", "population", "surplus"}
 TIMELINE_TYPES = ("moment", "shift")
 TIMELINE_MOMENT_FIELDS = {"at", "text", "affects", "source", "note"}
 TIMELINE_SHIFT_FIELDS = {"begin", "end", "change", "before", "after", "source", "note"}
-TIMELINE_FIELDS = (TIMELINE_MOMENT_FIELDS | TIMELINE_SHIFT_FIELDS) - {"note"}
+TIMELINE_FIELDS = TIMELINE_MOMENT_FIELDS | TIMELINE_SHIFT_FIELDS
 
 
 def _timeline_fields_for(kind):

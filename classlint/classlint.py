@@ -13,6 +13,7 @@ Git + Markdown 是唯一事实来源：条目 = codex/ 下一个带 YAML frontma
 from __future__ import annotations
 
 import argparse
+from html import escape as html_escape
 import json
 import subprocess
 import sys
@@ -108,7 +109,7 @@ FLOW_TRENDS = ("rising", "flat", "falling")
 TIMELINE_TYPES = ("moment", "shift")
 TIMELINE_MOMENT_FIELDS = {"at", "text", "affects", "source", "note"}
 TIMELINE_SHIFT_FIELDS = {"begin", "end", "change", "before", "after", "source", "note"}
-TIMELINE_FIELDS = (TIMELINE_MOMENT_FIELDS | TIMELINE_SHIFT_FIELDS) - {"note"}
+TIMELINE_FIELDS = TIMELINE_MOMENT_FIELDS | TIMELINE_SHIFT_FIELDS
 
 # ---- 需求侧数据模型（协议 v0.3，给 Sprint 5 的守恒律用）------------------------
 # 实体卡可以声明自己的需求（`demand: {what: {amount, unit}}`）与人口基数
@@ -355,9 +356,6 @@ def timeline_schema_findings(e: Entry) -> list[Finding]:
         bad("`source` 必须是字符串 id（第一条目世界外历史/设定来源，不进时间线）")
     if "note" in e.meta and not isinstance(e.meta["note"], str):
         bad("`note` 必须是字符串")
-    when = e.meta.get("when")
-    if when is not None and not _is_finite_number(when):
-        bad("`when` 必须是数字（世界内时间轴；不写则不判时延律）")
     return findings
 
 
@@ -432,23 +430,6 @@ def flow_schema_findings(e: Entry) -> list[Finding]:
             for key in needs:
                 if key not in ("what", "amount", "unit"):
                     bad(f"`needs` 不接受字段 `{key}`")
-    if "needs" in e.meta and line == "violence":
-        needs = e.meta.get("needs")
-        if not isinstance(needs, dict):
-            bad("`needs` 必须是映射（含 what/amount/unit）")
-        else:
-            if not _nonempty_str(needs.get("what")):
-                bad("`needs.what` 必须是非空字符串")
-            if not _is_finite_number(needs.get("amount")) or needs.get("amount") <= 0:
-                bad("`needs.amount` 必须是大于 0 的数字")
-            if not _nonempty_str(needs.get("unit")):
-                bad("`needs.unit` 必须是非空字符串")
-            for key in needs:
-                if key not in ("what", "amount", "unit"):
-                    bad(f"`needs` 不接受字段 `{key}`")
-    when = e.meta.get("when")
-    if when is not None and not _is_finite_number(when):
-        bad("`when` 必须是数字（世界内时间轴；不写则不判时延律）")
     return findings
 
 
@@ -688,6 +669,8 @@ def pe004(world: World, emit) -> None:
 
     logistics = _flow_entries(world, "logistics")
     for entity in world.entries:
+        if entity.meta.get("type") == "flow":
+            continue  # flow 卡写 surplus 由 CL103 报，不拿它下判
         surplus = entity.meta.get("surplus")
         if not isinstance(surplus, dict):
             continue
@@ -821,6 +804,8 @@ def _flow_entries(world: World, line: str) -> list[Entry]:
     for e in world.entries:
         if e.meta.get("type") != "flow" or e.meta.get("line") != line:
             continue
+        if e.id is None:
+            continue
         frm, to = e.meta.get("from"), e.meta.get("to")
         if not isinstance(frm, str) or not isinstance(to, str):
             continue
@@ -849,6 +834,8 @@ def pe010(world: World, emit) -> None:
         if not isinstance(demand, dict):
             continue
         for what, spec in demand.items():
+            if not isinstance(what, str):
+                continue  # 坏键由 CL108 报，不拿它下判
             if not isinstance(spec, dict):
                 continue
             amount, unit = spec.get("amount"), spec.get("unit")
@@ -960,7 +947,7 @@ def pe006(world: World, emit) -> None:
                             key=lambda f: f.id or "")
         if not extraction:
             continue
-        for what in sorted(demand):
+        for what in sorted(k for k in demand if isinstance(k, str)):
             spec = demand[what]
             if not isinstance(spec, dict):
                 continue
@@ -1055,7 +1042,7 @@ def pe014(world: World, emit) -> None:
         # 只在 PE006 的触发面上报：被抽取方有需求且同单位余量 < 10%。
         demand = _demand_of(world, frm)
         crisis = None
-        for dwhat in sorted(demand):
+        for dwhat in sorted(k for k in demand if isinstance(k, str)):
             spec = demand[dwhat]
             if not isinstance(spec, dict):
                 continue
@@ -1549,7 +1536,7 @@ def cmd_view(root: Path, out: Path | None = None) -> int:
         return 2
     target = out if out is not None else root / "view.html"
     blob = json.dumps(data, ensure_ascii=False, default=str).replace("</", "<\\/")
-    html = (VIEW_TEMPLATE.replace("__TITLE__", str(data.get("world") or root.name))
+    html = (VIEW_TEMPLATE.replace("__TITLE__", html_escape(str(data.get("world") or root.name)))
             .replace("__VERSION__", VERSION).replace("__DATA__", blob))
     target.write_text(html, encoding="utf-8")
     print(f"视图已生成: {target}")
@@ -1577,7 +1564,7 @@ def cmd_fork(root: Path, name: str) -> int:
     if r.returncode == 0:
         print(f"error: 分支 {name} 已存在", file=sys.stderr)
         return 1
-    r = subprocess.run(["git", "branch", name], cwd=root,
+    r = subprocess.run(["git", "branch", "--", name], cwd=root,
                        capture_output=True, text=True)
     if r.returncode != 0:
         print(f"error: git branch 失败：{r.stderr.strip()}", file=sys.stderr)
