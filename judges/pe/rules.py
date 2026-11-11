@@ -105,6 +105,8 @@ def check_pe004(world, emit) -> None:
 
     logistics = _flow_entries(world, "logistics")
     for entity in world.entries:
+        if entity.meta.get("type") == "flow":
+            continue  # flow 卡写 surplus 由 CL103 报，不拿它下判
         surplus = entity.meta.get("surplus")
         if not isinstance(surplus, dict):
             continue
@@ -196,6 +198,8 @@ def _flow_entries(world, line: str) -> list:
     for entry in world.entries:
         if entry.meta.get("type") != "flow" or entry.meta.get("line") != line:
             continue
+        if entry.id is None:
+            continue
         frm, to = entry.meta.get("from"), entry.meta.get("to")
         if not isinstance(frm, str) or not isinstance(to, str):
             continue
@@ -218,6 +222,8 @@ def check_pe010(world, emit) -> None:
         if not isinstance(demand, dict):
             continue
         for what, spec in demand.items():
+            if not isinstance(what, str):
+                continue  # 坏键由 CL108 报，不拿它下判
             if not isinstance(spec, dict):
                 continue
             amount, unit = spec.get("amount"), spec.get("unit")
@@ -322,7 +328,7 @@ def check_pe006(world, emit) -> None:
                             key=lambda flow: flow.id or "")
         if not extraction:
             continue
-        for what in sorted(demand):
+        for what in sorted(k for k in demand if isinstance(k, str)):
             spec = demand[what]
             if not isinstance(spec, dict):
                 continue
@@ -419,7 +425,7 @@ def check_pe014(world, emit) -> None:
         if not isinstance(demand, dict):
             continue
         crisis = None
-        for dwhat in sorted(demand):
+        for dwhat in sorted(k for k in demand if isinstance(k, str)):
             spec = demand[dwhat]
             if not isinstance(spec, dict):
                 continue

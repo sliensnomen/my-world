@@ -7,5 +7,6 @@ text: 灰港开埠，商船第一次进港。
 affects:
   - town
 source: town
+note: 商路从此打开
 ---
 点事件。
