@@ -10,8 +10,11 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1265,6 +1268,108 @@ def check_cmd_new_interactive_false_never_asks():
         assert Path(out["path"]).is_file(), "建卡成功却没文件"
 
 
+def _standalone_copy(tmp: Path) -> Path:
+    """拷一份「只拷了 store/ 与 judges/」的独立运行环境（不含世界契约）。
+
+    /tmp 在 CI 与本地都是干净的临时目录；每处调用都在**同一次** bash/进程里完成，
+    不依赖跨进程可见的临时文件。
+    """
+    root = tmp / "standalone"
+    root.mkdir()
+    for pkg in ("store", "judges"):
+        shutil.copytree(ROOT / pkg, root / pkg)
+    for name in ("canonlint.py", "ledger.py"):
+        shutil.copy2(ROOT / name, root / name)
+    shutil.copytree(ROOT / "tests" / "world-arrakis", root / "world")
+    return root
+
+
+def _env_without_compat() -> dict:
+    return {k: v for k, v in os.environ.items() if k != "WGP_COMPAT_VOCAB"}
+
+
+def _run_standalone(root: Path, *args: str, compat: bool = False):
+    env = _env_without_compat()
+    if compat:
+        env["WGP_COMPAT_VOCAB"] = "1"
+    return subprocess.run([sys.executable, "canonlint.py", *args], cwd=str(root),
+                          capture_output=True, text=True, env=env)
+
+
+def check_contract_reading_is_strict_in_repo():
+    """仓库里的契约是「存在且合格」：来源、版本、指纹都对，词表不是内置兜底。"""
+    status = store.contract_status()
+    raw = (ROOT / "world.schema.json").read_bytes()
+    assert status["source"] == "contract", f"契约来源不对：{status}"
+    assert status["degraded"] is False, f"仓库内不应进入兼容模式：{status}"
+    assert status["path"] == str(ROOT / "world.schema.json"), f"契约路径不对：{status}"
+    assert status["version"] == canonlint.CONTRACT_VERSION,         f"契约版本 {status['version']} 与代码 CONTRACT_VERSION={canonlint.CONTRACT_VERSION} 不一致"
+    assert status["fingerprint"] == hashlib.sha256(raw).hexdigest()[:16],         f"契约指纹不对：{status['fingerprint']}"
+    want = json.loads(raw)["x-relation-vocabulary"]["names"]
+    assert len(store.RELATION_VOCABULARY) == len(want),         f"词表条数 {len(store.RELATION_VOCABULARY)} 与契约 {len(want)} 不一致"
+
+
+def check_contract_failures_are_loud():
+    """契约缺失/损坏/缺键/类型错：分别明确非零退出；兼容模式必须显式且带标记。
+
+    以前这四种情况都退回内置词表、输出一份看似正常的审计——这条锁钉住 #12。
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _standalone_copy(Path(tmp))
+        schema = root / "world.schema.json"
+
+        # 1) 契约不在、没开兼容模式：拒绝运行，并告诉用户开关在哪
+        p = _run_standalone(root, "world")
+        assert p.returncode == 2, f"契约缺失应以退出码 2 失败，实际 {p.returncode}: {p.stderr}"
+        assert "契约缺失" in p.stderr and "WGP_COMPAT_VOCAB" in p.stderr, p.stderr
+        assert "Traceback" not in p.stderr, f"失败应是诊断，不是 traceback：{p.stderr}"
+
+        # 2) 契约不在、显式兼容模式：能跑，但 CLI 与导出都带可见标记
+        p = _run_standalone(root, "world", compat=True)
+        assert p.returncode == 0, f"兼容模式应正常审计，实际 {p.returncode}: {p.stderr}"
+        assert "兼容模式" in p.stderr and "source=builtin" in p.stderr, p.stderr
+        assert "不是完整契约审计" in p.stderr, p.stderr
+        p = _run_standalone(root, "export", "world", "--out", "out.json", compat=True)
+        assert p.returncode == 0, p.stderr
+        data = json.loads((root / "out.json").read_text(encoding="utf-8"))
+        assert data.get("contract", {}).get("degraded") is True,             f"兼容模式的导出必须自证降级：{data.get('contract')}"
+        assert data["contract"].get("source") == "builtin", data["contract"]
+
+        # 3) 契约在但 JSON 损坏：即使开了兼容模式也不放行（损坏是错误，不是运行环境）
+        schema.write_text("{bad", encoding="utf-8")
+        for compat in (False, True):
+            p = _run_standalone(root, "world", compat=compat)
+            assert p.returncode == 2, f"损坏契约应以退出码 2 失败（compat={compat}）"
+            assert "JSON 损坏" in p.stderr, p.stderr
+
+        # 4) 契约在但缺必需键
+        schema.write_text("{}", encoding="utf-8")
+        p = _run_standalone(root, "world")
+        assert p.returncode == 2 and "x-contract-version" in p.stderr, p.stderr
+
+        # 5) 契约在但类型不对
+        good = json.loads((ROOT / "world.schema.json").read_text(encoding="utf-8"))
+        good["x-relation-vocabulary"]["names"]["owns"]["accept"] = "nope"
+        schema.write_text(json.dumps(good), encoding="utf-8")
+        p = _run_standalone(root, "world")
+        assert p.returncode == 2 and "accept" in p.stderr, p.stderr
+
+
+def check_compat_mode_headers_are_visible():
+    """HTTP 侧也要能看出降级：正常模式不加头，兼容模式加来源/版本/指纹。"""
+    import serve  # noqa: PLC0415 —— 只在需要时加载 HTTP 层
+
+    assert serve.contract_headers() == {}, "正常模式不该有兼容模式响应头"
+    h = serve.contract_headers({"source": "builtin", "degraded": True,
+                                "version": None, "fingerprint": None})
+    assert h.get("X-WGP-Compat") == "builtin", h
+    assert h.get("X-WGP-Contract-Source") == "builtin", h
+    h = serve.contract_headers({"source": "builtin", "degraded": True,
+                                "version": "0.8", "fingerprint": "deadbeef"})
+    assert h.get("X-WGP-Contract-Version") == "0.8", h
+    assert h.get("X-WGP-Contract-Fingerprint") == "deadbeef", h
+
+
 CHECKS = (
     ("规范形与旧写法等价（三种关系）", check_canonical_equals_legacy),
     ("规范形的形状错误会出现在报告里", check_shape_errors_reach_the_report),
@@ -1292,6 +1397,9 @@ CHECKS = (
     ("new/event 写出事件卡与断言字段（写入路径 Phase 0）", check_new_writes_event_cards),
     ("set_fields 行级改字段 + 写完自检 + 拒绝写坏（Phase 3）", check_set_fields_does_line_level_updates),
     ("interactive=False 的写路径不读 stdin", check_cmd_new_interactive_false_never_asks),
+    ("契约读取严格且带版本/指纹", check_contract_reading_is_strict_in_repo),
+    ("契约缺失/损坏明确失败；兼容模式显式且带标记", check_contract_failures_are_loud),
+    ("兼容模式的 HTTP 响应头可见", check_compat_mode_headers_are_visible),
 )
 
 

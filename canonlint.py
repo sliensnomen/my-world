@@ -31,8 +31,14 @@ except ImportError:  # 环境错误，不是逻辑分支
     print("error: 缺少依赖 pyyaml（pip install pyyaml）", file=sys.stderr)
     sys.exit(2)
 
-import store  # 存储层：模型 / 解析 / 布局 / 写入
-from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
+from store.contract import ContractError  # 契约缺失/损坏时用它做一次人话退出（#12）
+
+try:
+    import store  # 存储层：模型 / 解析 / 布局 / 写入
+    from store import Entry, ID_RE  # noqa: F401  （ID_RE 供 CA105 使用）
+except ContractError as exc:
+    print(f"error: {exc}", file=sys.stderr)
+    sys.exit(2)
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 from judges.model import Pack
 from judges.registry import PackImportError, RegistryError, load_backend, select_packs
@@ -1092,7 +1098,7 @@ def build_export(all_entries: list[Entry], findings: list[Finding],
     # 派生状态透出（B6）：结论断言 + 流水 → 谁拿着什么、谁在哪个组织
     states_raw = ledger.derive_state(index) if index is not None else {}
     membership_raw = ledger.derive_membership(index) if index is not None else {}
-    return _json_safe({
+    result = _json_safe({
         "protocol_version": PROTOCOL_VERSION,
         "contract_version": CONTRACT_VERSION,
         "counts": {
@@ -1131,6 +1137,17 @@ def build_export(all_entries: list[Entry], findings: list[Finding],
                       "message": f.message} for f in findings],
         "reports": reports,
     })
+    status = store.contract_status()
+    if status["degraded"]:
+        # 导出报告也必须能自证「这份数据不是按完整契约审出来的」（#12）。
+        result["contract"] = {
+            "source": status["source"],
+            "degraded": True,
+            "version": status["version"],
+            "fingerprint": status["fingerprint"],
+            "reason": status["reason"],
+        }
+    return result
 
 
 def export_world(root: Path, packs=(), impact=(), extra_known=frozenset(),
@@ -1291,7 +1308,20 @@ def _event_kind(value: str) -> str:
         f"或 x- 开头的实验值")
 
 
+def contract_notice() -> str | None:
+    """兼容模式（契约缺失 + 显式 WGP_COMPAT_VOCAB）时给用户看的醒目提示；正常模式 None。"""
+    status = store.contract_status()
+    if not status["degraded"]:
+        return None
+    return ("⚠ 兼容模式：世界契约 world.schema.json 未读到，关系词表已退回内置词表"
+            f"（source={status['source']}，version={status['version']}，"
+            f"fingerprint={status['fingerprint']}）。本次审计不是完整契约审计。")
+
+
 def main() -> int:
+    notice = contract_notice()
+    if notice:
+        print(notice, file=sys.stderr)
     # 人类工作流子命令：init / new / link / export / ledger / event；其余按审计（check）处理
     if len(sys.argv) > 1 and sys.argv[1] in ("init", "new", "link", "export", "ledger", "event"):
         cmd = sys.argv[1]

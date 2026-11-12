@@ -31,8 +31,13 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from store import model as shared_model  # noqa: E402
-from store import parse as shared  # noqa: E402
+from store.contract import ContractError  # noqa: E402
+try:
+    from store import model as shared_model  # noqa: E402
+    from store import parse as shared  # noqa: E402
+except ContractError as exc:
+    print(f"error: {exc}", file=sys.stderr)
+    sys.exit(2)
 
 VERSION = "0.8"
 
@@ -1668,7 +1673,20 @@ def cmd_check(root: Path, as_json: bool, impact_ids: list[str],
     return 0
 
 
+def contract_notice() -> str | None:
+    """兼容模式（契约缺失 + 显式 WGP_COMPAT_VOCAB）时给用户看的醒目提示。"""
+    status = shared.contract_status()
+    if not status["degraded"]:
+        return None
+    return ("⚠ 兼容模式：世界契约 world.schema.json 未读到，读卡词表已退回内置词表"
+            f"（source={status['source']}，version={status['version']}，"
+            f"fingerprint={status['fingerprint']}）。本次判定不是完整契约审计。")
+
+
 def main() -> int:
+    notice = contract_notice()
+    if notice:
+        print(notice, file=sys.stderr)
     ap = argparse.ArgumentParser(
         description=f"classlint — 马克思主义政治经济学审计工具 v{VERSION}")
     sp = ap.add_subparsers(dest="cmd", required=True)

@@ -89,7 +89,7 @@ python3 serve.py ~/worlds/grey-harbor --port 8000 --writable        # 默认只�
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
 - ✅ **能判**：40 条 CA 规则（结构 / 引用 / 承重链条 / 事件流水 / 重复 / 影响报告）+ CL1xx + PE001–PE015
-- ✅ **有回归网**：`tests/` 五套（74 + 12 + 26 + 35 + 15 项检查）+ `classlint/tests/` 一套（31 个夹具世界），
+- ✅ **有回归网**：`tests/` 五套（74 + 12 + 29 + 35 + 15 项检查）+ `classlint/tests/` 一套（31 个夹具世界），
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ✅ **判定器注册表**：`judges/` 用统一 Rule/Pack 元数据装载 CA/CL/PE/econ，默认后端为 registry；`WGP_JUDGE_BACKEND=legacy` 可整批回退，非法值在审计或端口绑定前以退出码 2 失败。迁移期用 `judges/compare.py` 双跑旧/新后端，Finding、CLI、HTTP 与审计日志归一化后逐项判等
 - ✅ **界面 v0.2**：`web/index.html`（台账 / 审计 / 流水三视图 + 记账表单 + 升格/降级工单，零依赖零构建，`serve.py` 同源伺候）；默认只读，`--writable` 时界面才显示写入口

@@ -14,12 +14,20 @@ canonlint（CA 规则）与 classlint（CL/PE 规则）读的是同一批卡，�
 """
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+
+from .contract import (
+    FALLBACK_RELATION_NAMES,
+    SCHEMA_NAME,
+    SCHEMA_PATH,
+    ContractError,
+    contract_status as get_contract_status,
+    get_contract,
+)
 
 # ---- id 语法与文件形状 ------------------------------------------------------
 
@@ -36,60 +44,33 @@ HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 # 本层不认识任何关系名的**含义**；它只负责「同一个关系的所有历史拼法 → 一个规范名」。
 # 真值表在契约 world.schema.json 的 x-relation-vocabulary；本模块读它，不自己再写一份。
 
-SCHEMA_NAME = "world.schema.json"
-SCHEMA_PATH = Path(__file__).resolve().parent.parent / SCHEMA_NAME
-
 # 规范形边允许的键（契约 $defs/relation；`x-` 前缀的键永远是允许的）
 CANONICAL_RELATION_ITEMS = ("type", "target", "kind", "critical", "stance", "note", "what")
 
-# 契约缺席（单独拷走 store/ 或 classlint/）时的退化表：本工具读得懂的具名字段名。
-# 有了它，「契约读不到」不会让引擎把已知关系名当成未定义字段。
-FALLBACK_RELATION_NAMES = ("canon_refs", "conflicts_with", "depends_on", "exchanges_with",
-                           "owns", "controls", "extracts", "coerces", "legitimizes",
-                           "derives_legitimacy_from", "owes")
-
-
-def _read_schema() -> dict:
-    """读契约 JSON；读不到就返回空表（各调用点各自退化，不在这里静默吞掉一切）。"""
-    try:
-        return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+# 契约的唯一入口在 store/contract.py：读、体检、兼容模式都在那里。
+# 本模块只消费它读好的词表；契约缺失/损坏时 import 就会抛 ContractError（引擎会把它
+# 变成一次明确的非零退出）。以前的「读不到就返回空表、各调用点各自退化」已删除。
+CONTRACT = get_contract()
 
 
 def contract_relation_names() -> dict[str, tuple[str, ...]]:
     """读契约的关系名词表：{规范名: (契约声明的全部可接受拼法…)}。"""
-    try:
-        return {name: tuple(spec["accept"])
-                for name, spec in _read_schema()["x-relation-vocabulary"]["names"].items()}
-    except (KeyError, TypeError):
-        return {}
+    return dict(CONTRACT.names)
 
 
 def contract_deprecations() -> tuple[tuple[str, str, str], ...]:
-    """读契约的「旧写法 → 新关系名」搬家表：((旧关系名, 旧注解值, 新关系名), …)。
-
-    「`depends_on` + 某个 `kind` 值其实已经是一个独立关系名」这类历史写法由契约声明，
-    本层只执行搬运：存储层不认识理论词，也不替判定器决定该怎么判——两个引擎看到同一条
-    边就够了。
-    """
-    try:
-        items = _read_schema()["x-relation-vocabulary"]["deprecations"]
-        return tuple((str(i["relation"]), str(i["kind"]), str(i["becomes"])) for i in items)
-    except (KeyError, TypeError):
-        return ()
+    """读契约的「旧写法 → 新关系名」搬家表：((旧关系名, 旧注解值, 新关系名), …)。"""
+    return CONTRACT.deprecations
 
 
 def contract_strict_vocabulary(key: str) -> tuple[str, ...]:
-    """读契约 `x-strict-vocabulary` 里的一个词表（如 `depends_on.kind`）。
+    """读契约 `x-strict-vocabulary` 里的一个词表（如 `depends_on.kind`）。"""
+    return CONTRACT.strict_vocabulary.get(key, ())
 
-    契约是唯一真值；读不到就返回空元组，由调用点决定怎么退化（各引擎的退化表不同，
-    因为那是各引擎自己的政策，不是契约的一部分）。
-    """
-    try:
-        return tuple(str(v) for v in _read_schema()["x-strict-vocabulary"][key])
-    except (KeyError, TypeError):
-        return ()
+
+def contract_status() -> dict:
+    """给 CLI / HTTP / 导出做可见标记用的契约快照。"""
+    return get_contract_status()
 
 
 def shape_variants(word: str) -> set[str]:

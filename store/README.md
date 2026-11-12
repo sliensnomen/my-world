@@ -4,6 +4,7 @@
 
 | 文件 | 管什么 |
 |---|---|
+| `store/contract.py` | **契约的唯一读取口**：读 `world.schema.json`、校验结构、算指纹、兼容模式（见下） |
 | `store/parse.py` | **读卡代码的唯一一份**：id 语法、frontmatter 切分、契约词表、关系名归一化、`Relation`/`RawEntry` |
 | `store/model.py` | 条目模型（`Entry`）、字段表、从 `RawEntry` 长成 `Entry`（挂上 `edges` 视图） |
 | `store/layout.py` | 目录布局（`ENTRY_DIRS`/`SKIP_DIRS`/`TYPE_DIRS`）、扫描与 id 索引 |
@@ -21,6 +22,25 @@
 canonlint 要求 `depends_on` 对象式且 `kind`/`critical` 给全，classlint 按自己的协议降为可选），
 由 `tests/test_store.py` 的「两个引擎建同一张边图」钉着——例外只许是这一处。
 
+---
+
+## 契约是唯一真值（`store/contract.py`）
+
+关系词表、弃用别名、strict 口径**全部**来自仓库根的 `world.schema.json`。
+`store/contract.py` 是它唯一的读取口，规则只有一条：**读到就必须是完整的，读不到就不许假装**。
+
+- 契约存在但坏了（JSON 坏 / 缺 `x-contract-version` / 类型错）→ 立即失败，CLI 退出码 2，
+  错误信息指出**位置**（例如 `x-relation-vocabulary.names.owns.accept 必须是非空列表`）；
+  绝不退回内置词表。
+- 官方仓库里契约缺失 → 立即失败（仓库不完整，不是世界的问题）。
+- **独立拷贝**（只拷了 `store/` 或 `classlint/`，没有契约文件）且显式设置
+  `WGP_COMPAT_VOCAB=1`（或 `true`/`yes`/`on`）→ 允许兼容模式：词表退回内置 11 个名字，
+  并在 CLI stderr、HTTP 响应头（`X-WGP-Compat: builtin`、`X-WGP-Contract-*`）、
+  `export` 数据集的 `contract` 段三处带可见标记。契约存在但损坏时，兼容模式**也不放行**。
+- 每次加载都会算 `sha256(原始字节)[:16]` 指纹；`contract_status()` 把 source / degraded /
+  version / fingerprint 暴露给三个出口，`tests/test_store.py` 的「契约读取严格且带版本/指纹」
+  钉着「测试跑在真契约上」这件事。
+
 规则不在这里。层级方向、承重墙、盲区、合法性闭环、关系讲不讲得通——那些默认在
 `judges/` 的 Registry Pack 里；`canonlint.py` 与 `classlint/classlint.py` 只保留 legacy 回退实现。
 **存储层不认识理论**：它不知道 `fiscal` 与 `manpower` 有什么区别，也不知道哪一层该养哪一层。
@@ -34,10 +54,10 @@ canonlint 要求 `depends_on` 对象式且 `kind`/`critical` 给全，classlint 
 ```sh
 python3 tests/run_tests.py            # 15 种快照跑法 + 意图断言，共 74 项检查
 python3 tests/test_schema.py          # 契约与代码常量不漂移（12 项）
-python3 tests/test_store.py           # 存储层边界，包括本文件的规矩（26 项）
+python3 tests/test_store.py           # 存储层边界，包括本文件的规矩（29 项）
 python3 tests/test_serve.py           # 接口与前端数据合同（35 项）
 python3 tests/test_docs.py            # 文档数字、链接与总索引（15 项）
-python3 classlint/tests/run_tests.py  # classlint 的 18 个夹具世界
+python3 classlint/tests/run_tests.py  # classlint 的 31 个夹具世界
 ```
 
 `tests/run_tests.py` 里的快照（`tests/snapshots/`）是**逐字节**的：存储层重构不允许
