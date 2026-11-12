@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from judges.model import Pack, Rule
-from judges.registry import RegistryError
+from judges.registry import RegistryError, verify_schedule
 
 from . import structure
 
@@ -51,6 +51,7 @@ def apply_core_cl(pack: Pack, entries, index, model, known_fields, emit) -> None
     """保留 collect 的逐卡顺序、CL106 后扫与最后 CL105，而非按 Rule.order 排序。"""
     rules = {rule.id: rule for rule in pack.rules}
     context = {"all_entries": entries, "index": index, "model": model}
+    dispatched: set[str] = set()
 
     def adapted_emit(rule: Rule, level, rel, message):
         actual_level = rule.default_level if level is None else level
@@ -62,6 +63,7 @@ def apply_core_cl(pack: Pack, entries, index, model, known_fields, emit) -> None
         rule = rules[rule_id]
         if rule.scope != "entry" or rule.entry_domain != "all_entries":
             raise RegistryError(f"core-cl 不能在条目日程调度规则 {rule.id}")
+        dispatched.add(rule.id)
 
         def add(level, message):
             adapted_emit(rule, level, entry.rel, message)
@@ -72,6 +74,7 @@ def apply_core_cl(pack: Pack, entries, index, model, known_fields, emit) -> None
         rule = rules[rule_id]
         if rule.scope != "world":
             raise RegistryError(f"core-cl 不能在仓库日程调度规则 {rule.id}")
+        dispatched.add(rule.id)
         return rule.check(
             context, lambda level, rel, message: adapted_emit(rule, level, rel, message))
 
@@ -89,3 +92,5 @@ def apply_core_cl(pack: Pack, entries, index, model, known_fields, emit) -> None
     for entry in entries:
         run_entry("CL106", entry)
     run_world("CL105")
+    verify_schedule(pack, dispatched, site="core-cl",
+                    check_missing=any(not e.parse_error for e in entries))

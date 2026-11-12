@@ -45,6 +45,22 @@ if str(HERE) not in sys.path:
 
 import canonlint  # noqa: E402  （同一个目录里的参考实现）
 
+from store.contract import contract_status as _contract_status  # noqa: E402
+
+
+def contract_headers(status: dict | None = None) -> dict:
+    """兼容模式下的响应头：让 HTTP 客户端一眼看出这不是完整契约审计（#12）。"""
+    st = status if status is not None else _contract_status()
+    if not st.get("degraded"):
+        return {}
+    headers = {"X-WGP-Compat": "builtin",
+               "X-WGP-Contract-Source": str(st.get("source") or "builtin")}
+    if st.get("version"):
+        headers["X-WGP-Contract-Version"] = str(st["version"])
+    if st.get("fingerprint"):
+        headers["X-WGP-Contract-Fingerprint"] = str(st["fingerprint"])
+    return headers
+
 WEB_DIR = HERE / "web"
 ROUTES = ["/", "/api/health", "/api/world", "/api/entry/<id>", "/api/raw/<path>", "/web/..."]
 _MAX_BODY = 1 << 20  # 写请求体上限：一张卡的 frontmatter 再大也用不到 1 MiB
@@ -103,7 +119,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
-        for k, v in (extra or {}).items():
+        headers = contract_headers()
+        if extra:
+            headers.update(extra)
+        for k, v in headers.items():
             self.send_header(k, v if k != "X-WGP-Path" else _header_value(v, as_path=True))
         self.end_headers()
         if self.command != "HEAD":

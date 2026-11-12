@@ -31,8 +31,14 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from store import model as shared_model  # noqa: E402
-from store import parse as shared  # noqa: E402
+from store.contract import ContractError  # noqa: E402
+try:
+    from store import model as shared_model  # noqa: E402
+    from store import policy as shared_policy  # noqa: E402
+    from store import parse as shared  # noqa: E402
+except ContractError as exc:
+    print(f"error: {exc}", file=sys.stderr)
+    sys.exit(2)
 
 VERSION = "0.8"
 
@@ -232,10 +238,11 @@ class Entry(shared_model.Entry):
     「形状问题要说成本引擎的编号」和「depends_on 按本引擎的口径」这两件事。
     """
 
-    # 契约 `x-stricter-than-contract` 第一条登记的口径差：本引擎的协议 §2.2 明确把
-    # `kind`/`critical` 降为可选（八层链与 kind 分族是 WGP 治理层的建模工具，审计只关心
-    # 边的存在性与方向）。所以这里把开关关掉——**不是**另写一份建边代码。
-    depends_on_requires_annotations = False
+    # 判定口径在 store/policy.py 显式声明（#14）：本引擎的口径 = CLASSLINT_POLICY。
+    # 协议 §2.2 把 `kind`/`critical` 降为可选（八层链与 kind 分族是 WGP 治理层的建模工具，
+    # 审计只关心边的存在性与方向）——所以注解开关是关的，近失换名建边保持开。
+    depends_on_requires_annotations = shared_policy.CLASSLINT_POLICY.depends_on_requires_annotations
+    rename_near_miss_edges = shared_policy.CLASSLINT_POLICY.rename_near_miss_edges
 
     @cached_property
     def edges(self) -> tuple[list[Edge], list[Finding]]:
@@ -1668,7 +1675,20 @@ def cmd_check(root: Path, as_json: bool, impact_ids: list[str],
     return 0
 
 
+def contract_notice() -> str | None:
+    """兼容模式（契约缺失 + 显式 WGP_COMPAT_VOCAB）时给用户看的醒目提示。"""
+    status = shared.contract_status()
+    if not status["degraded"]:
+        return None
+    return ("⚠ 兼容模式：世界契约 world.schema.json 未读到，读卡词表已退回内置词表"
+            f"（source={status['source']}，version={status['version']}，"
+            f"fingerprint={status['fingerprint']}）。本次判定不是完整契约审计。")
+
+
 def main() -> int:
+    notice = contract_notice()
+    if notice:
+        print(notice, file=sys.stderr)
     ap = argparse.ArgumentParser(
         description=f"classlint — 马克思主义政治经济学审计工具 v{VERSION}")
     sp = ap.add_subparsers(dest="cmd", required=True)

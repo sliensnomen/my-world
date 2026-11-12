@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from judges.model import Pack, Rule
-from judges.registry import RegistryError
+from judges.registry import RegistryError, verify_schedule
 
 from . import chain, content, duplicates, events, refs, structure
 from . import ledger as ca_ledger
@@ -154,11 +154,17 @@ PACK = Pack(
 )
 
 
+# 这些规则只在特定条件下被调度（坏卡结构错误 / 引用悬空 / --impact 报告），
+# 不要求每个世界都跑到；其余规则每个世界都必须被调度（#13 自动对账）。
+_CONDITIONAL_CA_RULES = frozenset({"CA107", "CA401", "CA402", "CA404", "CA501", "CA504", "CA702", "CA706"})
+
+
 def apply_core_ca(pack: Pack, all_entries, index, issues, known_fields, emit,
                   dup_threshold=0.85) -> None:
     """按结构→内容→引用→链→事件→流水→查重执行完整 core-ca。"""
     rules = {rule.id: rule for rule in pack.rules}
     world = {"all_entries": all_entries, "index": index, "issues": issues}
+    dispatched: set[str] = set()
 
     def adapted_emit(rule: Rule, level, rel, message):
         actual_level = rule.default_level if level is None else level
@@ -170,6 +176,7 @@ def apply_core_ca(pack: Pack, all_entries, index, issues, known_fields, emit,
         rule = rules[rule_id]
         if rule.scope != "entry":
             raise RegistryError(f"core-ca 不能在条目日程调度规则 {rule.id}")
+        dispatched.add(rule.id)
 
         def add(level, message):
             adapted_emit(rule, level, entry.rel, message)
@@ -180,6 +187,7 @@ def apply_core_ca(pack: Pack, all_entries, index, issues, known_fields, emit,
         rule = rules[rule_id]
         if rule.scope != "world":
             raise RegistryError(f"core-ca 不能在仓库日程调度规则 {rule.id}")
+        dispatched.add(rule.id)
         context = dict(world)
         context.update(kwargs)
         return rule.check(
@@ -220,18 +228,28 @@ def apply_core_ca(pack: Pack, all_entries, index, issues, known_fields, emit,
     chain.apply(index, run_entry, run_world)
     events.apply(all_entries, run_entry)
     ca_ledger.apply(run_world)
+    registered = {rule.id for rule in pack.rules}
+    expected = set(ca_ledger.SCHEDULE)
+    missing, unknown = sorted(expected - dispatched), sorted(dispatched - registered)
+    if missing or unknown:
+        raise RegistryError(
+            f"core-ca/ledger 日程与登记规则不一致：未调度 {missing}，未登记 {unknown}")
     duplicates.apply(run_world, dup_threshold)
+    verify_schedule(pack, dispatched, conditional=_CONDITIONAL_CA_RULES, site="core-ca",
+                    check_missing=any(not e.parse_error for e in all_entries))
 
 
 def apply_core_ca_ledger(pack: Pack, index, emit) -> None:
     """只执行 ledger 报告所需的 core-ca 流水规则，保持既有族内顺序。"""
     rules = {rule.id: rule for rule in pack.rules}
     world = {"all_entries": list(index.values()), "index": index, "issues": []}
+    dispatched: set[str] = set()
 
     def run_world(rule_id):
         rule = rules[rule_id]
         if rule.scope != "world":
             raise RegistryError(f"core-ca 不能在流水日程调度规则 {rule.id}")
+        dispatched.add(rule.id)
 
         def adapted_emit(level, rel, message):
             actual_level = rule.default_level if level is None else level
@@ -242,6 +260,12 @@ def apply_core_ca_ledger(pack: Pack, index, emit) -> None:
         return rule.check(world, adapted_emit)
 
     ca_ledger.apply(run_world)
+    registered = {rule.id for rule in pack.rules}
+    expected = set(ca_ledger.SCHEDULE)
+    missing, unknown = sorted(expected - dispatched), sorted(dispatched - registered)
+    if missing or unknown:
+        raise RegistryError(
+            f"core-ca/ledger 日程与登记规则不一致：未调度 {missing}，未登记 {unknown}")
 
 
 def apply_core_ca_reports(pack: Pack, index, subjects):
