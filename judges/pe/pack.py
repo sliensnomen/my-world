@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from judges.model import Pack, Rule
-from judges.registry import RegistryError
+from judges.registry import RegistryError, verify_schedule
 
 from . import rules as pe_rules
 
@@ -63,6 +63,7 @@ PACK = Pack(
 
 
 def apply_pe(pack: Pack, world, disabled, emit) -> None:
+    dispatched: set[str] = set()
     for rule in sorted(pack.rules, key=lambda item: item.order):
         if rule.id in disabled:
             continue
@@ -75,4 +76,8 @@ def apply_pe(pack: Pack, world, disabled, emit) -> None:
                 raise RegistryError(f"规则 {_rule.id} 发出未登记级别: {actual_level!r}")
             emit(_rule.id, actual_level, entry, message)
 
+        dispatched.add(rule.id)
         rule.check(world, adapted_emit)
+
+    verify_schedule(pack, dispatched, conditional=frozenset(disabled), site="pe",
+                    check_missing=bool(getattr(world, "entries", None)))
