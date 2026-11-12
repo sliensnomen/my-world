@@ -2336,6 +2336,128 @@ def check_death_events_are_checked_as_actors() -> list[str]:
     return problems
 
 
+
+def check_event_legs_are_window_checked() -> list[str]:
+    """审计 §1.1：CA705 把 destroy 当死亡；CA708 查 by/from/to 腿，而不只是 object。"""
+    problems = []
+
+    # (a) destroy 后仍是 by 腿的施动者 → CA705；CA708 不双报
+    cards = {
+        "hero": _card("hero", ""),
+        "keeper": _card("keeper", ""),
+        "gem": _card("gem", ""),
+        "ev-destroy": _card("ev-destroy", (
+            "when: 元年\nevent_kind: destroy\nwhen_sort: 2\nobject:\n  - hero\n"
+        )).replace("type: location", "type: event"),
+        "ev-use": _card("ev-use", (
+            "when: 三年\nevent_kind: transfer\nwhen_sort: 3\n"
+            "by:\n  - hero\nto:\n  - keeper\nobject:\n  - gem\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-legs-destroy-", cards)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"destroy 后当 by 把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA705]" in ln and "ev-use.md" in ln for ln in out.splitlines()):
+            problems.append(f"destroy 后的人当 by 应报 CA705：\n{out}")
+        if any("[CA708]" in ln and "ev-use.md" in ln for ln in out.splitlines()):
+            problems.append(f"destroy 当 by 已由 CA705 负责，CA708 不该双报：\n{out}")
+
+    # (b) join 早于 birth → CA708（by 腿，未生者做事）
+    cards = {
+        "order": _card("order", ""),
+        "hero": _card("hero", ""),
+        "ev-join": _card("ev-join", (
+            "when: 元年\nevent_kind: join\nwhen_sort: 1\nby:\n  - hero\nto:\n  - order\n"
+        )).replace("type: location", "type: event"),
+        "ev-birth": _card("ev-birth", (
+            "when: 二年\nevent_kind: birth\nwhen_sort: 2\nobject:\n  - hero\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-legs-join-", cards)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"join 早于 birth 把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA708]" in ln and "ev-join.md" in ln for ln in out.splitlines()):
+            problems.append(f"join 的 by 尚未出生应报 CA708：\n{out}")
+
+    # (c) death 之后当 to 腿（受方也须在窗口内）→ CA708
+    cards = {
+        "a": _card("a", ""),
+        "hero": _card("hero", ""),
+        "gem": _card("gem", ""),
+        "ev-death": _card("ev-death", (
+            "when: 元年\nevent_kind: death\nwhen_sort: 1\nobject:\n  - a\n"
+        )).replace("type: location", "type: event"),
+        "ev-transfer": _card("ev-transfer", (
+            "when: 二年\nevent_kind: transfer\nwhen_sort: 2\n"
+            "by:\n  - hero\nto:\n  - a\nobject:\n  - gem\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-legs-dead-to-", cards)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"dead to 把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA708]" in ln and "ev-transfer.md" in ln for ln in out.splitlines()):
+            problems.append(f"死人当 to 受方应报 CA708：\n{out}")
+
+    # (d) destroy 之后当 from 腿（起点已不存在）→ CA708
+    cards = {
+        "loc1": _card("loc1", ""),
+        "loc2": _card("loc2", ""),
+        "gem": _card("gem", ""),
+        "ev-destroy": _card("ev-destroy", (
+            "when: 元年\nevent_kind: destroy\nwhen_sort: 1\nobject:\n  - loc1\n"
+        )).replace("type: location", "type: event"),
+        "ev-move": _card("ev-move", (
+            "when: 二年\nevent_kind: move\nwhen_sort: 2\n"
+            "object:\n  - gem\nfrom:\n  - loc1\nto:\n  - loc2\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-legs-from-", cards)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"destroyed from 把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA708]" in ln and "ev-move.md" in ln for ln in out.splitlines()):
+            problems.append(f"被毁地点的 from 应报 CA708：\n{out}")
+    return problems
+
+
+def check_supersede_exemption_requires_archived() -> list[str]:
+    """审计 §1.2：`superseded_by` 只有声明方 status=archived 时才豁免 CA201。"""
+    body = "正文" * 120
+    problems = []
+    # canon 卡不能拿一行 superseded_by 关掉查重
+    cards = {
+        "one": _card("one", "", body=body),
+        "two": _card("two", "superseded_by: one\n", body=body),
+    }
+    tmp, world = _temp_world("canonlint-ca201-exempt-", cards)
+    with tmp:
+        code, out, err = _judge(world)
+        if err:
+            problems.append(f"duplicate 把 traceback 写到了 stderr：\n{err}")
+        if not any("[CA201]" in ln for ln in out.splitlines()):
+            problems.append(f"canon 卡的 superseded_by 不得豁免 CA201：\n{out}")
+    # 对照：archived 声明方 + 承接者仍豁免（降级承接对相似是要求的）
+    cards = {
+        "old": _card("old", "superseded_by: new\n", status="archived", body=body),
+        "new": _card("new", "", body=body),
+    }
+    tmp, world = _temp_world("canonlint-ca201-archived-", cards)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"archived 承接对把 traceback 写到了 stderr：\n{err}")
+        if any("[CA201]" in ln for ln in out.splitlines()):
+            problems.append(f"archived 承接对不该报 CA201：\n{out}")
+    return problems
+
+
 def check_event_fields_need_event_type() -> list[str]:
     """事件字段只许在 type: event 的卡上（协议 1.8，CA109）；否则不进流水。"""
     cards = {
@@ -3213,6 +3335,9 @@ def main() -> int:
         ("同刻未定序与断言无关（无 owns/custody_of 也报 CA704/CA709）",
          check_ambiguous_final_without_assertion_is_reported),
         ("death 事件自身也查 CA705（死人不当施动者）", check_death_events_are_checked_as_actors),
+        ("事件腿都在存在窗口内：CA705 收 destroy、CA708 查 by/from/to（审计 §1.1）",
+         check_event_legs_are_window_checked),
+        ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),
         ("id 省略 + 中文标题自动起名 <type>-<序号>", check_auto_id_when_slug_is_empty),

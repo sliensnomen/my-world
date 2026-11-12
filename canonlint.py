@@ -44,7 +44,7 @@ from judges.model import Pack
 from judges.registry import PackImportError, RegistryError, load_backend, select_packs
 from judges.ca.content import declares_dependencies  # #14：CA302 判据搬到判定层
 
-PROTOCOL_VERSION = "1.12"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂
+PROTOCOL_VERSION = "1.13"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
@@ -664,21 +664,22 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                     f"结论与流水打架：卡上断言 owns `{r.target}`，但流水推出的"
                     f"最终持有者是 `{st.holder}`（来自 `{st.holder_source}`）"))
 
-    # CA705: 事件的 by 里有人在更早的事件里已 death（同刻不算，严格 <）
+    # CA705: 事件的 by 里有人在更早的事件里已死亡/被毁（death 与 destroy 都算；
+    # 同刻不算，严格 <）。审计 §1.1：以前只收 death，destroy 记为「死」的角色
+    # 照样出现在 by 腿里——这条口令正好从两条规则之间漏过去。
     deaths: dict[str, float] = {}
     for e, v in events:
-        if v.kind == "death":
+        if v.kind in ("death", "destroy"):
             for obj in v.legs.get("object", []):
                 deaths[obj] = min(deaths.get(obj, v.when_sort), v.when_sort)
     for e, v in events:
-        # 以前这里跳过所有 death 事件：一笔「死人主持的死亡」永远不报。
-        # 协议没有这条豁免——death 的 by 里若有人严格更早死亡，同样是 CA705。
+        # death/destroy 事件自身也查：死人在更晚的另一笔死亡里当 by 同样是 CA705。
         for actor in v.legs.get("by", []):
             if actor in deaths and deaths[actor] < v.when_sort:
                 findings.append(Finding(
                     "CA705", "warning", e.rel,
                     f"死人做活事：`{actor}` 在 when_sort={deaths[actor]:g} 的事件里"
-                    f"已 death，却在更晚的本事件（when_sort={v.when_sort:g}）的 by 里"))
+                    f"已死亡/被毁，却在更晚的本事件（when_sort={v.when_sort:g}）的 by 里"))
 
     # CA707: 同一客体被多张卡断言 owns——断言互搏。derive_state 按 id 序取第一个
     # 只是「报告需要一个答案」，不是裁决；互搏本身要报出来（与有无流水无关）。
@@ -709,18 +710,30 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
     for e, v in events:
         if v.kind in ("birth", "create", "death", "destroy", "transform"):
             continue  # 端点事件自身豁免
-        for obj in v.legs.get("object", []):
-            start, end = windows.get(obj, (None, None))
-            if start is not None and v.when_sort < start:
-                findings.append(Finding(
-                    "CA708", "warning", e.rel,
-                    f"不存在的东西在动弹：`{obj}` 在 when_sort={start:g} 才被造出来/出生/转化出来，"
-                    f"本事件却在 when_sort={v.when_sort:g} 就拿它当客体"))
-            elif end is not None and v.when_sort > end:
-                findings.append(Finding(
-                    "CA708", "warning", e.rel,
-                    f"不存在的东西在动弹：`{obj}` 在 when_sort={end:g} 已死亡/被毁/被转化，"
-                    f"本事件却在更晚的 when_sort={v.when_sort:g} 拿它当客体"))
+        seen: set[str] = set()
+        # 四条腿都在存在窗口内（审计 §1.1）：客体、施动者、起点、终点各查一遍；
+        # 同一事件里同一个 id 只报一次（取先查到的腿名）。死亡的 by 归 CA705，
+        # 这里跳过，避免同一句话两个编号。
+        for leg, label in (("object", "客体"), ("by", "施动者"),
+                           ("from", "起点"), ("to", "终点")):
+            for obj in v.legs.get(leg, []):
+                if obj in seen:
+                    continue
+                if leg == "by" and obj in deaths and deaths[obj] < v.when_sort:
+                    continue  # 死后/毁后当施动者由 CA705 负责
+                start, end = windows.get(obj, (None, None))
+                if start is not None and v.when_sort < start:
+                    seen.add(obj)
+                    findings.append(Finding(
+                        "CA708", "warning", e.rel,
+                        f"不存在的东西在动弹：`{obj}` 在 when_sort={start:g} 才被造出来/出生/转化出来，"
+                        f"本事件却在 when_sort={v.when_sort:g} 拿它当{label}"))
+                elif end is not None and v.when_sort > end:
+                    seen.add(obj)
+                    findings.append(Finding(
+                        "CA708", "warning", e.rel,
+                        f"不存在的东西在动弹：`{obj}` 在 when_sort={end:g} 已死亡/被毁/被转化，"
+                        f"本事件却在更晚的 when_sort={v.when_sort:g} 拿它当{label}"))
 
     # CA709: 手写 custody_of 断言与 custody 流水推出的最终保管人打架
     # （CA704 的保管版；多值受方同口径：最终那笔 to 列表里任一受方放行。
@@ -879,6 +892,10 @@ def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:
     pairs = set()
     for e in index.values():
         if e.parse_error or not e.id:
+            continue
+        # 审计 §1.2：豁免只认**归档方声明**的承接对。以前任意 canon 卡写一行
+        # superseded_by 就能关掉 CA201——那是「数据里的豁免位」，协议不允许。
+        if e.meta.get("status") != "archived":
             continue
         sb = e.meta.get("superseded_by")
         if isinstance(sb, str) and sb and sb != e.id:
