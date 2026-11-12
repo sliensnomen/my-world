@@ -44,9 +44,11 @@ _LAZY = {
     "CONSTITUTION_SKELETON": "write", "cmd_init": "write", "cmd_link": "write",
     "cmd_new": "write", "restore_bytes": "write", "set_fields": "write",
     "slugify": "write",
+    # 判定口径（#14）
+    "JudgmentPolicy": "policy", "CANONLINT_POLICY": "policy", "CLASSLINT_POLICY": "policy",
 }
 
-_SUBMODULES = {"layout", "model", "write", "parse", "contract"}
+_SUBMODULES = {"layout", "model", "write", "parse", "contract", "policy"}
 
 __all__ = [
     "ENTRY_DIRS", "SKIP_DIRS", "TYPE_DIRS", "collect", "iter_entry_paths",

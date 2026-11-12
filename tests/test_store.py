@@ -1370,6 +1370,50 @@ def check_compat_mode_headers_are_visible():
     assert h.get("X-WGP-Contract-Fingerprint") == "deadbeef", h
 
 
+def check_judgment_policies_are_explicit():
+    """#14：引擎口径是显式常量（store/policy.py），默认行为逐字节不变。"""
+    from store.policy import CANONLINT_POLICY, CLASSLINT_POLICY, JudgmentPolicy
+    from judges.ca.content import declares_dependencies
+
+    assert isinstance(CANONLINT_POLICY, JudgmentPolicy)
+    assert isinstance(CLASSLINT_POLICY, JudgmentPolicy)
+    assert CANONLINT_POLICY.engine == "canonlint"
+    assert CLASSLINT_POLICY.engine == "classlint"
+    assert CANONLINT_POLICY.depends_on_requires_annotations is True
+    assert CLASSLINT_POLICY.depends_on_requires_annotations is False
+    assert CANONLINT_POLICY.rename_near_miss_edges is True
+    assert CLASSLINT_POLICY.rename_near_miss_edges is True
+    # 存储层默认值 = canonlint 口径（类属性与原行为一致）。
+    assert (store.Entry.depends_on_requires_annotations
+            == CANONLINT_POLICY.depends_on_requires_annotations)
+    assert store.Entry.rename_near_miss_edges == CANONLINT_POLICY.rename_near_miss_edges
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = make_world(Path(tmp), {
+            "plain": entry_text("plain", "load_bearing: true\n"),
+            "empty-depends": entry_text("empty-depends", "load_bearing: true\ndepends_on: []\n"),
+            "other-edge": entry_text(
+                "other-edge",
+                "load_bearing: true\nrelations:\n"
+                "  - type: conflicts_with\n    target: plain\n    stance: official\n"),
+            "dep-edge": entry_text(
+                "dep-edge",
+                "load_bearing: true\nrelations:\n"
+                "  - type: depends_on\n    target: plain\n    kind: fiscal\n    critical: true\n"),
+            "near-miss": entry_text(
+                "near-miss",
+                "load_bearing: true\nrelations:\n"
+                "  - type: depend_on\n    target: plain\n"
+                "    kind: fiscal\n    critical: true\n"),
+        })
+        assert declares_dependencies(parsed(root, "plain")) is False
+        assert declares_dependencies(parsed(root, "empty-depends")) is True
+        assert declares_dependencies(parsed(root, "other-edge")) is False
+        assert declares_dependencies(parsed(root, "dep-edge")) is True
+        # 近失换名建边是显式开关且默认开：`depend_on` 真的变成 depends_on 边。
+        assert [r.target for r in parsed(root, "near-miss").edges_of("depends_on")] == ["plain"]
+
+
 CHECKS = (
     ("规范形与旧写法等价（三种关系）", check_canonical_equals_legacy),
     ("规范形的形状错误会出现在报告里", check_shape_errors_reach_the_report),
@@ -1400,6 +1444,8 @@ CHECKS = (
     ("契约读取严格且带版本/指纹", check_contract_reading_is_strict_in_repo),
     ("契约缺失/损坏明确失败；兼容模式显式且带标记", check_contract_failures_are_loud),
     ("兼容模式的 HTTP 响应头可见", check_compat_mode_headers_are_visible),
+    ("判定口径显式声明：引擎策略在 store/policy.py，默认行为不变（#14）",
+     check_judgment_policies_are_explicit),
 )
 
 

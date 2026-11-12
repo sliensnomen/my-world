@@ -64,12 +64,21 @@ from .parse import (  # noqa: E402  (import 位置：与下面的常量定义同
     shape_variants,
 )
 
+# ---- 判定口径（#14）-------------------------------------------------------
+# 引擎政策不再散落在本模块的类默认值里：canonlint/classlint 各有一个显式的
+# `JudgmentPolicy`（store/policy.py），本类的默认值只是「canonlint 口径」的落地。
+from .policy import CANONLINT_POLICY  # noqa: E402
+
 # ---- 搬家表（契约 `x-relation-vocabulary.deprecations`）---------------------
 
 DEPRECATED_KIND_MIGRATIONS = contract_deprecations()
 _MIGRATED_RELATIONS: tuple[str, ...] = tuple(b for _, _, b in DEPRECATED_KIND_MIGRATIONS)
 # 「作者就依赖说过话」判据里算数的关系名：物质承重，以及从它搬出去的那些名字
 _DEPENDENCY_DECLARING_RELATIONS: tuple[str, ...] = ("depends_on",) + _MIGRATED_RELATIONS
+
+#: 判定层（judges/ca/content.py 的 CA302 判据）需要读的公开别名。
+MIGRATED_RELATIONS = _MIGRATED_RELATIONS
+DEPENDENCY_DECLARING_RELATIONS = _DEPENDENCY_DECLARING_RELATIONS
 
 
 def _type_hint(want: str) -> str:
@@ -311,7 +320,9 @@ class Entry(RawEntry):
     # 开关：两条口径各有一个名字，但建边只有这一份代码。
     # 注意：这里**不能**写类型标注——`@dataclass` 会把带标注的类属性变成字段，字段默认值
     # 会在 `__init__` 里覆盖子类的类属性，开关就永远关不掉。
-    depends_on_requires_annotations = True
+    # 判定口径由 store/policy.py 显式声明（#14）：本类只落地 canonlint 的默认值。
+    depends_on_requires_annotations = CANONLINT_POLICY.depends_on_requires_annotations
+    rename_near_miss_edges = CANONLINT_POLICY.rename_near_miss_edges
 
     @property
     def status(self) -> str | None:
@@ -481,7 +492,8 @@ class Entry(RawEntry):
             # 归一化分两级：契约登记的历史拼法 + 编辑距离 ≤1 的近失（`depend_on`）。
             # 第二级必须**真的换名建边**，否则 CA110 说「已按规范名判定」而那条边根本
             # 没进图（评审 blocker：漏判 CA401/CA501/CA504，冤报 CA302/CA503）。
-            canonical_type = judged_relation_name(item["type"])
+            canonical_type = (judged_relation_name if self.rename_near_miss_edges
+                              else canonical_relation_name)(item["type"])
             if canonical_type == "depends_on" and self.depends_on_requires_annotations:
                 # §5.4：depends_on 对象的 kind / critical **必填**（缺 = CA107）。
                 # 这条以前只对旧写法生效，于是规范形省掉 kind 就能让 CA501（层级方向）
@@ -612,41 +624,6 @@ class Entry(RawEntry):
         out: list[Relation] = list(self.named_relations[0])
         out.extend(self.canonical_relations[0])
         return out
-
-    @property
-    def declares_dependencies(self) -> bool:
-        """作者是否就「依赖」这件事做了声明（PROTOCOL §5.3「字段必须在」）。
-
-        两种写法必须是同一句话，所以这里的判据是**声明**而不是「有没有边」：
-
-        - 旧写法 `depends_on: []` —— 字段在，声明了「没有依赖」；
-        - 规范形 `relations: []` —— 整张关系表是空的，同样是声明了「没有依赖」；
-        - 规范形里只有别的边（例如只有一条 `conflicts-with`）—— 作者对依赖**什么都没说**，
-          与旧写法只写 `conflicts_with:` 一样，不算声明。注意「写了 depends_on 边但形状
-          写错」**算**声明（`relations:` 里有这一项就够）：那种错由 CA107 罚，不该再叠一条
-          CA302，否则同一句话两种写法的输出条数就不一样了。
-
-        「名分依据」也算一种关于依赖的声明：它以前就写在 `depends_on` 里（`kind: legitimacy`），
-        拆成关系名之后若不算，迁移过的条目会凭空多一条 CA302——而 CA503「承重墙须有物质
-        来源」的义务仍由那条规则自己承担，不需要 CA302 代劳。
-
-        「空依赖 + 别的边」用混用写法表达（`relations:` 放别的边、`depends_on: []` 显式声明空），
-        混用是契约支持的写法，见 `mixed_relation_forms`。
-        """
-        if "depends_on" in self.meta:
-            return True
-        if any(isinstance(k, str) and canonical_relation_name(k) in _MIGRATED_RELATIONS
-               for k in self.meta):
-            return True
-        raw = self.meta.get(RELATIONS_FIELD)
-        if not isinstance(raw, list):
-            return False
-        if not raw:
-            return True
-        return any(isinstance(i, dict)
-                   and canonical_relation_name(str(i.get("type") or "")) in
-                   _DEPENDENCY_DECLARING_RELATIONS
-                   for i in raw)
 
     @property
     def raw_relation_names(self) -> list[str]:

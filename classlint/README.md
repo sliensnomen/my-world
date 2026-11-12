@@ -14,8 +14,9 @@ id 语法、frontmatter 切分、契约词表、关系名归一化都在 [`store
 所以它**不再是一个能单独拷走的单文件脚本**——必须和仓库一起用，而且要**从仓库根**调用
 （内部把自己所在目录的上一层塞进了 `sys.path`；拷到别处或 `pip install` 都拿不到 `store`）。
 换来的是「同一份数据同一份判定」：id 语法、frontmatter 切分、关系名归一化不会再各漂一份。
-另外那处真实分歧被收成了**一个开关**（`Entry.depends_on_requires_annotations`，canonlint 开、
-classlint 关），不是两份建边代码——所以它改的时候只有一个地方要改。
+另外那两处真实分歧被收成了**显式判定口径**（`store/policy.py` 的 `CANONLINT_POLICY` /
+`CLASSLINT_POLICY`：canonlint 开 depends_on 注解、classlint 关；近失换名建边两边都开），不是两份
+建边代码——所以政策改的时候只有一个地方要改。
 
 **状态：生产关系层已完成（PE001–PE008 + `graph` + `--impact`）；流量层的四线数据模型（CL108）、守恒律（PE010–PE012 + `demand`/`population`）、交叉规则（PE006–PE008）与个人关系层（PE013/PE014 + 五种个人关系）已就绪；时间线（`moment`/`shift`，CL109）与视图（`view`/`fork`）已就绪；信息时延律 PE015 与 PE004/PE005/PE011 的定量回填已就位（v0.8，`surplus` + violence `needs`），本版 PE 共 PE001–PE015。**
 
