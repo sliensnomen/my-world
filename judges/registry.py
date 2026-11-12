@@ -10,6 +10,25 @@ from typing import Mapping
 from .model import Pack, Rule
 
 
+def verify_schedule(pack: "Pack", dispatched: set[str], *,
+                    conditional: frozenset[str] = frozenset(),
+                    site: str = "core-ca", check_missing: bool = True) -> None:
+    """登记规则集合必须与日程集合对账（#13）：登记了但日程从不调度的规则是死规则。
+
+    check_missing=False 用于「这次世界没有可审条目」的情形——没有卡可审时，
+    条目级规则本来就不会被调度，不算死规则。
+    """
+    registered = {rule.id for rule in pack.rules}
+    missing = sorted(registered - dispatched - conditional) if check_missing else []
+    unknown = sorted(dispatched - registered)
+    if missing:
+        raise RegistryError(
+            f"{site} 日程与登记规则不一致：{missing} 已登记但从未被调度"
+            "（新增规则要接进日程；条件性规则请显式列入 conditional）")
+    if unknown:
+        raise RegistryError(f"{site} 日程调度了未登记规则：{unknown}")
+
+
 class RegistryError(ValueError):
     """规则包或后端配置无效。"""
 

@@ -3092,6 +3092,34 @@ def check_registry_econ_skips_shadowed_entries() -> list[str]:
     return problems
 
 
+def check_registry_schedule_rejects_unscheduled_rules() -> list[str]:
+    """登记进 pack 的规则必须真的被日程调度（#13）。
+
+    这一条防的是「规则注册了、元数据齐全，但执行器忘了接」——死规则看起来存在，
+    实际永远不跑。verify_schedule 在每次 registry 执行末尾对账；这里直接喂一个
+    「已登记但未调度」的假 pack，确认它真的会红。
+    """
+    from judges.model import Pack, Rule
+    from judges.registry import RegistryError, verify_schedule
+
+    def noop(*args, **kwargs):
+        return None
+
+    rule = Rule(id="CA999", pack="probe", scope="entry", entry_domain="all_entries",
+                check=noop, default_level="error", levels=frozenset({"error"}), order=999)
+    pack = Pack(name="probe", version="0.0", engine="canonlint",
+                ca106_fields=frozenset(), rules=(rule,))
+    try:
+        verify_schedule(pack, set(), site="probe")
+    except RegistryError as exc:
+        if "CA999" not in str(exc) or "从未被调度" not in str(exc):
+            return [f"对账报错没有点名 CA999 / 原因不对：{exc}"]
+    else:
+        return ["登记了却从未被调度的规则没有触发 RegistryError"]
+    verify_schedule(pack, {"CA999"}, site="probe")  # 对账通过时不抛
+    return []
+
+
 def main() -> int:
     update = "--update" in sys.argv[1:]
     failures: list[str] = []
@@ -3138,6 +3166,8 @@ def main() -> int:
         ("--help 能看到 init/new/link", check_help_discoverable),
         ("缺 pyyaml 时干净退出（提示 + 退出码 2）", check_missing_dependency_is_clean),
         ("降级承接对不算重复（CA201 豁免）", check_supersede_pairs_are_not_duplicates),
+        ("登记了却未调度的规则会被日程对账抓住（#13）",
+         check_registry_schedule_rejects_unscheduled_rules),
     ("被遮蔽条目的引用照样检查", check_shadowed_entries_still_get_their_refs_checked),
     ("非法 id 语法报 CA105（重复 id 已拆成 CA114）", check_bad_id_syntax_reports_ca105),
     ("--strict 只改退出码，不改判定", check_strict_only_changes_the_exit_code),

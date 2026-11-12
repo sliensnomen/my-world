@@ -276,7 +276,10 @@ def check_ca713(world: dict, emit) -> None:
                 recipient[obj] = (holder, view.when_sort)
 
 
+SCHEDULE = ("CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
+            "CA709", "CA710", "CA712", "CA711", "CA713")
+
+
 def apply(run_world) -> None:
-    for rule_id in ("CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
-                    "CA709", "CA710", "CA712", "CA711", "CA713"):
+    for rule_id in SCHEDULE:
         run_world(rule_id)
