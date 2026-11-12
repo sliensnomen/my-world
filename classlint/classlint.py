@@ -34,6 +34,7 @@ if str(_ROOT) not in sys.path:
 from store.contract import ContractError  # noqa: E402
 try:
     from store import model as shared_model  # noqa: E402
+    from store import policy as shared_policy  # noqa: E402
     from store import parse as shared  # noqa: E402
 except ContractError as exc:
     print(f"error: {exc}", file=sys.stderr)
@@ -237,10 +238,11 @@ class Entry(shared_model.Entry):
     「形状问题要说成本引擎的编号」和「depends_on 按本引擎的口径」这两件事。
     """
 
-    # 契约 `x-stricter-than-contract` 第一条登记的口径差：本引擎的协议 §2.2 明确把
-    # `kind`/`critical` 降为可选（八层链与 kind 分族是 WGP 治理层的建模工具，审计只关心
-    # 边的存在性与方向）。所以这里把开关关掉——**不是**另写一份建边代码。
-    depends_on_requires_annotations = False
+    # 判定口径在 store/policy.py 显式声明（#14）：本引擎的口径 = CLASSLINT_POLICY。
+    # 协议 §2.2 把 `kind`/`critical` 降为可选（八层链与 kind 分族是 WGP 治理层的建模工具，
+    # 审计只关心边的存在性与方向）——所以注解开关是关的，近失换名建边保持开。
+    depends_on_requires_annotations = shared_policy.CLASSLINT_POLICY.depends_on_requires_annotations
+    rename_near_miss_edges = shared_policy.CLASSLINT_POLICY.rename_near_miss_edges
 
     @cached_property
     def edges(self) -> tuple[list[Edge], list[Finding]]:

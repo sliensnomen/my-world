@@ -42,6 +42,7 @@ except ContractError as exc:
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
 from judges.model import Pack
 from judges.registry import PackImportError, RegistryError, load_backend, select_packs
+from judges.ca.content import declares_dependencies  # #14：CA302 判据搬到判定层
 
 PROTOCOL_VERSION = "1.12"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
@@ -270,7 +271,7 @@ def check_content(e: Entry, findings: list[Finding]) -> None:
         if "layer" not in e.meta:
             missing.append("layer")
         # 「声明」而不是「有边」：两种写法的同一句话必须判成同一个结果（§5.3）。
-        if not e.declares_dependencies and not e.edges_of("depends_on"):
+        if not declares_dependencies(e) and not e.edges_of("depends_on"):
             missing.append("depends_on")
         if missing:
             findings.append(Finding("CA302", "error", rel,

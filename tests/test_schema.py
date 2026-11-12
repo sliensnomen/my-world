@@ -296,7 +296,7 @@ def check_relation_aliases_match_classlint(problems):
 
     两个引擎共用 `store/model.py` 的边层，所以这条锁同时钉住两边；`depends_on` 那处口径
     差（`kind`/`critical` 可选）见契约 `x-stricter-than-contract`，由
-    `Entry.depends_on_requires_annotations` 开关承载，两边各自声明。
+    `store/policy.py` 的 `JudgmentPolicy` 显式承载，两边各自声明。
     """
     from store import model as shared_model  # noqa: PLC0415
 
