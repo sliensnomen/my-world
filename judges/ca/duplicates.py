@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import difflib
 
-
-MIN_DUP_CHARS = 100
+from .vocab import MIN_DUP_CHARS
 
 
 def _supersede_pairs(index) -> set[frozenset[str]]:

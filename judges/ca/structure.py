@@ -7,20 +7,9 @@ import re
 import store
 from store import Entry, ID_RE
 
-
-REQUIRED_FIELDS = [
-    "id", "title", "type", "author", "date", "status", "load_bearing",
-    "canon_refs", "conflicts_with", "ai_assisted",
-]
-KNOWN_FIELDS = store.FIELD_TABLE
-VALID_TYPES = {"location", "faction", "character", "event", "item"}
-X_TYPE_RE = re.compile(r"^x-[a-z0-9]+-[a-z0-9-]+$")
-VALID_STATUS = {"draft", "trial", "canon", "archived"}
-VALID_STANCE = {"official", "heretic", "unknown"}
-LAYERS = ["geo", "resource", "production", "economy", "fiscal", "military",
-          "political", "ideology"]
-LAYER_INDEX = {name: i for i, name in enumerate(LAYERS)}
-KIND_INITIAL_SET = {"resource", "production", "economy", "fiscal", "manpower"}
+from .vocab import (KIND_INITIAL_SET, KNOWN_FIELDS, LAYER_INDEX, LAYERS,
+                    REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES,
+                    X_TYPE_RE)
 
 
 def is_valid_date(value) -> bool:
