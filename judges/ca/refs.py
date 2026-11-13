@@ -1,16 +1,10 @@
 """canonlint 的 CA 引用与状态规则。"""
 from __future__ import annotations
 
-import re
-
 import ledger
 from store import Entry
 
-
-WORLD_REF_RE = re.compile(r"^[a-z0-9-]+:")
-_RELATIONS_WITH_OWN_REFERENCE_RULES = frozenset({
-    "canon_refs", "conflicts_with", "depends_on", "exchanges_with",
-    "derives_legitimacy_from"})
+from .vocab import WORLD_REF_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES
 
 
 def _valid_successor(e: Entry, index: dict[str, Entry]) -> str | None:

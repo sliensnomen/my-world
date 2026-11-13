@@ -9,6 +9,8 @@ from store.model import (
     canonical_relation_name,
 )
 
+from .vocab import LOAD_BEARING_KEYWORDS, MIN_BODY_CHARS
+
 
 def declares_dependencies(e: Entry) -> bool:
     """作者是否就「依赖」这件事做了声明（CA302 语义；#14 从 store/model 搬来）。
@@ -34,11 +36,6 @@ def declares_dependencies(e: Entry) -> bool:
                and canonical_relation_name(str(i.get("type") or "")) in
                DEPENDENCY_DECLARING_RELATIONS
                for i in raw)
-
-
-LOAD_BEARING_KEYWORDS = ["经济", "货币", "税收", "贸易", "铸币", "政治",
-                         "政权", "法律", "继承", "选帝", "军队", "征兵", "战争赔款"]
-MIN_BODY_CHARS = 200
 
 
 def check_ca104(e: Entry, rel: str, add) -> None:

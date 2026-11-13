@@ -85,7 +85,8 @@ def check_ca705(world: dict, emit) -> None:
     events = event_ledger.ordered_events(world["index"])
     deaths = {}
     for _e, view in events:
-        if view.kind == "death":
+        # 审计 §1.1：destroy 也关存在窗口，记为「死」的角色不许再当施动者。
+        if view.kind in ("death", "destroy"):
             for obj in view.legs.get("object", []):
                 deaths[obj] = min(deaths.get(obj, view.when_sort), view.when_sort)
     for e, view in events:
@@ -93,7 +94,7 @@ def check_ca705(world: dict, emit) -> None:
             if actor in deaths and deaths[actor] < view.when_sort:
                 emit("warning", e.rel,
                      f"死人做活事：`{actor}` 在 when_sort={deaths[actor]:g} 的事件里"
-                     f"已 death，却在更晚的本事件（when_sort={view.when_sort:g}）的 by 里")
+                     f"已死亡/被毁，却在更晚的本事件（when_sort={view.when_sort:g}）的 by 里")
 
 
 def check_ca707(world: dict, emit) -> None:
@@ -120,19 +121,33 @@ def check_ca707(world: dict, emit) -> None:
 def check_ca708(world: dict, emit) -> None:
     index = world["index"]
     windows = event_ledger.existence_windows(index)
+    deaths = {}
+    for _e, view in event_ledger.ordered_events(index):
+        if view.kind in ("death", "destroy"):
+            for obj in view.legs.get("object", []):
+                deaths[obj] = min(deaths.get(obj, view.when_sort), view.when_sort)
     for e, view in event_ledger.ordered_events(index):
         if view.kind in ("birth", "create", "death", "destroy", "transform"):
             continue
-        for obj in view.legs.get("object", []):
-            start, end = windows.get(obj, (None, None))
-            if start is not None and view.when_sort < start:
-                emit("warning", e.rel,
-                     f"不存在的东西在动弹：`{obj}` 在 when_sort={start:g} 才被造出来/出生/转化出来，"
-                     f"本事件却在 when_sort={view.when_sort:g} 就拿它当客体")
-            elif end is not None and view.when_sort > end:
-                emit("warning", e.rel,
-                     f"不存在的东西在动弹：`{obj}` 在 when_sort={end:g} 已死亡/被毁/被转化，"
-                     f"本事件却在更晚的 when_sort={view.when_sort:g} 拿它当客体")
+        seen: set[str] = set()
+        for leg, label in (("object", "客体"), ("by", "施动者"),
+                           ("from", "起点"), ("to", "终点")):
+            for obj in view.legs.get(leg, []):
+                if obj in seen:
+                    continue
+                if leg == "by" and obj in deaths and deaths[obj] < view.when_sort:
+                    continue  # 死后/毁后当施动者由 CA705 负责
+                start, end = windows.get(obj, (None, None))
+                if start is not None and view.when_sort < start:
+                    seen.add(obj)
+                    emit("warning", e.rel,
+                         f"不存在的东西在动弹：`{obj}` 在 when_sort={start:g} 才被造出来/出生/转化出来，"
+                         f"本事件却在 when_sort={view.when_sort:g} 拿它当{label}")
+                elif end is not None and view.when_sort > end:
+                    seen.add(obj)
+                    emit("warning", e.rel,
+                         f"不存在的东西在动弹：`{obj}` 在 when_sort={end:g} 已死亡/被毁/被转化，"
+                         f"本事件却在更晚的 when_sort={view.when_sort:g} 拿它当{label}")
 
 
 def check_ca709(world: dict, emit) -> None:

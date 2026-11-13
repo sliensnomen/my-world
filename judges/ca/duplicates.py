@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import difflib
 
-
-MIN_DUP_CHARS = 100
+from .vocab import MIN_DUP_CHARS
 
 
 def _supersede_pairs(index) -> set[frozenset[str]]:
     pairs = set()
     for e in index.values():
         if e.parse_error or not e.id:
+            continue
+        # 审计 §1.2：只有归档方声明的承接对才豁免；canon 卡不能拿一行字段关掉查重。
+        if e.meta.get("status") != "archived":
             continue
         successor = e.meta.get("superseded_by")
         if isinstance(successor, str) and successor and successor != e.id:

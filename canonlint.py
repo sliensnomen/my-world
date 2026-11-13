@@ -43,45 +43,18 @@ import ledger  # 事件流水：解析与派生状态（判定原料；判语在
 from judges.model import Pack
 from judges.registry import PackImportError, RegistryError, load_backend, select_packs
 from judges.ca.content import declares_dependencies  # #14：CA302 判据搬到判定层
+from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 registry 共用（架构评审 P1）
+    CA503_LAYERS, CA505_TRIGGER_LAYERS, KIND_INITIAL_SET, KNOWN_FIELDS,
+    LAYER_INDEX, LAYERS, LOAD_BEARING_KEYWORDS, MIN_BODY_CHARS, MIN_DUP_CHARS,
+    REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
+    X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.12"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂
+PROTOCOL_VERSION = "1.13"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
-# ---- 协议常量（改动 = 协议变更，须升版本号）------------------------------
-
-REQUIRED_FIELDS = [
-    "id", "title", "type", "author", "date", "status", "load_bearing",
-    "canon_refs", "conflicts_with", "ai_assisted",
-]
-# 顶层字段表归存储层（store/model.py 的 FIELD_TABLE）；这里取它的快照当 CA106 的默认词表，
-# 扩展包再用 --pack 往 extra_known 里加自己的字段。
-KNOWN_FIELDS = store.FIELD_TABLE
-
-VALID_TYPES = {"location", "faction", "character", "event", "item"}
-# 实验类型（1.1）：x-<命名空间>-<名称>，与 kind 的 x- 泄压阀同一套（§5.4）——
-# 能存、不判错，CA102 记 info；确定普适了再进 VALID_TYPES（那一步才是收紧词表）。
-X_TYPE_RE = re.compile(r"^x-[a-z0-9]+-[a-z0-9-]+$")
-VALID_STATUS = {"draft", "trial", "canon", "archived"}
-VALID_STANCE = {"official", "heretic", "unknown"}
-LAYERS = ["geo", "resource", "production", "economy", "fiscal", "military",
-          "political", "ideology"]
-LAYER_INDEX = {name: i for i, name in enumerate(LAYERS)}
-
-# `depends_on` 的 kind 词表：这五类就是「哪一类物资」（契约 x-strict-vocabulary.depends_on.kind）。
-# 「算不算承重」不再由 kind 决定——那是关系名的事：物质承重是 `depends_on`，
-# 名分依据是 `derives_legitimacy_from`（拆分前写作 depends_on + kind: legitimacy）。
-KIND_INITIAL_SET = {"resource", "production", "economy", "fiscal", "manpower"}
-CA503_LAYERS = {"economy", "fiscal", "military", "political"}  # ideology 豁免
-CA505_TRIGGER_LAYERS = {"military", "political"}
-
-WORLD_REF_RE = re.compile(r"^[a-z0-9-]+:")  # world:id 形式，本版不支持（ID_RE 见 store/model.py）
-
-# 附录 A · 承重墙关键词清单
-LOAD_BEARING_KEYWORDS = ["经济", "货币", "税收", "贸易", "铸币", "政治",
-                         "政权", "法律", "继承", "选帝", "军队", "征兵", "战争赔款"]
-
-MIN_BODY_CHARS = 200        # CA104
-MIN_DUP_CHARS = 100         # CA201 最短参与长度
+# ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
+# 词表名不许在本文件再绑定（tests/test_store.py 的「只有一份定义」锁）；
+# 改动词表 = 协议变更，须升版本号并同步 PROTOCOL.md §6.3。
 
 # 扫描目录（ENTRY_DIRS/SKIP_DIRS）与类型目录（TYPE_DIRS）归存储层：store/layout.py
 
@@ -341,17 +314,6 @@ def check_events(e: Entry, findings: list[Finding]) -> None:
             findings.append(Finding("CA702", "error", rel,
                                     f"{v.kind} 事件的 `{leg}` 是空列表——账不平"))
         # 腿声明过但形状写坏（含「是列表但元素全坏」）：CA109 已报，这里不双报
-
-
-# 已经有专属引用检查的关系（各自带状态语义：canon_refs 的 CA402/CA405、depends_on 的
-# CA404 等）。剩下的关系没有专属规则，但**目标存在性**是结构问题，不属于哪一层的理论：
-# 从前这六种字段一条都不查，于是 `owns: [幽灵]` 在 canonlint 里完全隐形。
-# 只取**规范名**：`RELATION_TYPE_NAMES` 的键包含每一种可接受拼法，按它遍历会把同一条
-# 边按 canon-ref / canon-refs / canonrefs 报三遍。
-# 有专属引用检查的关系（各自带状态语义，见下）。
-_RELATIONS_WITH_OWN_REFERENCE_RULES = frozenset({
-    "canon_refs", "conflicts_with", "depends_on", "exchanges_with",
-    "derives_legitimacy_from"})
 
 
 def check_refs(entries: list[Entry], index: dict[str, Entry],
@@ -664,21 +626,22 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                     f"结论与流水打架：卡上断言 owns `{r.target}`，但流水推出的"
                     f"最终持有者是 `{st.holder}`（来自 `{st.holder_source}`）"))
 
-    # CA705: 事件的 by 里有人在更早的事件里已 death（同刻不算，严格 <）
+    # CA705: 事件的 by 里有人在更早的事件里已死亡/被毁（death 与 destroy 都算；
+    # 同刻不算，严格 <）。审计 §1.1：以前只收 death，destroy 记为「死」的角色
+    # 照样出现在 by 腿里——这条口令正好从两条规则之间漏过去。
     deaths: dict[str, float] = {}
     for e, v in events:
-        if v.kind == "death":
+        if v.kind in ("death", "destroy"):
             for obj in v.legs.get("object", []):
                 deaths[obj] = min(deaths.get(obj, v.when_sort), v.when_sort)
     for e, v in events:
-        # 以前这里跳过所有 death 事件：一笔「死人主持的死亡」永远不报。
-        # 协议没有这条豁免——death 的 by 里若有人严格更早死亡，同样是 CA705。
+        # death/destroy 事件自身也查：死人在更晚的另一笔死亡里当 by 同样是 CA705。
         for actor in v.legs.get("by", []):
             if actor in deaths and deaths[actor] < v.when_sort:
                 findings.append(Finding(
                     "CA705", "warning", e.rel,
                     f"死人做活事：`{actor}` 在 when_sort={deaths[actor]:g} 的事件里"
-                    f"已 death，却在更晚的本事件（when_sort={v.when_sort:g}）的 by 里"))
+                    f"已死亡/被毁，却在更晚的本事件（when_sort={v.when_sort:g}）的 by 里"))
 
     # CA707: 同一客体被多张卡断言 owns——断言互搏。derive_state 按 id 序取第一个
     # 只是「报告需要一个答案」，不是裁决；互搏本身要报出来（与有无流水无关）。
@@ -709,18 +672,30 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
     for e, v in events:
         if v.kind in ("birth", "create", "death", "destroy", "transform"):
             continue  # 端点事件自身豁免
-        for obj in v.legs.get("object", []):
-            start, end = windows.get(obj, (None, None))
-            if start is not None and v.when_sort < start:
-                findings.append(Finding(
-                    "CA708", "warning", e.rel,
-                    f"不存在的东西在动弹：`{obj}` 在 when_sort={start:g} 才被造出来/出生/转化出来，"
-                    f"本事件却在 when_sort={v.when_sort:g} 就拿它当客体"))
-            elif end is not None and v.when_sort > end:
-                findings.append(Finding(
-                    "CA708", "warning", e.rel,
-                    f"不存在的东西在动弹：`{obj}` 在 when_sort={end:g} 已死亡/被毁/被转化，"
-                    f"本事件却在更晚的 when_sort={v.when_sort:g} 拿它当客体"))
+        seen: set[str] = set()
+        # 四条腿都在存在窗口内（审计 §1.1）：客体、施动者、起点、终点各查一遍；
+        # 同一事件里同一个 id 只报一次（取先查到的腿名）。死亡的 by 归 CA705，
+        # 这里跳过，避免同一句话两个编号。
+        for leg, label in (("object", "客体"), ("by", "施动者"),
+                           ("from", "起点"), ("to", "终点")):
+            for obj in v.legs.get(leg, []):
+                if obj in seen:
+                    continue
+                if leg == "by" and obj in deaths and deaths[obj] < v.when_sort:
+                    continue  # 死后/毁后当施动者由 CA705 负责
+                start, end = windows.get(obj, (None, None))
+                if start is not None and v.when_sort < start:
+                    seen.add(obj)
+                    findings.append(Finding(
+                        "CA708", "warning", e.rel,
+                        f"不存在的东西在动弹：`{obj}` 在 when_sort={start:g} 才被造出来/出生/转化出来，"
+                        f"本事件却在 when_sort={v.when_sort:g} 拿它当{label}"))
+                elif end is not None and v.when_sort > end:
+                    seen.add(obj)
+                    findings.append(Finding(
+                        "CA708", "warning", e.rel,
+                        f"不存在的东西在动弹：`{obj}` 在 when_sort={end:g} 已死亡/被毁/被转化，"
+                        f"本事件却在更晚的 when_sort={v.when_sort:g} 拿它当{label}"))
 
     # CA709: 手写 custody_of 断言与 custody 流水推出的最终保管人打架
     # （CA704 的保管版；多值受方同口径：最终那笔 to 列表里任一受方放行。
@@ -879,6 +854,10 @@ def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:
     pairs = set()
     for e in index.values():
         if e.parse_error or not e.id:
+            continue
+        # 审计 §1.2：豁免只认**归档方声明**的承接对。以前任意 canon 卡写一行
+        # superseded_by 就能关掉 CA201——那是「数据里的豁免位」，协议不允许。
+        if e.meta.get("status") != "archived":
             continue
         sb = e.meta.get("superseded_by")
         if isinstance(sb, str) and sb and sb != e.id:

@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**40 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.12"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.13"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -95,6 +95,10 @@
 **v1.12 修订记录（2026-11-09，CA713：转让起点断裂）：**
 
 35. **`transfer`/`grant` 的 `from` 腿开始查：与上一笔转让的落点对账（CA713，warning）**。`from` 从「先记后查」变成「真的查」——转让链上，本笔声称交出的起点必须落在上一笔转让/授予的受方里；对不上即报「转让起点断裂」。口径与 CA711 同款：只查完整事件（缺 `when_sort` 不进流水）；上一笔 `to` 多值 → 起点「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时落点在列表里即放行；不写 `from` 就不查（旧世界 fail-open）；同刻转让不排序、不互为「上一笔」。新增规则编号 CA713，按 §9.1 升 minor；契约不动（`from` 形状 0.8 已允许）。
+
+**v1.13 修订记录（2026-11-12，漏洞审计 blocker 修复：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived）：**
+
+36. **存在窗口补齐四条腿，CA705 把 destroy 计入死亡，CA201 的豁免位只留给归档方**。漏洞审计 §1.1/§1.2 两条 blocker：①CA705 只收 `death`，被 `destroy` 的角色仍能当施动者；②CA708 只查 `object` 腿，`join` 的 `by`（未出生）、`transfer` 的 `to`（已死）、`move` 的 `from`（已毁）全不查；③CA201 的 `superseded_by` 承接豁免不校验声明方状态——canon 卡写一行就能让完全相同的正文零报告。修法：CA705 的死亡表纳入 `destroy`（销毁=被毁，同义）；CA708 遍历 `object/by/from/to` 四腿，按事件+实体去重，死亡/被毁施动者交给 CA705；CA201 只在声明方 `status: archived` 时豁免承接对。按 §9.1 升 minor，规则编号不变，契约不动。
 
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
@@ -487,7 +491,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA111 | warning | 旧写法迁移提示：某个关系名拆分前用「旧关系名 + 某个注解值」表达（见契约 `x-relation-vocabulary.deprecations`）。工具**已按新关系名判定**（结论与迁移后逐条相同），本条只提示作者改写，例如把 `depends_on` 里 `kind: legitimacy` 的那一条改写成关系名 `derives_legitimacy_from`。这是唯一允许的迁移提示；迁移完成后本条不再触发 |
 | CA112 | error | YAML frontmatter 里有**重复键**。PyYAML 是 last-wins 且一声不响：`depends_on` 写两遍时，写在前面的那一条边在解析结果里彻底消失，而所有规则都看不见它——「写了两遍」与「只写一遍」在工具眼里完全一样。本条规定必须报出来；写入命令（`link`）遇到重复键直接拒绝改写 |
 | CA114 | error | `id` 重复（两张卡撞同一个 id）。按路径序首个入索引：别人引用这个 id 时指的是前者，**被遮蔽那一份自己的出边照旧检查**（它没进索引不等于没写错） |
-| CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复 |
+| CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复；**豁免只认声明方 `status: archived`**——canon 等其它状态写 `superseded_by` 不免查重（协议 1.13） |
 | CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明）。**只对已定档条目（trial/canon）发出**：draft 还没到做决定的时候，而 `--strict` 会把 warning 当失败 |
 | CA302 | error | `load_bearing: true` 但缺 `layer`，或既没有 `depends_on` 字段也没有规范形 `relations` 字段（显式空列表仍算已声明） |
 | CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`，和协议 1.2/1.4/1.7 的事件腿 `by`/`to`/`object`/`from`/`result` 与保管断言 `custody_of`、归属断言 `member_of`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
@@ -542,7 +546,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.12",
+  "protocol_version": "1.13",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

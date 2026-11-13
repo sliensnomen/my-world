@@ -5,11 +5,8 @@ from collections import deque
 
 from store import Entry
 
-from .structure import KIND_INITIAL_SET, LAYER_INDEX
-
-
-CA503_LAYERS = {"economy", "fiscal", "military", "political"}
-CA505_TRIGGER_LAYERS = {"military", "political"}
+from .vocab import (CA503_LAYERS, CA505_TRIGGER_LAYERS, KIND_INITIAL_SET,
+                    LAYER_INDEX)
 
 
 def check_ca501(e: Entry, rel: str, add, index, dep) -> None:

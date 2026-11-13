@@ -1020,6 +1020,50 @@ def check_both_engines_share_one_parser():
             f"拼法 {v!r} 两边建出的边不同：canonlint={edges_c} classlint={edges_l}")
 
 
+def check_vocab_defined_once():
+    """CA 词表与阈值只有一份定义：`judges/ca/vocab.py`。
+
+    评审 docs/代码评审报告-架构.md §4.2：这些协议常量原先在 canonlint.py（legacy）
+    与 judges/ca/*（registry）各抄一份字面量，双跑只在夹具恰好踩到时才抓得住漂移。
+    现在两边都从 vocab 转发，这里把「只许 Load、不许再绑定」钉死。名字集合从
+    vocab.py 现推，以后往 vocab 里加常量会自动纳入这把锁，不用手动同步清单。
+    """
+    vocab_tree = ast.parse((ROOT / "judges" / "ca" / "vocab.py").read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in vocab_tree.body:
+        if isinstance(node, ast.Assign):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    assert names, "judges/ca/vocab.py 里没扫到任何词表常量"
+
+    offenders: list[str] = []
+    files = [ROOT / "canonlint.py", *sorted((ROOT / "judges" / "ca").glob("*.py"))]
+    for path in files:
+        if path.name == "vocab.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Name) and node.id in names
+                    and not isinstance(node.ctx, ast.Load)):
+                offenders.append(f"{path.name}: {node.id}（第 {node.lineno} 行重新绑定）")
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) \
+                    and node.name in names:
+                offenders.append(f"{path.name}: def {node.name}")
+            if isinstance(node, (ast.Global, ast.Nonlocal)):
+                offenders += [n for n in node.names if n in names]
+    assert not offenders, (
+        "词表常量在 judges/ca/vocab.py 之外被重新绑定（应改为从 vocab 转发）："
+        + "、".join(sorted(set(offenders))))
+
+    # 行为锁：canonlint 转发到的必须就是 vocab 里那个对象，不是「长得一样的两个」
+    import canonlint  # noqa: PLC0415
+    from judges.ca import vocab  # noqa: PLC0415
+    for name in sorted(names):
+        assert getattr(canonlint, name) is getattr(vocab, name), \
+            f"canonlint.{name} 不是 judges/ca/vocab.py 里的同一个对象"
+
+
 def check_both_engines_build_the_same_graph():
     """同一份 frontmatter，两个引擎必须建出**同一张边图**、报出**同一批形状问题**。
 
@@ -1434,6 +1478,8 @@ CHECKS = (
     ("关系写法不可区分（规范形/旧写法/拼法变体同判）", check_relation_forms_are_indistinguishable),
     ("superseded_by: null 不是承接者（CA405 不能被关掉）", check_superseded_by_null_is_not_a_successor),
     ("两个引擎共用同一份读卡代码（store/parse.py）", check_both_engines_share_one_parser),
+    ("CA 词表与阈值只有一份定义（canonlint 与 judges/ca 都从 judges/ca/vocab.py 转发）",
+     check_vocab_defined_once),
     ("写入路径只改这一条边（CRLF/缩进/符号链接/只读/模式八种输入）", check_write_path_preserves_the_file),
     ("写入自检不过就退回重排（插错的边不许写盘）", check_write_path_verifies_before_trusting_itself),
     ("new 写的是 YAML 不是字符串拼接（标题里的 # 与冒号）", check_new_writes_yaml_not_string_splicing),
