@@ -1988,6 +1988,7 @@ def check_same_instant_id_order_is_not_history() -> list[str]:
         }
         return _temp_world("canonlint-tie704-", cards)
 
+    tie_results = []
     for names in (("ev-a", "ev-b"), ("ev-z", "ev-y")):
         tmp, world = tie_world(*names)
         with tmp:
@@ -1995,10 +1996,22 @@ def check_same_instant_id_order_is_not_history() -> list[str]:
             if err:
                 problems.append(f"同刻转让把 traceback 写到了 stderr：\n{err}")
             lines = [ln for ln in out.splitlines() if "[CA704]" in ln]
-            if any("] error " in ln for ln in lines):
-                problems.append(f"同刻两笔转让没定序，不该报 CA704 error（{'/'.join(names)}）：\n{out}")
             if not any("] warning " in ln and "未定序" in ln for ln in lines):
                 problems.append(f"同刻两笔转让受方不同，应报 CA704 warning「未定序」（{'/'.join(names)}）：\n{out}")
+            # 协议 1.14：未定序不再吞掉断言对账——c 的 owns 断言不同时落在
+            # 两笔候选（{d}、{c}）里，交集为空，照报 error；d 没断言不报。
+            if not any("] error " in ln and "c.md" in ln for ln in lines):
+                problems.append(
+                    f"c 的断言不在未定序候选交集里，应报 CA704 error（{'/'.join(names)}）：\n{out}")
+            if any("] error " in ln and "d.md" in ln for ln in lines):
+                problems.append(f"d 没有断言，不该报 CA704 error（{'/'.join(names)}）：\n{out}")
+            tie_results.append((
+                sorted(ln.split("] ", 1)[1].split(" ")[0] for ln in lines),
+                sorted(ln.split("entries/", 1)[1].split(".md")[0]
+                       for ln in lines if "] error " in ln)))
+    if tie_results[0] != tie_results[1]:
+        problems.append(
+            f"同刻改名让 CA704 的判定翻转：{tie_results[0]} vs {tie_results[1]}")
 
     # CA711：同刻两笔 move，id 序与故事序相反也不许断裂
     def move(id: str, frm: str, to: str) -> str:
@@ -2020,6 +2033,7 @@ def check_same_instant_id_order_is_not_history() -> list[str]:
                 problems.append(f"同刻两笔 move 没有先后，不该报 CA711（{'/'.join(ids)}）：\n{out}")
 
     # CA709：同刻两笔 custody
+    tie709_results = []
     for ev1, ev2 in (("cu-a", "cu-b"), ("cu-z", "cu-y")):
         cards = {
             "x": _card("x", "custody_of:\n  - relic\n"),
@@ -2032,8 +2046,19 @@ def check_same_instant_id_order_is_not_history() -> list[str]:
             _, out, err = _judge(world)
             if err:
                 problems.append(f"同刻保管把 traceback 写到了 stderr：\n{err}")
-            if any("] error " in ln for ln in out.splitlines() if "[CA709]" in ln):
-                problems.append(f"同刻两笔 custody 没定序，不该报 CA709 error（{ev1}/{ev2}）：\n{out}")
+            lines = [ln for ln in out.splitlines() if "[CA709]" in ln]
+            if not any("] warning " in ln and "未定序" in ln for ln in lines):
+                problems.append(f"同刻两笔 custody 应报 CA709 未定序 warning（{ev1}/{ev2}）：\n{out}")
+            if not any("] error " in ln and "x.md" in ln for ln in lines):
+                problems.append(
+                    f"x 的 custody_of 断言不在候选交集里，应报 CA709 error（{ev1}/{ev2}）：\n{out}")
+            tie709_results.append((
+                sorted(ln.split("] ", 1)[1].split(" ")[0] for ln in lines),
+                sorted(ln.split("entries/", 1)[1].split(".md")[0]
+                       for ln in lines if "] error " in ln)))
+    if tie709_results[0] != tie709_results[1]:
+        problems.append(
+            f"同刻改名让 CA709 的判定翻转：{tie709_results[0]} vs {tie709_results[1]}")
 
     # CA712：同刻 join 与 leave 并存 → fail-open
     for ev1, ev2 in (("j-a", "l-b"), ("j-z", "l-y")):
@@ -2110,6 +2135,69 @@ def check_ambiguous_final_without_assertion_is_reported() -> list[str]:
     })
     with tmp:
         no_ambiguity_noise(world, "CA709")
+    return problems
+
+
+def check_ambiguous_final_still_reconciles_assertions() -> list[str]:
+    """同刻未定序不能当断言对账的「一键降级器」（漏洞审计 §2.1）。
+
+    1.10 让 CA704 在「同刻多笔、受方集合不同」时只报 warning、不挑赢家——但
+    当前实现把该客体的**全部** owns 对账一起跳过：作者补一笔同刻、受方不同的
+    transfer，就能把已触发的 error 降成 warning。修法：ambiguous 时仍对账
+    「断言者 ∈ 全部候选受方的交集」——交集里没有断言就照报，不需要挑赢家。
+    """
+    problems = []
+
+    def ev(eid: str, extra: str) -> str:
+        return _card(eid, (
+            "when: 元年\nevent_kind: transfer\nwhen_sort: 1\n" + extra
+        )).replace("type: location", "type: event")
+
+    # 对照：单笔流水、断言与最终持有者一致 → 不报 CA704
+    cards = {
+        "giver": _card("giver", ""),
+        "holder": _card("holder", "owns:\n  - gem-a\n"),
+        "gem-a": _card("gem-a", ""),
+        "ev-a": ev("ev-a", "by:\n  - giver\nto:\n  - holder\nobject:\n  - gem-a\n"),
+    }
+    tmp, world = _temp_world("canonlint-amb-ctl-", cards)
+    with tmp:
+        _, out, _ = _judge(world)
+        if any("[CA704]" in ln for ln in out.splitlines()):
+            problems.append(f"单笔流水与断言一致时不该报 CA704：\n{out}")
+
+    # 漏洞复现：补一笔同刻、受方不同的 transfer，断言对账不得消失
+    cards = dict(cards)
+    cards["other"] = _card("other", "")
+    cards["ev-b"] = ev("ev-b", "by:\n  - giver\nto:\n  - other\nobject:\n  - gem-a\n")
+    tmp, world = _temp_world("canonlint-amb-down-", cards)
+    with tmp:
+        _, out, _ = _judge(world)
+        lines = out.splitlines()
+        if not any("[CA704] warning" in ln and "未定序" in ln for ln in lines):
+            problems.append(f"同刻多笔受方不同应报未定序 warning：\n{out}")
+        if not any("[CA704] error" in ln and "holder.md" in ln for ln in lines):
+            problems.append(
+                "同刻未定序不得吞掉断言对账（holder 不在交集，须报 CA704 error）：\n" + out)
+
+    # 交集非空：alice 同时在两笔候选里 → 放行；bob 只在一笔里 → 照报
+    cards = {
+        "giver": _card("giver", ""),
+        "alice": _card("alice", "owns:\n  - gem-c\n"),
+        "bob": _card("bob", "owns:\n  - gem-c\n"),
+        "gem-c": _card("gem-c", ""),
+        "ev-c1": ev("ev-c1",
+                    "by:\n  - giver\nto:\n  - alice\n  - bob\nobject:\n  - gem-c\n"),
+        "ev-c2": ev("ev-c2", "by:\n  - giver\nto:\n  - alice\nobject:\n  - gem-c\n"),
+    }
+    tmp, world = _temp_world("canonlint-amb-int-", cards)
+    with tmp:
+        _, out, _ = _judge(world)
+        lines = out.splitlines()
+        if any("[CA704] error" in ln and "alice.md" in ln for ln in lines):
+            problems.append(f"alice 在全部候选的交集里，不该吃 CA704 error：\n{out}")
+        if not any("[CA704] error" in ln and "bob.md" in ln for ln in lines):
+            problems.append(f"bob 只在一笔候选里，不在交集，须报 CA704 error：\n{out}")
     return problems
 
 
@@ -2914,8 +3002,15 @@ def _registry_ca_family_dual_run(family: str) -> list[str]:
                                         expected={"CA704", "CA709"})
             for rule_id in ("CA704", "CA709"):
                 levels = {f.level for f in registry if f.rule == rule_id}
-                if levels != {"warning"}:
-                    problems.append(f"ledger：同刻受方不同的 {rule_id} 只能 warning，实际 {levels}")
+                if levels != {"warning", "error"}:
+                    problems.append(
+                        f"ledger：同刻受方不同时应是「未定序 warning + 断言不在交集 error」，"
+                        f"{rule_id} 实际 {levels}")
+                error_subjects = {f.entry for f in registry
+                                  if f.rule == rule_id and f.level == "error"}
+                if not any("c.md" in subj for subj in error_subjects):
+                    problems.append(
+                        f"ledger：{rule_id} 的 error 应落在 c.md（断言不在候选交集），实际 {error_subjects}")
     elif family == "duplicates":
         rules = {"CA201"}
         compare("duplicates/world-bad", HERE / "world-bad", rules, expected=rules)
@@ -3334,6 +3429,8 @@ def main() -> int:
         ("同刻事件不按 id 定序（CA704/709/711/712 改名不翻转）", check_same_instant_id_order_is_not_history),
         ("同刻未定序与断言无关（无 owns/custody_of 也报 CA704/CA709）",
          check_ambiguous_final_without_assertion_is_reported),
+        ("同刻未定序不再吞掉断言对账（不在全候选交集里照报 CA704 error）",
+         check_ambiguous_final_still_reconciles_assertions),
         ("death 事件自身也查 CA705（死人不当施动者）", check_death_events_are_checked_as_actors),
         ("事件腿都在存在窗口内：CA705 收 destroy、CA708 查 by/from/to（审计 §1.1）",
          check_event_legs_are_window_checked),
