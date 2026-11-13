@@ -49,7 +49,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.13"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived
+PROTOCOL_VERSION = "1.14"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -614,9 +614,23 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
         if e.parse_error or not e.id:
             continue
         for r in e.edges_of("owns"):
-            if r.target not in final_acts or r.target in ambiguous:
+            if r.target not in final_acts:
                 continue
             when, acts = final_acts[r.target]
+            if r.target in ambiguous:
+                # 未定序不挑赢家，但也不许把断言对账整个跳掉（漏洞审计 §2.1）：
+                # 断言者必须同时落在全部候选受方里（交集），否则照样报 error——
+                # 否则补一笔同刻、受方不同的 transfer 就能一键把 CA704 降成 warning。
+                common = set.intersection(*(set(to) for _ev, _v, to in acts))
+                if e.id not in common:
+                    shown = "、".join(f"`{x}`" for x in sorted(common)) or "空"
+                    findings.append(Finding(
+                        "CA704", "error", e.rel,
+                        f"结论与流水打架：`{r.target}` 在 when_sort={when:g} 归属未定序"
+                        f"（同刻 {len(acts)} 笔转让，受方集合不同），卡上却断言 owns "
+                        f"`{e.id}`——未定序时断言必须同时落在全部候选里（交集：{shown}），"
+                        "请拆开 when_sort、统一受方，或删掉这条断言"))
+                continue
             recipients = set().union(*(set(to) for _ev, _v, to in acts))
             st = states.get(r.target)
             if (st is not None and st.holder is not None and st.holder != e.id
@@ -722,9 +736,21 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
             continue
         for obj in ledger.custody_assertions(e):
             custody_claims.setdefault(obj, []).append(e)
-            if obj not in custody_final or obj in custody_ambiguous:
+            if obj not in custody_final:
                 continue
             when, acts = custody_final[obj]
+            if obj in custody_ambiguous:
+                # 同 CA704（漏洞审计 §2.1）：未定序不挑赢家，但断言对账不许整个跳过。
+                common = set.intersection(*(set(to) for _ev, _v, to in acts))
+                if e.id not in common:
+                    shown = "、".join(f"`{x}`" for x in sorted(common)) or "空"
+                    findings.append(Finding(
+                        "CA709", "error", e.rel,
+                        f"结论与流水打架：`{obj}` 在 when_sort={when:g} 归属未定序"
+                        f"（同刻 {len(acts)} 笔 custody，保管人集合不同），卡上却断言 "
+                        f"custody_of `{e.id}`——未定序时断言必须同时落在全部候选里"
+                        f"（交集：{shown}），请拆开 when_sort、统一保管人，或删掉这条断言"))
+                continue
             recipients = set().union(*(set(to) for _ev, _v, to in acts))
             st = states.get(obj)
             if (st is not None and st.custodian is not None

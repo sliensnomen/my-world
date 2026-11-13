@@ -69,9 +69,21 @@ def check_ca704(world: dict, emit) -> None:
         if e.parse_error or not e.id:
             continue
         for ref in e.edges_of("owns"):
-            if ref.target not in final_acts or ref.target in ambiguous:
+            if ref.target not in final_acts:
                 continue
             when, acts = final_acts[ref.target]
+            if ref.target in ambiguous:
+                # 未定序不挑赢家，但也不许把断言对账整个跳掉（漏洞审计 §2.1）：
+                # 断言者必须同时落在全部候选受方里（交集），否则照样报 error。
+                common = set.intersection(*(set(to) for _event, _view, to in acts))
+                if e.id not in common:
+                    shown = "、".join(f"`{x}`" for x in sorted(common)) or "空"
+                    emit("error", e.rel,
+                         f"结论与流水打架：`{ref.target}` 在 when_sort={when:g} 归属未定序"
+                         f"（同刻 {len(acts)} 笔转让，受方集合不同），卡上却断言 owns "
+                         f"`{e.id}`——未定序时断言必须同时落在全部候选里（交集：{shown}），"
+                         "请拆开 when_sort、统一受方，或删掉这条断言")
+                continue
             recipients = set().union(*(set(to) for _event, _view, to in acts))
             state = states.get(ref.target)
             if (state is not None and state.holder is not None and state.holder != e.id
@@ -173,9 +185,20 @@ def check_ca709(world: dict, emit) -> None:
         if e.parse_error or not e.id:
             continue
         for obj in event_ledger.custody_assertions(e):
-            if obj not in custody_final or obj in ambiguous:
+            if obj not in custody_final:
                 continue
             when, acts = custody_final[obj]
+            if obj in ambiguous:
+                # 同 CA704（漏洞审计 §2.1）：未定序不挑赢家，但断言对账不许整个跳过。
+                common = set.intersection(*(set(to) for _event, _view, to in acts))
+                if e.id not in common:
+                    shown = "、".join(f"`{x}`" for x in sorted(common)) or "空"
+                    emit("error", e.rel,
+                         f"结论与流水打架：`{obj}` 在 when_sort={when:g} 归属未定序"
+                         f"（同刻 {len(acts)} 笔 custody，保管人集合不同），卡上却断言 "
+                         f"custody_of `{e.id}`——未定序时断言必须同时落在全部候选里"
+                         f"（交集：{shown}），请拆开 when_sort、统一保管人，或删掉这条断言")
+                continue
             recipients = set().union(*(set(to) for _event, _view, to in acts))
             state = states.get(obj)
             if (state is not None and state.custodian is not None
