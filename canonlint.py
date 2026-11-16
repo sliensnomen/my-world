@@ -1394,6 +1394,17 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
     return all_entries, index, findings, reports
 
 
+def _post_write_problems(root: Path, path: Path, packs) -> list[str]:
+    """写后审计：新卡本身（按相对路径）的 error 级发现。"""
+    rel = path.relative_to(root).as_posix()
+    try:
+        _, _, findings, _ = run(root, 0.85, [], packs=packs)
+    except Exception as e:  # 自检失败也必须拒绝落盘，不能静默
+        return [f"写后自检失败：{e}"]
+    return [f"{f.rule} {f.level} {f.entry}: {f.message}"
+            for f in findings if f.level == "error" and f.entry == rel]
+
+
 def _event_fields_from_args(a) -> dict | None:
     """把 new/event 子命令的事件与断言标志收成 fields 字典（None 表示没带任何字段）。
 
@@ -1496,16 +1507,22 @@ def main() -> int:
         if cmd == "new":
             # 层级词表是理论，归判定器；存储层只收下它
             fields = _event_fields_from_args(a)
-            return store.cmd_new(a.root, a.type, a.title, a.id,
-                                 author=a.author, load_bearing=a.load_bearing,
-                                 layer=a.layer, layer_choices=LAYERS, fields=fields)
+            packs, _ = _load_packs([])
+            return store.cmd_new(
+                a.root, a.type, a.title, a.id,
+                author=a.author, load_bearing=a.load_bearing,
+                layer=a.layer, layer_choices=LAYERS, fields=fields,
+                verify=lambda path: _post_write_problems(a.root, path, packs))
         if cmd == "event":
             fields = _event_fields_from_args(a) or {}
             fields["event_kind"] = a.kind
             title = a.title or f"{a.kind} 事件"
-            return store.cmd_new(a.root, "event", title, a.id,
-                                 author=a.author, layer_choices=LAYERS,
-                                 fields=fields)
+            packs, _ = _load_packs([])
+            return store.cmd_new(
+                a.root, "event", title, a.id,
+                author=a.author, layer_choices=LAYERS,
+                fields=fields,
+                verify=lambda path: _post_write_problems(a.root, path, packs))
         if cmd == "link":
             return store.cmd_link(a.root, a.src, a.dst, a.kind, a.critical,
                                   kind_choices=KIND_INITIAL_SET)

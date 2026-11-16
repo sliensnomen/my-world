@@ -275,7 +275,8 @@ def cmd_new(root: Path, type_: str | None, title: str | None,
             load_bearing: bool = False, layer: str | None = None,
             *, layer_choices: Sequence[str], fields: dict | None = None,
             interactive: bool | None = None,
-            out: dict | None = None) -> int:
+            out: dict | None = None,
+            verify: "Callable[[Path], list[str]] | None" = None) -> int:
     """建卡：生成合法 frontmatter，用户只管写正文。交互问答仅在 TTY 下启用。
 
     `fields` 是事件流水与断言字段（when/event_kind/腿/owns 等），白名单
@@ -368,6 +369,18 @@ def cmd_new(root: Path, type_: str | None, title: str | None,
     except OSError as e:
         print(f"error: 建卡失败：{e}", file=sys.stderr)
         return 2
+    if verify is not None:
+        # 写后自检：与 HTTP 写端点同纪律——红则不落盘（issue #52）。
+        problems = verify(path)
+        if problems:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            print("error: 写后审计不通过，已回滚", file=sys.stderr)
+            for line in problems:
+                print(f"  {line}", file=sys.stderr)
+            return 1
     print(f"已建卡: {path.relative_to(root)}（draft）")
     if out is not None:
         out["id"] = entry_id

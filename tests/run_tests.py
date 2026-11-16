@@ -3114,6 +3114,36 @@ def check_layout_scanning_is_content_based() -> list[str]:
     return problems
 
 
+def check_cli_write_runs_post_audit() -> list[str]:
+    """#52：CLI 写卡与 HTTP 同纪律——写后审计红则不落盘。"""
+    problems = []
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        world.mkdir()
+        p1 = subprocess.run(
+            [PY, str(TOOL), "event", "transfer", "--by", "jia", "--root", str(world)],
+            cwd=ROOT, capture_output=True, text=True)
+        if p1.returncode == 0:
+            problems.append(f"缺腿事件仍被写入（rc=0）：{p1.stdout}")
+        if "已回滚" not in p1.stderr or "CA702" not in p1.stderr:
+            problems.append(f"缺腿事件没报「已回滚 + CA702」：\n{p1.stderr}")
+        stray = world / "entries" / "events" / "transfer.md"
+        if stray.exists():
+            problems.append(f"写后审计红了却把卡留在磁盘：{stray}")
+        if "已建卡" in p1.stdout:
+            problems.append(f"回滚路径仍打印「已建卡」：{p1.stdout}")
+        p2 = subprocess.run(
+            [PY, str(TOOL), "new", "location", "灰港", "--id", "grey-harbor",
+             "--root", str(world)],
+            cwd=ROOT, capture_output=True, text=True)
+        if p2.returncode != 0:
+            problems.append(f"合法新卡被写后审计误拦：{p2.stdout}{p2.stderr}")
+        card = world / "entries" / "locations" / "grey-harbor.md"
+        if not card.exists():
+            problems.append("合法新卡没落盘")
+    return problems
+
+
 def check_supersede_exemption_requires_archived() -> list[str]:
     """审计 §1.2：`superseded_by` 只有声明方 status=archived 时才豁免 CA201。"""
     body = "正文" * 120
@@ -4064,6 +4094,7 @@ def main() -> int:
          check_impact_sees_shadowed_cards),
         ("issue #50：扁平散文不误报、entries 子目录卡不被跳过",
          check_layout_scanning_is_content_based),
+        ("issue #52：CLI 写卡写后自检，红则回滚", check_cli_write_runs_post_audit),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),
