@@ -669,6 +669,57 @@ def _capture_backend(world: Path, backend: str, operation):
 
 
 
+def check_pe004_pe011_levels_are_registered() -> int:
+    """#47 P0：PE004/PE011 的「单位不可比」分支发 warning，登记级别必须允许 warning。
+
+    registry 后端有一条守卫：emit 的级别不在 Rule.levels 里会抛 RegistryError——这条守卫
+    把「一台判语、一台崩溃」的差分暴露出来。世界是合法的，坏的是登记表。
+    """
+    failures = 0
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "codex").mkdir(parents=True)
+        (world / "classlint.yaml").write_text(
+            'name: levels\nclasslint: "0.1"\n', encoding="utf-8")
+        cards = {
+            "farm": "---\nid: farm\ntitle: 农场\ntype: location\n"
+                    "surplus:\n  grain:\n    amount: 100\n    unit: 石\n---\n农场。\n",
+            "flow-out": "---\nid: flow-out\ntitle: 外运\ntype: flow\nline: logistics\n"
+                        "from: farm\nto: lord\nwhat: grain\namount: 50\nunit: 担\n"
+                        "trend: flat\n---\n外运。\n",
+            "lord": "---\nid: lord\ntitle: 地主\ntype: faction\n---\n地主。\n",
+            "fort": "---\nid: fort\ntitle: 堡垒\ntype: location\n---\n堡垒。\n",
+            "flow-garrison": "---\nid: flow-garrison\ntitle: 驻军\ntype: flow\n"
+                             "line: violence\nfrom: lord\nto: fort\namount: 1000\n"
+                             "unit: 人\nsupply_radius: 10\nradius_unit: 里\n"
+                             "needs:\n  what: grain\n  amount: 100\n  unit: 石\n"
+                             "---\n驻军。\n",
+            "flow-iron": "---\nid: flow-iron\ntitle: 铁料\ntype: flow\nline: logistics\n"
+                         "from: lord\nto: fort\nwhat: grain\namount: 50\nunit: 担\n"
+                         "trend: flat\n---\n铁料。\n",
+        }
+        for name, text in cards.items():
+            (world / "codex" / f"{name}.md").write_text(text, encoding="utf-8")
+        old = _capture_backend(world, "legacy", lambda: classlint.cmd_check(world, True, []))
+        new = _capture_backend(world, "registry", lambda: classlint.cmd_check(world, True, []))
+        if "RegistryError" in new[2] or "未登记级别" in new[2]:
+            failures += 1
+            print(f"FAIL PE004/PE011 warning 触发 RegistryError：{new[2]}")
+        if old != new:
+            failures += 1
+            print(f"FAIL PE004/PE011 单位不可比双跑不同：legacy={old[:2]} registry={new[:2]}")
+        payload = json.loads(new[1]) if new[1] else {"findings": []}
+        rules = {f["rule"] for f in payload.get("findings", [])
+                 if "单位不可比" in f.get("message", "")}
+        for rule in ("PE004", "PE011"):
+            if rule not in rules:
+                failures += 1
+                print(f"FAIL 缺 {rule} 的「单位不可比」warning：{rules}")
+    if not failures:
+        print("PASS PE004/PE011 的 warning 级别已登记（registry 不再崩）")
+    return failures
+
+
 def check_view_html_generation() -> int:
     """视图：`view` 生成自包含 HTML（关系图 + 时间线两页签，不外链）。"""
     failures = 0
@@ -1097,6 +1148,7 @@ def main() -> int:
     failures += check_entity_registry_errors_are_config_errors()
     failures += check_finding_order_matters()
     failures += check_registry_cl_pe_dual_run()
+    failures += check_pe004_pe011_levels_are_registered()
     failures += check_view_html_generation()
     failures += check_fork_branch()
     extra = set(EXPECTED) - set(worlds)
