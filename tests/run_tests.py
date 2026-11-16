@@ -2648,6 +2648,87 @@ def check_ca111_recognizes_contract_alias_spellings() -> list[str]:
     return problems
 
 
+def check_canonical_relations_validate_attrs_per_relation() -> list[str]:
+    """#40 F1：规范形的注解键按**关系名**校验，与旧写法同判。"""
+    problems = []
+    body = "正文" * 120
+    cases = [
+        ("named owns note", "owns:\n  - id: b\n    note: ok\n", None, True),
+        ("canonical owns note", "relations:\n  - type: owns\n    target: b\n    note: ok\n", None, True),
+        ("named owns what", "owns:\n  - id: b\n    what: grain\n", "CA107", True),
+        ("canonical owns what", "relations:\n  - type: owns\n    target: b\n    what: grain\n", "CA107", True),
+        ("named canon_refs kind", "canon_refs:\n  - id: b\n    kind: x\n", "CA109", False),
+        ("canonical canon_refs kind",
+         "relations:\n  - type: canon_refs\n    target: b\n    kind: x\n", "CA109", True),
+        ("canonical owns x-ext",
+         "relations:\n  - type: owns\n    target: b\n    x-note: ok\n", None, True),
+    ]
+    for label, extra, rule, tmpl in cases:
+        entries = {"a": _card("a", extra, body=body, template_relations=tmpl),
+                   "b": _card("b", body="另一段正文" * 40)}
+        tmp, world = _temp_world("world-canonical-attrs-", entries)
+        try:
+            code, out, err = _judge(world, "--strict")
+            if err:
+                problems.append(f"{label} traceback：\n{err}")
+                continue
+            if rule is None:
+                if code != 0:
+                    problems.append(f"{label} 应 exit 0，实际 {code}：\n{out}")
+            else:
+                if code != 1:
+                    problems.append(f"{label} 应 --strict exit 1，实际 {code}：\n{out}")
+                if f"[{rule}]" not in out:
+                    problems.append(f"{label} 应报 {rule}：\n{out}")
+        finally:
+            tmp.cleanup()
+    return problems
+
+
+def check_event_fields_only_on_event_cards() -> list[str]:
+    """#40 F2：非事件卡上的 when / when_sort 也报 CA109（协议 1.8）。"""
+    problems = []
+    body = "正文" * 120
+    for extra in ("when: 元年\n", "when_sort: 1\n", "when: 元年\nwhen_sort: 1\n"):
+        entries = {"a": _card("a", extra, body=body)}
+        tmp, world = _temp_world("world-eventfield-", entries)
+        try:
+            code, out, err = _judge(world, "--strict")
+            if err:
+                problems.append(f"{extra!r} traceback：\n{err}")
+                continue
+            if code != 1:
+                problems.append(f"{extra!r} 应 --strict exit 1，实际 {code}：\n{out}")
+            if "[CA109]" not in out or "事件字段" not in out:
+                problems.append(f"{extra!r} 应报 CA109 事件字段只能出现在 event 卡上：\n{out}")
+        finally:
+            tmp.cleanup()
+    return problems
+
+
+def check_broken_yaml_does_not_fake_dangling_refs() -> list[str]:
+    """#40 F3：坏 YAML 的卡不该让引用方被报成「指向不存在的 id」。"""
+    problems = []
+    body = "正文" * 120
+    entries = {"a": _card("a", "canon_refs:\n  - old\n", body=body)}
+    tmp, world = _temp_world("world-brokenref-", entries)
+    try:
+        (world / "entries" / "old.md").write_text(
+            "---\nid: old\ntitle: 坏卡\n  bad: [unclosed\n---\n\n正文\n",
+            encoding="utf-8")
+        code, out, err = _judge(world, "--strict")
+        if err:
+            problems.append(f"坏 YAML 世界 traceback：\n{err}")
+            return problems
+        if code != 1 or "[CA100]" not in out:
+            problems.append(f"坏卡应报 CA100 且 --strict exit 1，实际 {code}：\n{out}")
+        if "[CA401]" in out:
+            problems.append(f"引用方不该被报「指向不存在的 id」：\n{out}")
+    finally:
+        tmp.cleanup()
+    return problems
+
+
 def check_ca103_rejects_datetime() -> list[str]:
     """issue #46：date 只收日期，不收带时间的 datetime。"""
     problems = []
@@ -3857,6 +3938,12 @@ def main() -> int:
          check_ca103_rejects_datetime),
         ("issue #42：CA703 的 create/birth 豁免只限第一笔转手",
          check_ca703_creation_exemption_is_first_transfer_only),
+        ("issue #40 F1：规范形注解键按关系名校验（与旧写法同判）",
+         check_canonical_relations_validate_attrs_per_relation),
+        ("issue #40 F2：非事件卡上的 when / when_sort 报 CA109",
+         check_event_fields_only_on_event_cards),
+        ("issue #40 F3：坏 YAML 不制造假悬空引用",
+         check_broken_yaml_does_not_fake_dangling_refs),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),

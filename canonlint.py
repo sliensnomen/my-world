@@ -40,6 +40,7 @@ except ContractError as exc:
     print(f"error: {exc}", file=sys.stderr)
     sys.exit(2)
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
+from store.parse import salvage_id  # #40 F3：坏 YAML 的卡也要能认出 id
 from judges.model import Pack
 from judges.registry import PackImportError, RegistryError, load_backend, select_packs
 from judges.ca.content import declares_dependencies  # #14：CA302 判据搬到判定层
@@ -49,7 +50,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.17"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）
+PROTOCOL_VERSION = "1.18"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -284,11 +285,12 @@ def check_events(e: Entry, findings: list[Finding]) -> None:
         # 事件字段是流水的一部分，流水只收 `type: event` 的卡。以前只看有没有
         # event_kind：一张 location 卡带上事件字段就被当成完整事件参与派生状态，
         # 却永远不在 entries/events/ 里。类型是作者声明的，判定器不替它改。
-        if "event_kind" in e.meta or any(leg in e.meta for leg in ledger.LEG_FIELDS):
+        if ("event_kind" in e.meta or "when" in e.meta or "when_sort" in e.meta
+                or any(leg in e.meta for leg in ledger.LEG_FIELDS)):
             findings.append(Finding(
                 "CA109", "error", rel,
                 f"事件字段只能出现在 `type: event` 的卡上（本卡 type={e.meta.get('type')!r}）；"
-                f"要记账请建 event 卡，史料卡上不要放 event_kind/腿"))
+                f"要记账请建 event 卡，史料卡上不要放 event_kind/when/when_sort/腿"))
         return
     v = ledger.event_view(e)
     for msg in v.shape_errors:
@@ -334,6 +336,10 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
     摆着一条指向不存在条目的边」可以一直没人报——它只是没进索引，不是没写错。
     索引只用来查目标是否存在，被遮蔽的条目自己的出边一样要判。
     """
+    # 坏 YAML 的卡：id 常常还在原文里。把它们捞出来，CA401 才能区分
+    # 「真的不存在」与「存在但读不出来」（issue #40 F3）。
+    broken_ids = {salvage_id(e.path) for e in entries if e.parse_error}
+    broken_ids.discard(None)
     for e in entries:
         if e.parse_error:
             continue
@@ -345,7 +351,7 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
                                         f"{via} 引用 {ref_id!r} 为 world:id 形式，本版协议不支持"))
                 return None
             target = index.get(ref_id)
-            if target is None:
+            if target is None and ref_id not in broken_ids:
                 findings.append(Finding("CA401", "error", rel,
                                         f"{via} 引用指向不存在的 id `{ref_id}`"))
             return target

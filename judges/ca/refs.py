@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ledger
+import store
 from store import Entry
 
 from .vocab import WORLD_REF_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES
@@ -18,12 +19,13 @@ def _has_successor(e: Entry, index: dict[str, Entry]) -> bool:
     return _valid_successor(e, index) is not None
 
 
-def check_ca401(e: Entry, rel: str, add, index, ref_id: str, via: str):
+def check_ca401(e: Entry, rel: str, add, index, ref_id: str, via: str,
+                broken_ids: frozenset[str] = frozenset()):
     if WORLD_REF_RE.match(ref_id):
         add("error", f"{via} 引用 {ref_id!r} 为 world:id 形式，本版协议不支持")
         return None
     target = index.get(ref_id)
-    if target is None:
+    if target is None and ref_id not in broken_ids:
         add("error", f"{via} 引用指向不存在的 id `{ref_id}`")
     return target
 
@@ -111,34 +113,43 @@ def check_ca403(world: dict, emit) -> None:
 
 
 def apply(entries, index, run_entry, run_world) -> None:
+    # 坏 YAML 的卡：id 还在原文里，别让引用方被报成「指向不存在的 id」（#40 F3）。
+    broken_ids = frozenset(
+        i for i in (store.salvage_id(e.path) for e in entries if e.parse_error) if i)
     for e in entries:
         if e.parse_error:
             continue
         for ref in e.edges_of("canon_refs"):
-            target = run_entry("CA401", e, index=index, ref_id=ref.target, via="canon_refs")
+            target = run_entry("CA401", e, index=index, ref_id=ref.target, via="canon_refs",
+                          broken_ids=broken_ids)
             if target is not None:
                 run_entry("CA402", e, index=index, ref_id=ref.target, target=target)
         for dep in e.edges_of("depends_on"):
-            target = run_entry("CA401", e, index=index, ref_id=dep.target, via="depends_on")
+            target = run_entry("CA401", e, index=index, ref_id=dep.target, via="depends_on",
+                               broken_ids=broken_ids)
             if target is not None:
                 run_entry("CA404", e, ref_id=dep.target, target=target)
         for relation in ("conflicts_with", "exchanges_with", "derives_legitimacy_from"):
             for ref in e.edges_of(relation):
-                run_entry("CA401", e, index=index, ref_id=ref.target, via=relation)
+                run_entry("CA401", e, index=index, ref_id=ref.target, via=relation,
+                          broken_ids=broken_ids)
         for edge in e.relations:
             if edge.type not in _RELATIONS_WITH_OWN_REFERENCE_RULES:
-                run_entry("CA401", e, index=index, ref_id=edge.target, via=edge.type)
+                run_entry("CA401", e, index=index, ref_id=edge.target, via=edge.type,
+                          broken_ids=broken_ids)
 
         successor = e.meta.get("superseded_by")
         if successor is not None:
             valid = run_entry("CA109", e, phase="superseded_by", value=successor)
             if valid:
-                run_entry("CA401", e, index=index, ref_id=successor, via="superseded_by")
+                run_entry("CA401", e, index=index, ref_id=successor, via="superseded_by",
+                          broken_ids=broken_ids)
 
         view = ledger.event_view(e)
         for leg in ledger.LEG_FIELDS:
             for ref_id in view.legs.get(leg, []):
-                run_entry("CA401", e, index=index, ref_id=ref_id, via=leg)
+                run_entry("CA401", e, index=index, ref_id=ref_id, via=leg,
+                      broken_ids=broken_ids)
 
         for assertion in ("custody_of", "member_of"):
             raw = e.meta.get(assertion)
@@ -151,7 +162,8 @@ def apply(entries, index, run_entry, run_world) -> None:
                 valid = run_entry("CA109", e, phase="assertion", assertion=assertion,
                                   raw=raw, item_index=item_index)
                 if valid:
-                    run_entry("CA401", e, index=index, ref_id=raw[item_index], via=assertion)
+                    run_entry("CA401", e, index=index, ref_id=raw[item_index], via=assertion,
+                              broken_ids=broken_ids)
 
     run_world("CA405")
     run_world("CA403")

@@ -58,6 +58,11 @@ def contract_relation_names() -> dict[str, tuple[str, ...]]:
     return dict(CONTRACT.names)
 
 
+def contract_relation_attrs() -> dict[str, tuple[str, ...]]:
+    """读契约的 per-关系注解键表：{规范名: (允许的注解键…)}。"""
+    return dict(CONTRACT.attrs)
+
+
 def contract_deprecations() -> tuple[tuple[str, str, str], ...]:
     """读契约的「旧写法 → 新关系名」搬家表：((旧关系名, 旧注解值, 新关系名), …)。"""
     return CONTRACT.deprecations
@@ -207,6 +212,24 @@ class Relation:
 
 
 # ---- 文件 → frontmatter -----------------------------------------------------
+
+# YAML 坏掉时 id 常常还在原文里：只从 frontmatter 里捞 `id:` 那一行。
+BROKEN_ID_RE = re.compile(r"""^\s*id:\s*["']?([A-Za-z0-9_-]+)["']?\s*$""", re.MULTILINE)
+
+
+def salvage_id(path: Path) -> str | None:
+    """解析失败时尽量把 id 从原文里捞出来（issue #40 F3）。
+
+    坏 YAML 的卡没进索引，引用它的卡就会被报成「引用指向不存在的 id」——真正的问题
+    在另一张卡上。有了这一步，CA401 可以区分「真的不存在」与「存在但读不出来」。
+    """
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return None
+    head = text.split("\n---", 1)[0]
+    m = BROKEN_ID_RE.search(head)
+    return m.group(1) if m else None
 
 
 @dataclass

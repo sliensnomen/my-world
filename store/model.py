@@ -57,6 +57,7 @@ from .parse import (  # noqa: E402  (import 位置：与下面的常量定义同
     Relation,
     canonical_relation_name,
     contract_deprecations,
+    contract_relation_attrs,
     contract_relation_names,
     judged_relation_name,
     nearest_relation_name,
@@ -115,6 +116,11 @@ FIELD_TABLE = (frozenset(CORE_REQUIRED_FIELDS) | frozenset(ANNOTATION_FIELDS)
 
 # 规范形边允许的键（契约 $defs/relation；`x-` 前缀的键永远是允许的）
 CANONICAL_RELATION_ITEMS = ("type", "target", "kind", "critical", "stance", "note", "what")
+
+# 每条关系**按名字**允许的注解键（契约 x-relation-vocabulary.names[*].attrs）。
+# 旧具名字段一直按这张表校验；规范形此前只查七键并集，于是 owns 带 what、
+# canon_refs 带 kind 这类「键用错了关系」在规范形下静默（issue #40 F1）。
+RELATION_ATTRS: dict[str, tuple[str, ...]] = contract_relation_attrs()
 
 # 具名字段 → 它携带的注解键（契约 x-relation-source.aliases[*].attrs）
 NAMED_RELATION_ATTRS: dict[str, tuple[str, ...]] = {
@@ -463,17 +469,31 @@ class Entry(RawEntry):
             if not isinstance(item, dict):
                 errs.append(SchemaError("CA107", f"{where} 必须是对象"))
                 continue
-            extra = [k for k in item if k not in CANONICAL_RELATION_ITEMS
-                     and not str(k).startswith("x-")]
             missing = [k for k in ("type", "target") if k not in item]
             for m in missing:
                 errs.append(SchemaError("CA107", f"{where} 缺字段 `{m}`"))
-            for x in extra:
-                errs.append(SchemaError("CA107", f"{where} 含未定义字段 `{x}`（扩展须 x- 前缀）"))
-            if missing or extra:
+            if missing:
                 continue
             if not isinstance(item["type"], str) or not item["type"]:
                 errs.append(SchemaError("CA109", f"{where}.type 必须是字符串"))
+                continue
+            # 允许的注解键由**这条关系**决定，不是七键并集：owns 只能带 note（+x-）。
+            rel_name = canonical_relation_name(item["type"])
+            allowed = RELATION_ATTRS.get(rel_name)
+            standard = ({"type", "target"} | set(allowed)) if allowed is not None \
+                else set(CANONICAL_RELATION_ITEMS)
+            extra = [k for k in item if k not in standard and not str(k).startswith("x-")]
+            for x in extra:
+                if rel_name == "canon_refs":
+                    # 旧写法 canon_refs 只收字符串，写成对象报 CA109；规范形对齐同一口径。
+                    errs.append(SchemaError(
+                        "CA109", f"{where} 含字段 `{x}`：canon_refs 的边只能写"
+                                 " `{type: canon_refs, target: …}`（引用只收 id 字符串）"))
+                    continue
+                what = f"`{item['type']}` 只接受 {', '.join(sorted(allowed)) or '无'}" \
+                    if allowed is not None else "扩展须 x- 前缀"
+                errs.append(SchemaError("CA107", f"{where} 含未定义字段 `{x}`（{what}）"))
+            if extra:
                 continue
             bad = False
             for key in ("type", "target"):

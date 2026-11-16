@@ -39,7 +39,7 @@ _LAZY = {
     "SchemaError": "model", "ShapeIssue": "model",
     "canonical_relation_name": "model", "nearest_relation_name": "model",
     "parse_entry": "model", "parse_text": "model", "read_frontmatter": "model",
-    "RawEntry": "model", "load_meta": "model",
+    "RawEntry": "model", "load_meta": "model", "salvage_id": "parse",
     # 写入
     "CONSTITUTION_SKELETON": "write", "cmd_init": "write", "cmd_link": "write",
     "cmd_new": "write", "restore_bytes": "write", "set_fields": "write",
@@ -58,7 +58,7 @@ __all__ = [
     "LEGACY_RELATION_FIELDS", "NAMED_RELATION_ATTRS", "RELATIONS_FIELD",
     "RELATION_TYPE_NAMES", "RELATION_VOCABULARY", "ConflictRef", "Dep", "Entry",
     "Relation", "SchemaError", "ShapeIssue", "canonical_relation_name",
-    "nearest_relation_name", "parse_entry",
+    "nearest_relation_name", "parse_entry", "salvage_id",
     "CONSTITUTION_SKELETON", "cmd_init", "cmd_link", "cmd_new", "restore_bytes",
     "set_fields", "slugify",
     "ContractError", "contract_status", "get_contract",
