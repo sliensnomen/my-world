@@ -272,6 +272,15 @@ def _judge(world: Path, *args: str) -> tuple[int, str, str]:
     return p.returncode, p.stdout, p.stderr
 
 
+def _judge_env(world: Path, env: dict[str, str],
+               *args: str) -> tuple[int, str, str]:
+    merged = dict(os.environ)
+    merged.update(env)
+    p = subprocess.run([PY, str(TOOL), str(world), *args], cwd=ROOT,
+                       capture_output=True, text=True, env=merged)
+    return p.returncode, p.stdout, p.stderr
+
+
 def _issue38_body(entry_id: str) -> str:
     return (entry_id + "正文") * 120
 
@@ -2550,6 +2559,32 @@ def check_event_legs_are_window_checked() -> list[str]:
             problems.append(f"destroyed from 把 traceback 写到了 stderr：\n{err}")
         if not any("[CA708]" in ln and "ev-move.md" in ln for ln in out.splitlines()):
             problems.append(f"被毁地点的 from 应报 CA708：\n{out}")
+
+    # (e) #44：端点 death 事件的死后 by 也归 CA705，CA708 不得双报
+    cards = {
+        "killer": _card("killer", ""),
+        "hero": _card("hero", ""),
+        "ev-killer-death": _card("ev-killer-death", (
+            "when: 元年\nevent_kind: death\nwhen_sort: 1\nobject:\n  - killer\n"
+        )).replace("type: location", "type: event"),
+        "ev-hero-death": _card("ev-hero-death", (
+            "when: 二年\nevent_kind: death\nwhen_sort: 2\n"
+            "by:\n  - killer\nobject:\n  - hero\n"
+        )).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-legs-endpoint-by-", cards)
+    with tmp:
+        _, out, err = _judge(world)
+        if err:
+            problems.append(f"端点事件死后 by 把 traceback 写到了 stderr：\n{err}")
+        hits705 = [ln for ln in out.splitlines()
+                   if "[CA705]" in ln and "ev-hero-death.md" in ln]
+        hits708 = [ln for ln in out.splitlines()
+                   if "[CA708]" in ln and "ev-hero-death.md" in ln]
+        if len(hits705) != 1:
+            problems.append(f"死人当死亡事件的 by 应恰好报一条 CA705：\n{out}")
+        if hits708:
+            problems.append(f"CA705 已报的死后 by，CA708 不该再报（#44）：\n{out}")
     return problems
 
 
@@ -2714,6 +2749,89 @@ def check_issue38_membership_types() -> list[str]:
         rules=("CA712", "CA714"),
         entry_any=("a.md", "ev.md"),
     )
+    return problems
+
+
+def check_layer_shape_does_not_crash() -> list[str]:
+    """#41：layer 写坏只能报 CA102，不许在集合/索引访问里 traceback。"""
+    problems = []
+    body = "正文" * 120
+    cards = {
+        "src": _card("src", (
+            "layer: economy\n"
+            "depends_on:\n"
+            "  - id: bad\n"
+            "    kind: resource\n"
+            "    critical: true\n"
+        ), load_bearing=True, body=body).replace("type: location", "type: faction"),
+        "bad": _card("bad", "layer:\n  - fiscal\n", body=body).replace(
+            "type: location", "type: faction"),
+    }
+    tmp, world = _temp_world("canonlint-layer-shape-", cards)
+    with tmp:
+        checks = [
+            ("registry", None, ()),
+            ("legacy", {"WGP_JUDGE_BACKEND": "legacy"}, ()),
+            ("registry --impact", None, ("--impact", "src")),
+        ]
+        for label, env, args in checks:
+            if env is None:
+                code, out, err = _judge(world, *args)
+            else:
+                code, out, err = _judge_env(world, env, *args)
+            if err:
+                problems.append(f"layer 坏形状（{label}）把 traceback 写到 stderr：\n{err}")
+            if code != 1:
+                problems.append(f"layer 坏形状（{label}）应因 CA102 exit 1，实际 {code}")
+            if not any("[CA102]" in ln and "bad.md" in ln for ln in out.splitlines()):
+                problems.append(f"layer 坏形状（{label}）应报 CA102：\n{out}")
+    return problems
+
+
+def check_ca703_creation_exemption_is_first_transfer_only() -> list[str]:
+    """#42：create/birth 只豁免第一笔转手；之后 from 必须命中持有证据。"""
+    problems = []
+    cards = {
+        "gem": _card("gem", body=_issue38_body("gem")).replace(
+            "type: location", "type: item"),
+        "alice": _card("alice", body=_issue38_body("alice")).replace(
+            "type: location", "type: character"),
+        "bob": _card("bob", body=_issue38_body("bob")).replace(
+            "type: location", "type: character"),
+        "carol": _card("carol", body=_issue38_body("carol")).replace(
+            "type: location", "type: character"),
+        "dave": _card("dave", body=_issue38_body("dave")).replace(
+            "type: location", "type: character"),
+        "ev-create": _card("ev-create", (
+            "when: 元年\nevent_kind: create\nwhen_sort: 1\nobject:\n  - gem\n"
+        ), body=_issue38_body("ev-create")).replace("type: location", "type: event"),
+        "ev-t1": _card("ev-t1", (
+            "when: 二年\nevent_kind: transfer\nwhen_sort: 2\nby:\n  - bob\n"
+            "from:\n  - bob\nto:\n  - bob\n  - carol\nobject:\n  - gem\n"
+        ), body=_issue38_body("ev-t1")).replace("type: location", "type: event"),
+        "ev-t2": _card("ev-t2", (
+            "when: 三年\nevent_kind: transfer\nwhen_sort: 3\nby:\n  - alice\n"
+            "from:\n  - alice\nto:\n  - dave\nobject:\n  - gem\n"
+        ), body=_issue38_body("ev-t2")).replace("type: location", "type: event"),
+    }
+    tmp, world = _temp_world("canonlint-ca703-first-", cards)
+    with tmp:
+        for label, env in (("registry", None),
+                           ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+            if env is None:
+                code, out, err = _judge(world, "--strict")
+            else:
+                code, out, err = _judge_env(world, env, "--strict")
+            if err:
+                problems.append(f"CA703 首笔豁免（{label}）把 traceback 写到了 stderr：\n{err}")
+            if code != 1:
+                problems.append(f"CA703 第二笔非持有人交出应 --strict exit 1，实际 {code}：\n{out}")
+            if not any("[CA703]" in ln and "ev-t2.md" in ln
+                       and "交出者不是持有人" in ln and "alice" in ln
+                       for ln in out.splitlines()):
+                problems.append(f"第二笔由 alice 交出应在 ev-t2 报 CA703（{label}）：\n{out}")
+            if any("[CA703]" in ln and "ev-t1.md" in ln for ln in out.splitlines()):
+                problems.append(f"create 后的第一笔转手应豁免 CA703（{label}）：\n{out}")
     return problems
 
 
@@ -3645,6 +3763,10 @@ def main() -> int:
          check_issue38_endpoint_actors_exist),
         ("issue #38：member_of 的主体/目标类型门禁",
          check_issue38_membership_types),
+        ("issue #41：layer 写坏只报 CA102，不 traceback",
+         check_layer_shape_does_not_crash),
+        ("issue #42：CA703 的 create/birth 豁免只限第一笔转手",
+         check_ca703_creation_exemption_is_first_transfer_only),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),

@@ -13,13 +13,14 @@ def check_ca501(e: Entry, rel: str, add, index, dep) -> None:
     if e.meta.get("load_bearing") is not True:
         return
     layer = e.meta.get("layer")
-    if layer not in LAYER_INDEX or dep.attrs.get("kind") not in KIND_INITIAL_SET:
+    if (not isinstance(layer, str) or layer not in LAYER_INDEX
+            or dep.attrs.get("kind") not in KIND_INITIAL_SET):
         return
     target = index.get(dep.target)
     if target is None:
         return
     target_layer = target.meta.get("layer")
-    if target_layer not in LAYER_INDEX:
+    if not isinstance(target_layer, str) or target_layer not in LAYER_INDEX:
         add("error", f"depends_on 目标 `{dep.target}` 没有可比较的 layer——"
             "物质族承重依赖的锚点必须有 layer，否则层级方向无法判定")
     elif LAYER_INDEX[target_layer] > LAYER_INDEX[layer]:
@@ -31,12 +32,13 @@ def check_ca503(e: Entry, rel: str, add, index=None) -> None:
     if e.meta.get("load_bearing") is not True:
         return
     layer = e.meta.get("layer")
-    if layer not in LAYER_INDEX:
+    if not isinstance(layer, str) or layer not in LAYER_INDEX:
         return
     deps = e.edges_of("depends_on")
     if layer in CA503_LAYERS and not any(
             dep.attrs.get("critical") and dep.attrs.get("kind") in KIND_INITIAL_SET
             and (anchor := (index or {}).get(dep.target)) is not None
+            and isinstance(anchor.meta.get("layer"), str)
             and anchor.meta.get("layer") in LAYER_INDEX
             for dep in deps):
         add("warning", f"{layer} 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）")
@@ -44,10 +46,13 @@ def check_ca503(e: Entry, rel: str, add, index=None) -> None:
 
 def check_ca505(world: dict, emit) -> None:
     index = world["index"]
-    layers_present = {e.meta.get("layer") for e in index.values() if not e.parse_error}
+    layers_present = {
+        e.meta.get("layer") for e in index.values()
+        if not e.parse_error and isinstance(e.meta.get("layer"), str)}
     load_bearing_layers = {
         e.meta.get("layer") for e in index.values()
-        if not e.parse_error and e.meta.get("load_bearing") is True}
+        if (not e.parse_error and e.meta.get("load_bearing") is True
+            and isinstance(e.meta.get("layer"), str))}
     if load_bearing_layers & CA505_TRIGGER_LAYERS and "fiscal" not in layers_present:
         emit("warning", "(仓库级)",
              "存在 military/political 层承重墙条目，但全库无 layer=fiscal 条目"
@@ -115,6 +120,8 @@ def check_ca504(world: dict, emit) -> list[dict]:
         def layer_key(entry_id):
             e = index.get(entry_id)
             layer = e.meta.get("layer") if e else None
+            if not isinstance(layer, str):
+                return -1
             return LAYER_INDEX.get(layer, -1)
 
         order.sort(key=layer_key, reverse=True)

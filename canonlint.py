@@ -49,7 +49,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.15"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）
+PROTOCOL_VERSION = "1.16"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -478,7 +478,7 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
         if e.meta.get("load_bearing") is not True:
             continue
         layer = e.meta.get("layer")
-        if layer not in LAYER_INDEX:
+        if not isinstance(layer, str) or layer not in LAYER_INDEX:
             continue  # CA102/CA302 已报
         for d in deps:
             if d.attrs.get("kind") not in KIND_INITIAL_SET:
@@ -487,7 +487,7 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
             if target is None:
                 continue  # CA401 已报
             tl = target.meta.get("layer")
-            if tl not in LAYER_INDEX:
+            if not isinstance(tl, str) or tl not in LAYER_INDEX:
                 findings.append(Finding("CA501", "error", e.rel,
                                         f"depends_on 目标 `{d.target}` 没有可比较的 layer——"
                                         f"物质族承重依赖的锚点必须有 layer，否则层级方向无法判定"))
@@ -501,15 +501,20 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
         if layer in CA503_LAYERS and not any(
                 d.attrs.get("critical") and d.attrs.get("kind") in KIND_INITIAL_SET
                 and (anchor := index.get(d.target)) is not None
+                and isinstance(anchor.meta.get("layer"), str)
                 and anchor.meta.get("layer") in LAYER_INDEX
                 for d in deps):
             findings.append(Finding("CA503", "warning", e.rel,
                                     f"{layer} 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）"))
 
     # CA505: 仓库级——有 military/political 承重墙但全库无任何 layer=fiscal 条目
-    layers_present = {e.meta.get("layer") for e in index.values() if not e.parse_error}
-    lb_layers = {e.meta.get("layer") for e in index.values()
-                 if not e.parse_error and e.meta.get("load_bearing") is True}
+    layers_present = {
+        e.meta.get("layer") for e in index.values()
+        if not e.parse_error and isinstance(e.meta.get("layer"), str)}
+    lb_layers = {
+        e.meta.get("layer") for e in index.values()
+        if (not e.parse_error and e.meta.get("load_bearing") is True
+            and isinstance(e.meta.get("layer"), str))}
     if lb_layers & CA505_TRIGGER_LAYERS and "fiscal" not in layers_present:
         findings.append(Finding("CA505", "warning", "(仓库级)",
                                 "存在 military/political 层承重墙条目，但全库无 layer=fiscal 条目"
@@ -580,10 +585,12 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
 
     # CA703: transfer/grant 的客体在它之前没有任何持有者；交出者（from）必须是
     # 当时有持有证据的人。持有证据 = canon 卡上的 owns 断言、更早的 transfer/grant
-    # 受方、或本仓库里带施动者的 create/birth（造物者先持有）。draft/archived 的
-    # owns 只是草稿/旧稿，不能当正史来源（issue #38 57/60）。
+    # 受方；本仓库内 create/birth 过的客体，第一笔转手允许来源不在断言里（造物者
+    # 不可知），之后必须命中。draft/archived 的 owns 只是草稿/旧稿，不能当正史
+    # 来源（issue #38 57/60；首笔范围见 issue #42）。
     holder_sets: dict[str, set[str]] = {}
     created: set[str] = set()
+    handed_over: set[str] = set()
     for e in index.values():
         if e.parse_error or e.meta.get("status") != "canon":
             continue
@@ -603,7 +610,8 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                     f"无源之财：{v.kind} 的客体 `{obj}` 在它之前没有任何持有者"
                     f"（既无 canon 卡的 owns 断言，也无更早的 transfer/grant 指向它）"))
             current = holder_sets.get(obj)
-            if current and obj not in created:
+            first_handover = obj in created and obj not in handed_over
+            if current and not first_handover:
                 for frm in v.legs.get("from", []):
                     if frm not in current:
                         findings.append(Finding(
@@ -616,6 +624,7 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                 holder_sets[obj] = set(v.legs.get("to", []))
             else:
                 holder_sets.setdefault(obj, set(v.legs.get("to", [])))
+            handed_over.add(obj)
 
     # CA704: 手写 owns 断言与流水推出的最终持有者打架
     # （只对有流水的客体比对；无流水的客体，断言即全部历史。
@@ -729,7 +738,7 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
             for obj in v.legs.get(leg, []):
                 if obj in seen:
                     continue
-                if (not endpoint and leg == "by" and obj in deaths
+                if (leg == "by" and obj in deaths
                         and deaths[obj] < v.when_sort):
                     continue  # 非端点事件的死后施动者由 CA705 负责
                 start, end = windows.get(obj, (None, None))
@@ -988,6 +997,8 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
         def layer_key(eid: str) -> int:
             e = index.get(eid)
             l = e.meta.get("layer") if e else None
+            if not isinstance(l, str):
+                return -1
             return LAYER_INDEX.get(l, -1)
 
         order.sort(key=layer_key, reverse=True)

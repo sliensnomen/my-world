@@ -34,6 +34,7 @@ def check_ca703(world: dict, emit) -> None:
     events = event_ledger.ordered_events(index)
     holder_sets: dict[str, set[str]] = {}
     created: set[str] = set()
+    handed_over: set[str] = set()
     for e in index.values():
         if e.parse_error or e.meta.get("status") != "canon":
             continue
@@ -52,7 +53,8 @@ def check_ca703(world: dict, emit) -> None:
                      f"无源之财：{view.kind} 的客体 `{obj}` 在它之前没有任何持有者"
                      "（既无 canon 卡的 owns 断言，也无更早的 transfer/grant 指向它）")
             current = holder_sets.get(obj)
-            if current and obj not in created:
+            first_handover = obj in created and obj not in handed_over
+            if current and not first_handover:
                 for frm in view.legs.get("from", []):
                     if frm not in current:
                         emit("warning", e.rel,
@@ -64,6 +66,7 @@ def check_ca703(world: dict, emit) -> None:
                 holder_sets[obj] = set(view.legs.get("to", []))
             else:
                 holder_sets.setdefault(obj, set(view.legs.get("to", [])))
+            handed_over.add(obj)
 
 
 def check_ca704(world: dict, emit) -> None:
@@ -168,7 +171,7 @@ def check_ca708(world: dict, emit) -> None:
             for obj in view.legs.get(leg, []):
                 if obj in seen:
                     continue
-                if (not endpoint and leg == "by" and obj in deaths
+                if (leg == "by" and obj in deaths
                         and deaths[obj] < view.when_sort):
                     continue  # 非端点事件的死后施动者由 CA705 负责
                 start, end = windows.get(obj, (None, None))
