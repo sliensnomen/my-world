@@ -58,6 +58,9 @@ PACK = Pack(
         Rule(id="PE015", pack="pe", scope="world", entry_domain="",
              check=pe_rules.check_pe015, default_level="warning",
              levels=frozenset({"warning"}), order=15),
+        Rule(id="PE016", pack="pe", scope="world", entry_domain="",
+             check=pe_rules.check_pe016, default_level="error",
+             levels=frozenset({"error"}), order=16),
     ),
 )
 

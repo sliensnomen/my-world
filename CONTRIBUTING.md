@@ -34,7 +34,7 @@
 | **存储** | `store/`（parse / model / layout / write） | 只要懂文件格式 | `tests/test_store.py`（AST 检查，越线即红） |
 | **格式契约** | `world.schema.json` | 只要懂 JSON Schema | `tests/test_schema.py` |
 | **结构判定** | `judges/ca/`、`judges/econ_pack.py`（默认 Registry）；`canonlint.py` 的 `check_*`（legacy 回退） | 要懂规则语义与执行日程（`PROTOCOL.md` §6.3） | `tests/run_tests.py`（快照 + 双跑）+ `tests/test_docs.py` |
-| **政治经济学判定** | `judges/cl/`、`judges/pe/`（默认 Registry）；`classlint/classlint.py` 的 CL + PE001–PE015（legacy 回退） | 要读 `classlint/PROTOCOL.md` | `classlint/tests/run_tests.py`（31 个夹具）+ 逐规则双跑 |
+| **政治经济学判定** | `judges/cl/`、`judges/pe/`（默认 Registry）；`classlint/classlint.py` 的 CL + PE001–PE016（legacy 回退） | 要读 `classlint/PROTOCOL.md` | `classlint/tests/run_tests.py`（31 个夹具）+ 逐规则双跑 |
 | **回归网** | `tests/`、`classlint/tests/` | —— | CI（四个检查） |
 | **文档** | `README.md`、`CONTRIBUTING.md`、`PROTOCOL.md`、`docs/` | —— | `tests/test_docs.py`（数字必须与代码一致） |
 
