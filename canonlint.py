@@ -50,7 +50,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.18"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用
+PROTOCOL_VERSION = "1.19"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -985,10 +985,15 @@ def check_duplicates(index: dict[str, Entry], threshold: float,
                     f"正文相似度 {ratio:.0%} ≥ {threshold:.0%}，疑似重复"))
 
 
-def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
-    """CA504: 输出 subject 的 depends_on 反向传递闭包，按链条序号降序。"""
+def impact_report(index: dict[str, Entry], subjects: list[str],
+                  entries: list[Entry] | None = None) -> list[dict]:
+    """CA504: 输出 subject 的 depends_on 反向传递闭包，按链条序号降序。
+
+    闭包从**全部条目**建图（不只是入索引的首份）：被遮蔽卡的出边判定层照旧检查，
+    报告层也必须看得见（issue #49）。
+    """
     dependents: dict[str, list[str]] = {}
-    for e in index.values():
+    for e in (entries if entries is not None else index.values()):
         if e.parse_error or not e.id:
             continue
         for d in e.edges_of("depends_on"):
@@ -1339,10 +1344,11 @@ def _apply_core_ca(pack: Pack, all_entries, index, issues,
         dup_threshold=dup_threshold)
 
 
-def _apply_core_ca_reports(pack: Pack, index: dict, impact_ids: list[str]):
+def _apply_core_ca_reports(pack: Pack, index: dict, impact_ids: list[str],
+                           entries: list | None = None):
     from judges.ca.pack import apply_core_ca_reports
 
-    return apply_core_ca_reports(pack, index, impact_ids)
+    return apply_core_ca_reports(pack, index, impact_ids, entries=entries)
 
 
 # ---- 主流程 --------------------------------------------------------------
@@ -1382,9 +1388,9 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
     if not impact_ids:
         reports = []
     elif core_ca is not None:
-        reports = _apply_core_ca_reports(core_ca, index, impact_ids)
+        reports = _apply_core_ca_reports(core_ca, index, impact_ids, all_entries)
     else:
-        reports = impact_report(index, impact_ids)
+        reports = impact_report(index, impact_ids, all_entries)
     return all_entries, index, findings, reports
 
 

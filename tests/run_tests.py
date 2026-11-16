@@ -3045,6 +3045,75 @@ def check_ledger_report_surfaces_certainty_and_ledger_rules() -> list[str]:
     return problems
 
 
+def check_impact_sees_shadowed_cards() -> list[str]:
+    """#49：被遮蔽卡（重复 id 的第二份）的出边也要进 CA504 的下游闭包。"""
+    problems = []
+    body = "正文" * 120
+    entries = {
+        "a-dup": _card("dup", "depends_on:\n  - id: subject\n    critical: false\n",
+                       body=body),
+        "b-dup": _card("dup",
+                       "depends_on:\n  - id: subject\n    critical: false\n",
+                       body="另一段正文" * 40),
+        "subject": _card("subject", "status: draft\n", body=body),
+    }
+    tmp, world = _temp_world("world-shadow-impact-", entries)
+    try:
+        for backend in (None, {"WGP_JUDGE_BACKEND": "legacy"}):
+            merged = dict(os.environ)
+            if backend:
+                merged.update(backend)
+            p1 = subprocess.run([PY, str(TOOL), str(world), "--impact", "subject"],
+                                cwd=ROOT, capture_output=True, text=True, env=merged)
+            out = p1.stdout
+            tag = "legacy" if backend else "registry"
+            if "[CA504]" not in out or "dup" not in out:
+                problems.append(f"CA504 下游闭包漏了被遮蔽卡（{tag}）：\n{out}")
+    finally:
+        tmp.cleanup()
+    return problems
+
+
+def check_layout_scanning_is_content_based() -> list[str]:
+    """#50：扁平世界的散文不产生假错误；entries/ 子目录里的卡不被静默跳过。"""
+    problems = []
+    body = "正文" * 120
+    # 现象 A：扁平世界 = 一张卡 + README + notes 散文
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "flat"
+        world.mkdir()
+        (world / "alpha.md").write_text(_card("alpha", body=body), encoding="utf-8")
+        (world / "README.md").write_text("# 说明\n\n不是卡片。\n", encoding="utf-8")
+        (world / "notes").mkdir()
+        (world / "notes" / "changelog.md").write_text("变更记录。\n", encoding="utf-8")
+        p1 = subprocess.run([PY, str(TOOL), str(world), "--strict"], cwd=ROOT,
+                            capture_output=True, text=True)
+        if p1.returncode != 0:
+            problems.append(f"扁平世界散文被当坏条目：\n{p1.stdout}")
+        if "CA100" in p1.stdout:
+            problems.append(f"扁平世界散文报 CA100：\n{p1.stdout}")
+        if "1 个条目" not in p1.stdout:
+            problems.append(f"扁平世界条目数不对：\n{p1.stdout}")
+    # 现象 B：entries/templates/ 里的卡必须进条目数并接受审计
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "sub"
+        (world / "entries").mkdir(parents=True)
+        (world / "entries" / "alpha.md").write_text(_card("alpha", body=body),
+                                                    encoding="utf-8")
+        tpl = world / "entries" / "templates"
+        tpl.mkdir()
+        (tpl / "ghost1.md").write_text(
+            _card("ghost1", "canon_refs:\n  - missing\n", body=body),
+            encoding="utf-8")
+        p2 = subprocess.run([PY, str(TOOL), str(world), "--strict"], cwd=ROOT,
+                            capture_output=True, text=True)
+        if "2 个条目" not in p2.stdout:
+            problems.append(f"entries/templates 里的卡被静默跳过（条目数）：\n{p2.stdout}")
+        if "CA401" not in p2.stdout or "ghost1" not in p2.stdout:
+            problems.append(f"entries/templates 里的卡没被审计：\n{p2.stdout}")
+    return problems
+
+
 def check_supersede_exemption_requires_archived() -> list[str]:
     """审计 §1.2：`superseded_by` 只有声明方 status=archived 时才豁免 CA201。"""
     body = "正文" * 120
@@ -3991,6 +4060,10 @@ def main() -> int:
          check_broken_yaml_does_not_fake_dangling_refs),
         ("issue #48：ledger 报告带确定度与账本族全族告警",
          check_ledger_report_surfaces_certainty_and_ledger_rules),
+        ("issue #49：CA504 下游闭包看见被遮蔽卡的出边",
+         check_impact_sees_shadowed_cards),
+        ("issue #50：扁平散文不误报、entries 子目录卡不被跳过",
+         check_layout_scanning_is_content_based),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),

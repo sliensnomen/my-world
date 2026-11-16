@@ -98,7 +98,7 @@ def check_ca502(world: dict, emit) -> None:
 def check_ca504(world: dict, emit) -> list[dict]:
     index = world["index"]
     dependents = {}
-    for e in index.values():
+    for e in (world.get("entries") or index.values()):
         if e.parse_error or not e.id:
             continue
         for dep in e.edges_of("depends_on"):
