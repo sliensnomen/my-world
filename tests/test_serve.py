@@ -615,6 +615,14 @@ def check_治理端点的升格降级与回滚():
         code, body, _ = post(f"{base}/api/entry",
                              {"type": "event", "title": "引用者", "id": "ref-1"})
         assert code == 201, body[:300]
+        # #51：跳级 draft → canon 被状态迁移门拒绝（400），磁盘字节不变
+        before_skip = (world / "entries/events/old-lore.md").read_bytes()
+        code, body, _ = post(f"{base}/api/status",
+                             {"id": "old-lore", "status": "canon"})
+        assert code == 400, f"跳级升格应 400，实际 {code}：{body[:300]}"
+        assert "不许跳级" in body.decode("utf-8", "replace"), body[:300]
+        assert (world / "entries/events/old-lore.md").read_bytes() == before_skip, \
+            "被拒的跳级迁移改了磁盘"
         # 升格：draft → trial → canon 一路绿灯
         for st in ("trial", "canon"):
             code, body, _ = post(f"{base}/api/status",
@@ -634,6 +642,10 @@ def check_治理端点的升格降级与回滚():
         code, body, _ = post(f"{base}/api/entry",
                              {"type": "event", "title": "承接者", "id": "new-lore"})
         assert code == 201, body[:300]
+        for st in ("trial", "canon"):
+            code, body, _ = post(f"{base}/api/status",
+                                 {"id": "reader-card", "status": st})
+            assert code == 200, f"reader-card 升格到 {st} 失败：{code} {body[:300]}"
         code, body, _ = post(f"{base}/api/status",
                              {"id": "reader-card", "status": "archived",
                               "superseded_by": "new-lore"})

@@ -817,6 +817,35 @@ def check_write_path_verifies_before_trusting_itself():
     return
 
 
+def check_status_transitions_are_guarded():
+    """#51：§3.2 迁移在写路径有门——跳级/降格/未声明快速通道都拒绝且磁盘不变。"""
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        assert store.cmd_init(world, exe="canonlint") == 0
+        assert store.cmd_new(world, "location", "灰港", "grey-harbor",
+                             layer_choices=()) == 0
+        path = world / "entries/locations/grey-harbor.md"
+        before = path.read_bytes()
+
+        def attempt(target: str) -> tuple[int, str]:
+            return store.set_fields(world, "grey-harbor", {"status": target})
+
+        for target in ("canon", "archived"):
+            rc, msg = attempt(target)
+            assert rc == 2, f"draft → {target} 应拒绝：{rc} {msg}"
+            assert "不许跳级" in msg and "trial" in msg, msg
+            assert path.read_bytes() == before, f"draft → {target} 被拒后磁盘被改了"
+        assert attempt("trial")[0] == 0
+        assert attempt("canon")[0] == 0
+        rc, msg = attempt("trial")
+        assert rc == 2 and "trial" in msg and "archived" in msg, msg
+        assert attempt("archived")[0] == 0
+        rc, msg = attempt("canon")
+        assert rc == 2 and "x-fast-lane" in msg, msg
+        assert store.set_fields(world, "grey-harbor", {"x-fast-lane": True})[0] == 0
+        assert attempt("canon")[0] == 0
+
+
 def check_new_writes_yaml_not_string_splicing():
     """`new` 把标题拼进 YAML 时必须转义：`#`、`:`、`[]` 都不能让卡变坏（评审 blocker 1.2）。"""
     with tempfile.TemporaryDirectory() as td:
@@ -1500,6 +1529,7 @@ CHECKS = (
     ("兼容模式的 HTTP 响应头可见", check_compat_mode_headers_are_visible),
     ("判定口径显式声明：引擎策略在 store/policy.py，默认行为不变（#14）",
      check_judgment_policies_are_explicit),
+    ("§3.2 状态迁移在写路径有门（#51）", check_status_transitions_are_guarded),
 )
 
 

@@ -279,6 +279,8 @@ draft → trial → canon → archived
 - **降级** `canon → archived`：唯一降级路径。不存在 `canon → trial`——"降回试水档"的意图通过 `archived` + 恢复程序实现。**降级不删稿。**
 - **恢复**：一切恢复**必须**走评审。默认路径为 `archived → trial → canon`（与升格同标准，理由引用宪章条款）。
 
+工具侧：`set_fields`（CLI 与 `POST /api/status` 共用）按本节状态机校验迁移——跳级、降级、未在卡上声明 `x-fast-lane: true` 的 `archived → canon` 一律拒绝且**不写盘**；时间与次数类程序约束不参与判定。
+
 ### 3.3 恢复快速通道与上诉期
 
 仓库宪章**可以**声明：
