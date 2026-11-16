@@ -1847,7 +1847,8 @@ def check_modify_preserves_identity_and_state() -> list[str]:
                 if hit(items, rule, entry):
                     problems.append(f"合法 {entry} 不该报 {rule}：{items}")
         code, out, err = run_case(["ledger", str(world)])
-        expected = "relic: 持有者 owner（来自 `owner`） | 保管 keeper | 位置 old-place"
+        expected = ("relic: 持有者 owner（来自 `owner`）【流水结论】"
+                    " | 保管 keeper【流水结论】 | 位置 old-place【流水结论】")
         if code != 0 or err or expected not in out:
             problems.append(f"modify 改变了既有派生状态：\n{out}{err}")
         if "4 笔完整事件" not in out:
@@ -3000,6 +3001,50 @@ def check_ca703_creation_exemption_is_first_transfer_only() -> list[str]:
     return problems
 
 
+def check_ledger_report_surfaces_certainty_and_ledger_rules() -> list[str]:
+    """#48：`canonlint ledger` 报告必须带确定度三态、且「账本族告警」不止 CA703/704/705。"""
+    problems = []
+    body = "正文" * 120
+    entries = {
+        "gem": _card("gem", "type: item\n", body=body),
+        "alice": _card("alice", "owns:\n  - gem\n", body=body),
+        "bob": _card("bob", "owns:\n  - gem\n", body=body),
+        "ev-1": _card("ev-1",
+                      "type: event\nwhen_sort: 1\nevent_kind: transfer\n"
+                      "by: [alice]\nto: [bob]\nobject: [gem]\n", body=body),
+        "ev-frag": _card("ev-frag", "type: event\nwhen: 元年\n", body=body),
+    }
+    tmp, world = _temp_world("world-ledger-report-", entries)
+    try:
+        p1 = subprocess.run([PY, str(TOOL), "ledger", str(world)], cwd=ROOT,
+                            capture_output=True, text=True)
+        out = p1.stdout
+        if p1.returncode != 0:
+            problems.append(f"ledger 报告 exit {p1.returncode}\n{p1.stderr}")
+        if "未定" not in out or "按 id 序" not in out:
+            problems.append(f"互搏/未定序不该只印一个持有者：\n{out}")
+        if "[CA707]" not in out:
+            problems.append(f"「账本族告警」应有 CA707：\n{out}")
+        if "[CA706]" not in out:
+            problems.append(f"「账本族告警」应有 CA706：\n{out}")
+        if "(账平)" in out:
+            problems.append(f"有账本族告警却印了「账平」：\n{out}")
+        p2 = subprocess.run([PY, str(TOOL), "export", str(world)], cwd=ROOT,
+                            capture_output=True, text=True)
+        try:
+            cert = json.loads(p2.stdout)["ledger"]["states"]["gem"]["certainty"]
+        except Exception as exc:
+            problems.append(f"export 的 certainty 读不出来：{exc}\n{p2.stdout[:400]}")
+            cert = None
+        if cert != "ambiguous":
+            problems.append(f"export certainty 应为 ambiguous，实际 {cert!r}")
+        if cert == "ambiguous" and "未定" not in out:
+            problems.append("ledger 报告与 export 的确定度口径不一致")
+    finally:
+        tmp.cleanup()
+    return problems
+
+
 def check_supersede_exemption_requires_archived() -> list[str]:
     """审计 §1.2：`superseded_by` 只有声明方 status=archived 时才豁免 CA201。"""
     body = "正文" * 120
@@ -3944,6 +3989,8 @@ def main() -> int:
          check_event_fields_only_on_event_cards),
         ("issue #40 F3：坏 YAML 不制造假悬空引用",
          check_broken_yaml_does_not_fake_dangling_refs),
+        ("issue #48：ledger 报告带确定度与账本族全族告警",
+         check_ledger_report_surfaces_certainty_and_ledger_rules),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),

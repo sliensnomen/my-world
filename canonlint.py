@@ -1021,42 +1021,74 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
     return reports
 
 
-def ledger_report(root: Path, packs=()) -> int:
-    """`canonlint ledger <世界>`：打印派生状态与没算平的地方。
+CERTAINTY_LABEL = {
+    "known": "流水结论",
+    "unknown": "仅断言兜底，无流水佐证",
+    "ambiguous": "未定（同刻未定序或断言互搏）",
+}
 
-    与 --impact 同一条纪律：report 级输出，永不进退出码、永不写盘。
-    「没算平的」复用所选后端的判据（CA703/CA704/CA705），
-    报告与门禁不许各说一套。
+
+def ledger_report(root: Path, packs=()) -> int:
+    """`canonlint ledger <世界>`：打印派生状态与账本族的告警。
+
+    与 --impact 同一条纪律：report 级输出、永不进退出码、永不写盘。
+    「账本族的告警」与审计/导出共用同一份 findings 与同一个 `cert_` 三态——
+    报告与门禁不许各说一套（issue #48：三出口三套说法）。
     """
-    all_entries, index, _issues = store.collect(root)
+    all_entries, index, issues = store.collect(root)
     events = ledger.ordered_events(index)
     states = ledger.derive_state(index)
     findings: list[Finding] = []
     core_ca = next((p for p in packs
                     if isinstance(p, Pack) and p.name == "core-ca"), None)
     if core_ca is not None:
-        from judges.ca.pack import apply_core_ca_ledger
+        # 报告与门禁同口径：跑完整核心审计，再挑账本族（CA7xx），
+        # 这样 CA706/707/711/712/713 不会被「只跑流水子集」吞掉（issue #48）。
+        from judges.ca.pack import apply_core_ca
 
-        apply_core_ca_ledger(
-            core_ca, index,
-            lambda rule, level, rel, msg: findings.append(Finding(rule, level, rel, msg)))
+        apply_core_ca(
+            core_ca, all_entries, index, issues, KNOWN_FIELDS,
+            lambda rule, level, rel, msg: findings.append(Finding(rule, level, rel, msg)),
+            dup_threshold=0.85)
     else:
+        findings.extend(Finding(i.rule, "error", i.rel, i.message) for i in issues)
+        for e in all_entries:
+            check_structure(e, findings, KNOWN_FIELDS)
+            check_content(e, findings)
+        check_refs(all_entries, index, findings)
+        check_chain(index, findings)
+        for e in all_entries:
+            check_events(e, findings)
         check_ledger(index, findings)
     n_entries = sum(1 for e in all_entries if not e.parse_error)
     print(f"{n_entries} 个条目 | {len(events)} 笔完整事件（有 when_sort 才进流水）")
     print("\n== 派生状态（结论断言 + 流水）==")
     if not states:
         print("(没有可派生的客体：没有 owns 断言，也没有完整事件)")
+    def _mark(value: str | None, certainty: str) -> str:
+        if value is None:
+            return "-"
+        label = CERTAINTY_LABEL.get(certainty, certainty)
+        if certainty == "ambiguous":
+            return f"未定（显示值 {value}，仅 id 序，不代表结论）"
+        if certainty == "unknown":
+            return f"{value}（猜的）【{label}】"
+        return f"{value}【{label}】"
+
     for obj in sorted(states):
         st = states[obj]
         src = f"（来自 `{st.holder_source}`）" if st.holder_source else ""
-        print(f"{obj}: 持有者 {st.holder or '（无）'}{src}"
-              f" | 保管 {st.custodian or '-'} | 位置 {st.location or '-'}")
-    unbalanced = [f for f in findings if f.rule in ("CA703", "CA704", "CA705")]
-    print("\n== 没算平的 ==")
-    if not unbalanced:
+        holder = _mark(st.holder, st.certainty)
+        if st.holder and src and st.certainty != "ambiguous":
+            holder = holder.replace("【", f"{src}【", 1)
+        print(f"{obj}: 持有者 {holder}"
+              f" | 保管 {_mark(st.custodian, st.certainty)}"
+              f" | 位置 {_mark(st.location, st.certainty)}")
+    ledger_findings = [f for f in findings if f.rule.startswith("CA7")]
+    print("\n== 账本族告警（没算平的 + 参考口径）==")
+    if not ledger_findings:
         print("(账平)")
-    for f in unbalanced:
+    for f in ledger_findings:
         print(f"[{f.rule}] {f.entry}: {f.message}")
     membership = ledger.derive_membership(index)
     print("\n== 组织归属（join/leave 流水）==")
