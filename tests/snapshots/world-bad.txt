@@ -16,6 +16,7 @@ exit=1
 [CA404] error   entries/harbor-watch.md: canon 条目的 depends_on 目标 `gh-memo` 状态为 trial，须为 canon
 [CA405] error   entries/old-tax.md: archived 条目仍被 canon_refs 引用，但未填 `superseded_by`（没有可迁移的承接条目）——降级处置不完整
 [CA501] error   entries/coup-ledger.md: depends_on 目标 `council` 层级 political（序号 6）高于本条目 military（序号 5）
+[CA501] error   entries/harbor-watch.md: depends_on 目标 `gh-memo` 没有可比较的 layer——物质族承重依赖的锚点必须有 layer，否则层级方向无法判定
 [CA502] error   entries/ring-b.md: depends_on 存在环（物质族）: ring-a → ring-b → ring-a
 [CA104] warning entries/council.md: 正文 21 字，canon 档建议 ≥200 字
 [CA104] warning entries/coup-ledger.md: 正文 31 字，trial 档建议 ≥200 字
@@ -30,7 +31,8 @@ exit=1
 [CA104] warning entries/temple.md: 正文 16 字，trial 档建议 ≥200 字
 [CA201] warning entries/lighthouse-a.md ↔ entries/lighthouse-b.md: 正文相似度 100% ≥ 85%，疑似重复
 [CA403] warning entries/rumor-a.md: 与 `gh-customs` 的矛盾标注不对称（对方未回指）
+[CA503] warning entries/harbor-watch.md: military 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
 [CA503] warning entries/pirates.md: military 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
 [CA108] info    entries/pirates.md: kind='x-faith' 为实验值，已计入案例收集
 
-25 个条目 | 18 错误 | 14 警告
+25 个条目 | 19 错误 | 15 警告

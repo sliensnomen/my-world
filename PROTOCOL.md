@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**40 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.14"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.16"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -103,6 +103,14 @@
 **v1.14 修订记录（2026-11-12，漏洞审计 §2.1：同刻未定序不再吞掉断言对账）：**
 
 37. **CA704/CA709 的「归属未定序」不再是对账的一键降级器**。漏洞审计 §2.1：作者只要补一笔同刻（`when_sort` 相同）、受方不同的 transfer，CA704 就会从 error 降成 warning——因为旧实现把 ambiguous 客体的**全部** `owns` 对账一起跳过。修法：未定序仍然不挑赢家，但断言照样对账——断言者必须同时落在全部候选受方的交集里（也就是对任何同刻结局都成立），否则照报 error「未定序时断言必须同时落在全部候选里（交集：…）」。CA709 的 `custody_of` 同口径。**多值受方（单笔 `to` 列表）不受影响**：单笔的受方列表仍按各受方逐个放行，只有「同刻多笔、集合不同」才走交集。§9.1 升 minor，规则编号不变，契约不动。
+
+**v1.16 修订记录（2026-11-16，回归修复：CA703 首笔豁免、端点死后 by 不双报）：**
+
+39. **CA703 的 create/birth 豁免只限第一笔转手**（issue #42）：协议 1.15 把「本世界内造出的客体，第一笔转手允许来源不在断言里」实现成了永久豁免——只要 create 过一次，之后任何非持有人都能把东西交出去。现在 `created` 只豁免每个客体的第一笔 transfer/grant，之后 `from` 必须命中当前持有证据（canon 卡 `owns` 断言或更早流水）。**端点事件的死后 `by` 不再双报**（issue #44）：死亡事件里已死的人当施动者由 CA705 报「死人做活事」，CA708 不再拿同一个 `by` 腿重复报「不存在的东西在动弹」。均按 §9.1 升 minor，规则编号不变，契约不动。
+
+**v1.15 修订记录（2026-11-16，issue #38：交出者来源、锚点 layer、端点施动者、成员类型门禁）：**
+
+38. **反常识世界在 `--strict` 下不再全绿**（issue #38 的 57–65 组）。四条收紧：①CA703 的持有证据只认 **canon** 卡上的 `owns` 断言与更早流水（draft/archived 不再算正史来源）；本世界内 `create`/`birth` 过的客体，第一笔转手允许来源不在断言里（造物者不可知），之后 `from` 必须命中当前持有证据。②CA501 的物质族承重依赖目标没有 `layer` 时不再静默跳过，报 error——锚点必须有 layer，否则层级方向无法判定。③CA503 只统计「目标存在且有 layer」的 critical 物质依赖（无 layer 归 CA501）。④CA708 的端点事件自身豁免，但 `by` 施动者仍查存在窗口（未出生的人不能当施动者）。⑤CA712 增加类型门禁：`member_of` 主体须 `character`/`faction`，目标须 `faction`；目标悬空交 CA401。均按 §9.1 升 minor，规则编号不变，契约不动。
 
 **v1.0.1 澄清（不改语义，只消歧义）：**
 - `superseded_by`：archived 必填（无承接者填 null）；其他状态**可以省略或填 null**（模板统一写入合法）
@@ -503,23 +511,23 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA403 | warning | `conflicts_with` 双方均简式且缺回指（对象式标注豁免，见 §4.2） |
 | CA404 | error | `canon` 条目的 `depends_on` 目标状态非 `canon`（链条依赖只能建立在已定档上） |
 | CA405 | error | `archived` 条目仍被 `canon_refs` 引用，且**没有有效承接者**：`superseded_by` 未填、为 `null`、不是 id 字符串、指向不存在的条目、或指向自己（前两者见 v1.0.1 澄清）——降级处置不完整。判据是「承接者真的存在」，不是「字段非空」：一个坏值曾经能把这条 error 静默消音 |
-| CA501 | error | **物质族** `depends_on` 目标的链条序号 > 本条目的链条序号（规范族边豁免） |
+| CA501 | error | **物质族** `depends_on` 目标的链条序号 > 本条目的链条序号（规范族边豁免）；目标没有 `layer` 时报「没有可比较的 layer」——物质族承重依赖的锚点必须有 layer（issue #38，协议 1.15） |
 | CA502 | error | **物质族**依赖子图存在环 |
-| CA503 | warning | economy/fiscal/military/political 层承重墙条目无任何**物质族** `critical: true` 依赖（ideology 层豁免） |
+| CA503 | warning | economy/fiscal/military/political 层承重墙条目无任何**物质族** `critical: true` 依赖（ideology 层豁免）；只统计「目标存在且有 layer」的依赖——无 layer 目标归 CA501，不再拿 `kind` 冒充层级（协议 1.15） |
 | CA505 | warning | 仓库级：存在 military/political 层承重墙条目，但全库没有任何 `layer: fiscal` 的条目（财政维度缺失提示；条目不须为承重墙） |
 | CA504 | report | 变更/降级影响报告：输出变更条目的下游传递闭包（**不含主体自身**——`--impact x` 问的是「谁依赖 x」，环由 CA502 单独报） |
 | CA701 | warning | 时序倒流：事件 A 的 `depends_on` 里有事件 B，两边都有 `when_sort` 且 B > A（要求 B ≤ A，相等合法）。任一边缺 `when_sort` 即豁免；非 `type: event` 的卡不参与。**`when_sort` 相等即同刻，同刻没有先后**——流水里的 id 序只是输出稳定键，不是时序（协议 1.8） |
 | CA702 | error | 账不平：完整事件的必填腿缺失或为空（`transfer`/`custody`/`grant` 要 `by`+`to`+`object`，`move` 要 `object`+`to`，`create`/`destroy`/`birth`/`death`/`modify` 要 `object`，`join` 要 `by`+`to`，`leave` 要 `by`+`from`，`transform` 要 `object`+`result`）。腿形状写坏归 CA109，不双报 |
-| CA703 | warning | 无源之财：`transfer`/`grant` 的客体在它之前没有任何持有者（既无 `owns` 断言，也无更早的 `transfer`/`grant` 指向它）。事件自身缺 `when_sort` 即豁免。`create` 不算持有者来源：它的腿表只有 `object`，事件里没记「谁造的」，推不出持有者 |
+| CA703 | warning | 无源之财 + 交出者不是持有人：`transfer`/`grant` 的客体在它之前没有任何持有证据——只认 **canon** 卡上的 `owns` 断言（draft/archived 是草稿/旧稿）与更早流水；本世界内 `create`/`birth` 过的客体，**只有第一笔**转手允许来源不在断言里（造物者不可知），之后的每一笔 `from` 都必须命中该客体的当前持有证据（协议 1.16，issue #42）。事件自身缺 `when_sort` 即豁免 |
 | CA704 | error/warning | 结论与流水打架：手写 `owns` 断言与流水推出的最终持有者不一致（只对有 `transfer`/`grant` 流水的客体比对；无流水的客体断言即全部历史）。**多值受方 = 归属未定序**：最终那笔的 `to` 多于一个 id 时，派生状态的报告取第一个，CA704 对列表里任一受方的断言都放行；更早一笔的受方已被转手，不放行。**同刻多笔转让**（协议 1.8/1.10）：同一客体在最大 `when_sort` 上有多笔转让且受方集合不同 → **warning**「归属未定序」，不许按 id 序挑一笔当最终持有者；该 warning **与有没有 `owns` 断言无关，每客体只报一条**（协议 1.10）；受方集合一致则按一致集合对账，仍是 error |
 | CA705 | warning | 死人做活事：事件的 `by` 里有人在**严格更早**（`when_sort` 较小）的事件里已 `death`；同刻不算。**`death` 事件自身也查**（协议 1.8）：死者不能再当任何事件的施动者，包括另一笔 `death` |
 | CA706 | warning | 半截事件：`when` 与 `event_kind` 只给了一个。两个都给才是完整事件，都不给就是普通史料卡（协议 1.1 的世界在 1.2 下不红） |
 | CA707 | warning | `owns` 断言互搏：同一客体被多张卡断言持有。派生状态按 id 序取第一个只是「报告需要一个确定答案」，不是裁决；请统一到一张卡上断言，或改用流水表达流转。与有无流水无关 |
-| CA708 | warning | 不存在的东西在动弹：客体的事件落在它自己的存在窗口外——`create`/`birth` 开窗、`death`/`destroy` 关窗、`transform` 关旧窗开新窗（取最早的边界；缺 `when_sort` 的边界不产生窗口）。端点事件自身豁免。`modify` 是普通客体事件，不是端点；同一 id 的变化不关闭或打开窗口。CA705 管 `by` 腿，本条管 `object` 腿 |
+| CA708 | warning | 不存在的东西在动弹：客体的事件落在它自己的存在窗口外——`create`/`birth` 开窗、`death`/`destroy` 关窗、`transform` 关旧窗开新窗（取最早的边界；缺 `when_sort` 的边界不产生窗口）。端点事件自身豁免。`modify` 是普通客体事件，不是端点；同一 id 的变化不关闭或打开窗口。CA705 管 `by` 腿，本条管 `object` 腿；端点事件自身豁免；死后 `by` 施动者归 CA705，本条不双报（协议 1.16，issue #44） |
 | CA709 | error/warning | 结论与流水打架（保管版）：手写 `custody_of` 断言与 custody 流水推出的最终保管人不一致。custody 不改变持有者、只改保管；多值受方与 CA704 同口径（最终那笔 `to` 列表里任一受方放行）。同刻多笔 custody 且受方集合不同 → warning「未定序」（协议 1.8/1.10，与 CA704 对称：**与有没有断言无关，每客体一条**）。**未定序时断言仍须落在全部候选保管人的交集里，否则照报 error（1.14）** |
 | CA710 | warning | `custody_of` 断言互搏：同一客体被多张卡断言保管（CA707 的保管版） |
 | CA711 | warning | 轨迹断裂：`move` 的 `from` 对不上链上当前位置（上一笔 `move` 的 `to`）。只查存在窗口内的 `move`（窗外归 CA708，不双报）；上一笔 `to` 多值则位置「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时当前位置在列表里即放行；缺 `from`/`when_sort` 不查。**同刻多笔 `move`**（协议 1.8）之间没有先后：同刻先合并位置（目的地一致才确定，不一致即「未定」），只有**严格更晚**的 `move` 才与它比对 |
-| CA712 | error | 结论与流水打架（成员版）：手写 `member_of` 断言，但该人流水里对那个组织的最后一个动作是 `leave`——要么补一笔 `join`，要么撤断言。组织没有流水时断言即全部历史，不判。`member_of` 多值合法（一个人可以在多个组织），所以只有对账、没有互搏规则。**同刻 join 与 leave 并存**时最后动作未定序 → fail-open，不报（协议 1.8） |
+| CA712 | error | 结论与流水打架（成员版）：手写 `member_of` 断言，但该人流水里对那个组织的最后一个动作是 `leave`——要么补一笔 `join`，要么撤断言。组织没有流水时断言即全部历史，不判。`member_of` 多值合法（一个人可以在多个组织），所以只有对账、没有互搏规则。**同刻 join 与 leave 并存**时最后动作未定序 → fail-open，不报（协议 1.8）。**类型门禁**：主体须 `character`/`faction`，目标须 `faction`（目标悬空交 CA401）（协议 1.15） |
 | CA713 | warning | 转让起点断裂：`transfer`/`grant` 的 `from` 对不上链上上一笔的受方（上一笔 `to`）。口径同 CA711：上一笔 `to` 多值则起点「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时落点在列表里即放行；缺 `from`/`when_sort` 不查；同刻转让不排序、不互为「上一笔」 |
 
 **无传递违规原则：** CA402/CA404/CA405 只判**直接边**的违规。A 引用 B、B 违规并不使 A 连带违规；"连带影响"是 CA504 报告的职责，不是 error 的传染。
@@ -550,7 +558,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.14",
+  "protocol_version": "1.16",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

@@ -1211,15 +1211,23 @@ def check_new_writes_event_cards():
             rc, out, err = run(["new", "item" if eid == "sword-x" else "character",
                                 eid, "--id", eid, "--root", str(world)])
             assert rc == 0, f"{eid}: {out} {err}"
+        rc, out, err = run(["new", "faction", "守夜人", "--id", "night-watch",
+                            "--root", str(world)])
+        assert rc == 0, f"night-watch: {out} {err}"
         # 断言字段：new --owns/--member-of/--custody-of（steward 是流水推出的最终持有者，对账一致）
         rc, out, err = run(["new", "character", "管家", "--id", "steward",
-                            "--owns", "sword-x", "--member-of", "anna",
+                            "--owns", "sword-x", "--member-of", "night-watch",
                             "--custody-of", "sword-x", "--root", str(world)])
         assert rc == 0, f"new --owns 失败：{out} {err}"
         got = store.parse_entry(world / "entries/characters/steward.md", world)
         assert got.meta["owns"] == ["sword-x"]
-        assert got.meta["member_of"] == ["anna"]
+        assert got.meta["member_of"] == ["night-watch"]
         assert got.meta["custody_of"] == ["sword-x"]
+        # 造物事件：本世界内 create 过的客体，第一笔转手不要求来源在断言里（协议 1.15）
+        rc, out, err = run(["event", "create", "铸剑", "--id", "ev-0",
+                            "--object", "sword-x",
+                            "--when", "元年", "--when-sort", "0", "--root", str(world)])
+        assert rc == 0, f"event create 失败：{out} {err}"
         rc, out, err = run(["event", "transfer", "剑易手", "--id", "ev-1",
                             "--by", "anna", "--to", "steward", "--object", "sword-x",
                             "--when", "元年", "--when-sort", "1", "--root", str(world)])
