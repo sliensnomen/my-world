@@ -49,7 +49,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.14"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账
+PROTOCOL_VERSION = "1.15"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -487,13 +487,21 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
             if target is None:
                 continue  # CA401 已报
             tl = target.meta.get("layer")
-            if tl in LAYER_INDEX and LAYER_INDEX[tl] > LAYER_INDEX[layer]:
+            if tl not in LAYER_INDEX:
+                findings.append(Finding("CA501", "error", e.rel,
+                                        f"depends_on 目标 `{d.target}` 没有可比较的 layer——"
+                                        f"物质族承重依赖的锚点必须有 layer，否则层级方向无法判定"))
+            elif LAYER_INDEX[tl] > LAYER_INDEX[layer]:
                 findings.append(Finding("CA501", "error", e.rel,
                                         f"depends_on 目标 `{d.target}` 层级 {tl}（序号 {LAYER_INDEX[tl]}）"
                                         f"高于本条目 {layer}（序号 {LAYER_INDEX[layer]}）"))
-        # CA503: economy/fiscal/military/political 层须有物质族 critical 依赖；ideology 豁免
+        # CA503: economy/fiscal/military/political 层须有物质族 critical 依赖；ideology 豁免。
+        # 「有 layer 的 critical 依赖」才算锚点（issue #38 58/59）：无 layer 的目标不能
+        # 拿 kind 冒充层级——那种情况交给 CA501 报锚点不合格。
         if layer in CA503_LAYERS and not any(
                 d.attrs.get("critical") and d.attrs.get("kind") in KIND_INITIAL_SET
+                and (anchor := index.get(d.target)) is not None
+                and anchor.meta.get("layer") in LAYER_INDEX
                 for d in deps):
             findings.append(Finding("CA503", "warning", e.rel,
                                     f"{layer} 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）"))
@@ -570,21 +578,44 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                     f"时序倒流：本事件 when_sort={va.when_sort:g}，"
                     f"depends_on 的事件 `{b.id}` when_sort={vb.when_sort:g}（要求 ≤ 本事件）"))
 
-    # CA703: transfer/grant 的客体在它之前没有任何持有者
-    # （owns 断言是无时间的「有持有者」证据；更早的 transfer/grant 也算）
-    held: set[str] = set()
+    # CA703: transfer/grant 的客体在它之前没有任何持有者；交出者（from）必须是
+    # 当时有持有证据的人。持有证据 = canon 卡上的 owns 断言、更早的 transfer/grant
+    # 受方、或本仓库里带施动者的 create/birth（造物者先持有）。draft/archived 的
+    # owns 只是草稿/旧稿，不能当正史来源（issue #38 57/60）。
+    holder_sets: dict[str, set[str]] = {}
+    created: set[str] = set()
     for e in index.values():
-        if not e.parse_error:
-            held.update(r.target for r in e.edges_of("owns"))
-    for e, v in events:
-        if v.kind in ("transfer", "grant"):
+        if e.parse_error or e.meta.get("status") != "canon":
+            continue
+        for r in e.edges_of("owns"):
+            holder_sets.setdefault(r.target, set()).add(e.id)
+    for _e, v in events:
+        if v.kind in ("birth", "create"):
             for obj in v.legs.get("object", []):
-                if obj not in held:
-                    findings.append(Finding(
-                        "CA703", "warning", e.rel,
-                        f"无源之财：{v.kind} 的客体 `{obj}` 在它之前没有任何持有者"
-                        f"（既无 owns 断言，也无更早的 transfer/grant 指向它）"))
-            held.update(v.legs.get("object", []))
+                created.add(obj)
+    for e, v in events:
+        if v.kind not in ("transfer", "grant"):
+            continue
+        for obj in v.legs.get("object", []):
+            if obj not in created and obj not in holder_sets:
+                findings.append(Finding(
+                    "CA703", "warning", e.rel,
+                    f"无源之财：{v.kind} 的客体 `{obj}` 在它之前没有任何持有者"
+                    f"（既无 canon 卡的 owns 断言，也无更早的 transfer/grant 指向它）"))
+            current = holder_sets.get(obj)
+            if current and obj not in created:
+                for frm in v.legs.get("from", []):
+                    if frm not in current:
+                        findings.append(Finding(
+                            "CA703", "warning", e.rel,
+                            f"交出者不是持有人：本笔 {v.kind} 声称从 `{frm}` 交出 `{obj}`，"
+                            f"但该笔之前 `{obj}` 的持有证据是 {sorted(current)}"
+                            "（owns 断言或更早流水）"))
+        for obj in v.legs.get("object", []):
+            if obj in holder_sets or obj in created:
+                holder_sets[obj] = set(v.legs.get("to", []))
+            else:
+                holder_sets.setdefault(obj, set(v.legs.get("to", [])))
 
     # CA704: 手写 owns 断言与流水推出的最终持有者打架
     # （只对有流水的客体比对；无流水的客体，断言即全部历史。
@@ -684,19 +715,23 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
     # 缺 when_sort 的边界不产生窗口、缺 when_sort 的事件不进流水——两头都 fail-open。
     windows = ledger.existence_windows(index)
     for e, v in events:
-        if v.kind in ("birth", "create", "death", "destroy", "transform"):
-            continue  # 端点事件自身豁免
+        endpoint = v.kind in ("birth", "create", "death", "destroy", "transform")
         seen: set[str] = set()
         # 四条腿都在存在窗口内（审计 §1.1）：客体、施动者、起点、终点各查一遍；
         # 同一事件里同一个 id 只报一次（取先查到的腿名）。死亡的 by 归 CA705，
         # 这里跳过，避免同一句话两个编号。
-        for leg, label in (("object", "客体"), ("by", "施动者"),
-                           ("from", "起点"), ("to", "终点")):
+        # 端点事件（issue #38 63–65）：客体自身即边界，但 `by` 施动者仍要查——
+        # 「没出生的人杀人 / 出生前销毁物品 / 出生前完成转化」不该全身而退。
+        legs = (("by", "施动者"),) if endpoint else (
+            ("object", "客体"), ("by", "施动者"),
+            ("from", "起点"), ("to", "终点"))
+        for leg, label in legs:
             for obj in v.legs.get(leg, []):
                 if obj in seen:
                     continue
-                if leg == "by" and obj in deaths and deaths[obj] < v.when_sort:
-                    continue  # 死后/毁后当施动者由 CA705 负责
+                if (not endpoint and leg == "by" and obj in deaths
+                        and deaths[obj] < v.when_sort):
+                    continue  # 非端点事件的死后施动者由 CA705 负责
                 start, end = windows.get(obj, (None, None))
                 if start is not None and v.when_sort < start:
                     seen.add(obj)
@@ -791,7 +826,20 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
     for e in index.values():
         if e.parse_error or not e.id:
             continue
+        subject_type = e.meta.get("type")
         for org in ledger.member_of_assertions(e):
+            org_entry = index.get(org)
+            org_type = org_entry.meta.get("type") if org_entry is not None else None
+            if subject_type not in ("character", "faction"):
+                findings.append(Finding(
+                    "CA712", "error", e.rel,
+                    f"member_of 的主体类型必须是 character/faction（当前 `{subject_type}`）"
+                    "——这不是成员关系"))
+            if org_entry is not None and org_type != "faction":
+                findings.append(Finding(
+                    "CA712", "error", e.rel,
+                    f"member_of 的目标 `{org}` 必须是组织（type: faction），当前是 `{org_type}`"
+                    "——方向或类型写反了"))
             acts = membership_acts.get((e.id, org))
             if not acts:
                 continue

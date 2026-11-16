@@ -19,12 +19,15 @@ def check_ca501(e: Entry, rel: str, add, index, dep) -> None:
     if target is None:
         return
     target_layer = target.meta.get("layer")
-    if target_layer in LAYER_INDEX and LAYER_INDEX[target_layer] > LAYER_INDEX[layer]:
+    if target_layer not in LAYER_INDEX:
+        add("error", f"depends_on 目标 `{dep.target}` 没有可比较的 layer——"
+            "物质族承重依赖的锚点必须有 layer，否则层级方向无法判定")
+    elif LAYER_INDEX[target_layer] > LAYER_INDEX[layer]:
         add("error", f"depends_on 目标 `{dep.target}` 层级 {target_layer}"
             f"（序号 {LAYER_INDEX[target_layer]}）高于本条目 {layer}（序号 {LAYER_INDEX[layer]}）")
 
 
-def check_ca503(e: Entry, rel: str, add) -> None:
+def check_ca503(e: Entry, rel: str, add, index=None) -> None:
     if e.meta.get("load_bearing") is not True:
         return
     layer = e.meta.get("layer")
@@ -33,6 +36,8 @@ def check_ca503(e: Entry, rel: str, add) -> None:
     deps = e.edges_of("depends_on")
     if layer in CA503_LAYERS and not any(
             dep.attrs.get("critical") and dep.attrs.get("kind") in KIND_INITIAL_SET
+            and (anchor := (index or {}).get(dep.target)) is not None
+            and anchor.meta.get("layer") in LAYER_INDEX
             for dep in deps):
         add("warning", f"{layer} 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）")
 
@@ -123,6 +128,6 @@ def apply(index, run_entry, run_world) -> None:
             continue
         for dep in e.edges_of("depends_on"):
             run_entry("CA501", e, index=index, dep=dep)
-        run_entry("CA503", e)
+        run_entry("CA503", e, index=index)
     run_world("CA505")
     run_world("CA502")

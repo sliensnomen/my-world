@@ -32,18 +32,38 @@ def check_ca701(world: dict, emit) -> None:
 def check_ca703(world: dict, emit) -> None:
     index = world["index"]
     events = event_ledger.ordered_events(index)
-    held = set()
+    holder_sets: dict[str, set[str]] = {}
+    created: set[str] = set()
     for e in index.values():
-        if not e.parse_error:
-            held.update(ref.target for ref in e.edges_of("owns"))
-    for e, view in events:
-        if view.kind in ("transfer", "grant"):
+        if e.parse_error or e.meta.get("status") != "canon":
+            continue
+        for ref in e.edges_of("owns"):
+            holder_sets.setdefault(ref.target, set()).add(e.id)
+    for _e, view in events:
+        if view.kind in ("birth", "create"):
             for obj in view.legs.get("object", []):
-                if obj not in held:
-                    emit("warning", e.rel,
-                         f"无源之财：{view.kind} 的客体 `{obj}` 在它之前没有任何持有者"
-                         "（既无 owns 断言，也无更早的 transfer/grant 指向它）")
-            held.update(view.legs.get("object", []))
+                created.add(obj)
+    for e, view in events:
+        if view.kind not in ("transfer", "grant"):
+            continue
+        for obj in view.legs.get("object", []):
+            if obj not in created and obj not in holder_sets:
+                emit("warning", e.rel,
+                     f"无源之财：{view.kind} 的客体 `{obj}` 在它之前没有任何持有者"
+                     "（既无 canon 卡的 owns 断言，也无更早的 transfer/grant 指向它）")
+            current = holder_sets.get(obj)
+            if current and obj not in created:
+                for frm in view.legs.get("from", []):
+                    if frm not in current:
+                        emit("warning", e.rel,
+                             f"交出者不是持有人：本笔 {view.kind} 声称从 `{frm}` 交出 `{obj}`，"
+                             f"但该笔之前 `{obj}` 的持有证据是 {sorted(current)}"
+                             "（owns 断言或更早流水）")
+        for obj in view.legs.get("object", []):
+            if obj in holder_sets or obj in created:
+                holder_sets[obj] = set(view.legs.get("to", []))
+            else:
+                holder_sets.setdefault(obj, set(view.legs.get("to", [])))
 
 
 def check_ca704(world: dict, emit) -> None:
@@ -139,16 +159,18 @@ def check_ca708(world: dict, emit) -> None:
             for obj in view.legs.get("object", []):
                 deaths[obj] = min(deaths.get(obj, view.when_sort), view.when_sort)
     for e, view in event_ledger.ordered_events(index):
-        if view.kind in ("birth", "create", "death", "destroy", "transform"):
-            continue
+        endpoint = view.kind in ("birth", "create", "death", "destroy", "transform")
         seen: set[str] = set()
-        for leg, label in (("object", "客体"), ("by", "施动者"),
-                           ("from", "起点"), ("to", "终点")):
+        legs = (("by", "施动者"),) if endpoint else (
+            ("object", "客体"), ("by", "施动者"),
+            ("from", "起点"), ("to", "终点"))
+        for leg, label in legs:
             for obj in view.legs.get(leg, []):
                 if obj in seen:
                     continue
-                if leg == "by" and obj in deaths and deaths[obj] < view.when_sort:
-                    continue  # 死后/毁后当施动者由 CA705 负责
+                if (not endpoint and leg == "by" and obj in deaths
+                        and deaths[obj] < view.when_sort):
+                    continue  # 非端点事件的死后施动者由 CA705 负责
                 start, end = windows.get(obj, (None, None))
                 if start is not None and view.when_sort < start:
                     seen.add(obj)
@@ -243,7 +265,18 @@ def check_ca712(world: dict, emit) -> None:
     for e in index.values():
         if e.parse_error or not e.id:
             continue
+        subject_type = e.meta.get("type")
         for org in event_ledger.member_of_assertions(e):
+            org_entry = index.get(org)
+            org_type = org_entry.meta.get("type") if org_entry is not None else None
+            if subject_type not in ("character", "faction"):
+                emit("error", e.rel,
+                     f"member_of 的主体类型必须是 character/faction（当前 `{subject_type}`）"
+                     "——这不是成员关系")
+            if org_entry is not None and org_type != "faction":
+                emit("error", e.rel,
+                     f"member_of 的目标 `{org}` 必须是组织（type: faction），当前是 `{org_type}`"
+                     "——方向或类型写反了")
             acts = membership_acts.get((e.id, org))
             if not acts:
                 continue

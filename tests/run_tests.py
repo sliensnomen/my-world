@@ -272,6 +272,37 @@ def _judge(world: Path, *args: str) -> tuple[int, str, str]:
     return p.returncode, p.stdout, p.stderr
 
 
+def _issue38_body(entry_id: str) -> str:
+    return (entry_id + "正文") * 120
+
+
+def _expect_strict_rejection(
+    prefix: str,
+    entries: dict[str, str],
+    *,
+    label: str,
+    rules: tuple[str, ...],
+    entry_any: tuple[str, ...],
+) -> list[str]:
+    problems = []
+    tmp, world = _temp_world(prefix, entries)
+    with tmp:
+        code, out, err = _judge(world, "--strict")
+        if err:
+            problems.append(f"{label}：traceback 写到了 stderr：\n{err}")
+        if code != 1:
+            problems.append(f"{label}：--strict 应 exit 1，实际 exit {code}：\n{out}")
+        hits = [
+            line for line in out.splitlines()
+            if any(entry in line for entry in entry_any)
+            and any(f"[{rule}]" in line for rule in rules)
+        ]
+        if not hits:
+            problems.append(
+                f"{label}：没有出现预期规则 {rules} 作用于 {entry_any}：\n{out}")
+    return problems
+
+
 def check_strict_only_changes_the_exit_code() -> list[str]:
     """`--strict` 只许改退出码，不许改判定。
 
@@ -1640,8 +1671,9 @@ def check_member_of_reconciles_with_ledger() -> list[str]:
     problems = []
     # 打架：dan 断言 member_of watch，流水里他后来 leave 了
     cards = {
-        "dan": _card("dan", "member_of:\n  - watch\n"),
-        "watch": _card("watch", ""),
+        "dan": _card("dan", "member_of:\n  - watch\n").replace(
+            "type: location", "type: character"),
+        "watch": _card("watch", "").replace("type: location", "type: faction"),
         "ev-join": _card("ev-join", (
             "when: 元年\nevent_kind: join\nwhen_sort: 1\nby:\n  - dan\nto:\n  - watch\n"
         )).replace("type: location", "type: event"),
@@ -1658,8 +1690,9 @@ def check_member_of_reconciles_with_ledger() -> list[str]:
             problems.append(f"断言 member_of 但流水里已 leave，没报 CA712：\n{out}")
     # 一致：断言 = 最终归属（join 之后无 leave）→ 不响
     cards2 = {
-        "jon": _card("jon", "member_of:\n  - watch\n"),
-        "watch": _card("watch", ""),
+        "jon": _card("jon", "member_of:\n  - watch\n").replace(
+            "type: location", "type: character"),
+        "watch": _card("watch", "").replace("type: location", "type: faction"),
         "ev-join": _card("ev-join", (
             "when: 元年\nevent_kind: join\nwhen_sort: 1\nby:\n  - jon\nto:\n  - watch\n"
         )).replace("type: location", "type: event"),
@@ -1671,15 +1704,19 @@ def check_member_of_reconciles_with_ledger() -> list[str]:
             problems.append(f"断言与流水一致时不该报 CA712：\n{out}")
     # 断言的组织没有流水：断言即全部历史，不响（D3 同款豁免）
     tmp, world = _temp_world("canonlint-member-noflow-", {
-        "jon": _card("jon", "member_of:\n  - watch\n"), "watch": _card("watch", "")})
+        "jon": _card("jon", "member_of:\n  - watch\n").replace(
+            "type: location", "type: character"),
+        "watch": _card("watch", "").replace("type: location", "type: faction")})
     with tmp:
         _, out, _ = _judge(world)
         if "CA712" in out:
             problems.append(f"无流水的 member_of 断言不该报 CA712：\n{out}")
     # 悬空与坏形状：CA401 / CA109（与 custody_of 同口径）
     tmp, world = _temp_world("canonlint-member-shape-", {
-        "jon": _card("jon", "member_of:\n  - ghost-org\n"),
-        "dan": _card("dan", "member_of: notalist\n")})
+        "jon": _card("jon", "member_of:\n  - ghost-org\n").replace(
+            "type: location", "type: character"),
+        "dan": _card("dan", "member_of: notalist\n").replace(
+            "type: location", "type: character")})
     with tmp:
         _, out, _ = _judge(world)
         if "CA401" not in out or "ghost-org" not in out:
@@ -2063,8 +2100,9 @@ def check_same_instant_id_order_is_not_history() -> list[str]:
     # CA712：同刻 join 与 leave 并存 → fail-open
     for ev1, ev2 in (("j-a", "l-b"), ("j-z", "l-y")):
         cards = {
-            "a": _card("a", "member_of:\n  - guild\n"),
-            "org": _card("org", ""),
+            "a": _card("a", "member_of:\n  - guild\n").replace(
+                "type: location", "type: character"),
+            "org": _card("org", "").replace("type: location", "type: faction"),
             ev1: ev(ev1, "join", 5, "by:\n  - a\nto:\n  - org\n"),
             ev2: ev(ev2, "leave", 5, "by:\n  - a\nfrom:\n  - org\n"),
         }
@@ -2515,6 +2553,170 @@ def check_event_legs_are_window_checked() -> list[str]:
     return problems
 
 
+def check_issue38_ownership_source_and_status() -> list[str]:
+    """issue #38 57/60：交出者必须是断言持有人；draft 断言不能当正史持有源。"""
+    problems = []
+    problems += _expect_strict_rejection(
+        "canonlint-issue38-source-",
+        {
+            "gem": _card("gem", body=_issue38_body("gem")).replace(
+                "type: location", "type: item"),
+            "alice": _card("alice", body=_issue38_body("alice")).replace(
+                "type: location", "type: character"),
+            "bob": _card("bob", "owns:\n  - gem\n", body=_issue38_body("bob")).replace(
+                "type: location", "type: character"),
+            "ev-transfer": _card("ev-transfer", (
+                "when: 元年\nevent_kind: transfer\nwhen_sort: 1\n"
+                "by:\n  - alice\nfrom:\n  - alice\nto:\n  - bob\nobject:\n  - gem\n"
+            ), body=_issue38_body("ev-transfer")).replace("type: location", "type: event"),
+        },
+        label="gem 由 bob 持有，第一笔 transfer 却由 alice 交出",
+        rules=("CA703", "CA713", "CA714"),
+        entry_any=("ev-transfer.md", "alice.md", "bob.md"),
+    )
+    problems += _expect_strict_rejection(
+        "canonlint-issue38-draft-owns-",
+        {
+            "gem": _card("gem", body=_issue38_body("gem")).replace(
+                "type: location", "type: item"),
+            "alice": _card("alice", body=_issue38_body("alice")).replace(
+                "type: location", "type: character"),
+            "bob": _card("bob", "owns:\n  - gem\n", status="draft",
+                         body=_issue38_body("bob")).replace(
+                             "type: location", "type: character"),
+            "ev-transfer": _card("ev-transfer", (
+                "when: 元年\nevent_kind: transfer\nwhen_sort: 1\n"
+                "by:\n  - alice\nfrom:\n  - alice\nto:\n  - bob\nobject:\n  - gem\n"
+            ), body=_issue38_body("ev-transfer")).replace("type: location", "type: event"),
+        },
+        label="draft 卡的 owns 断言被当成正史持有源",
+        rules=("CA402", "CA404", "CA703", "CA704", "CA707", "CA714"),
+        entry_any=("bob.md", "gem.md", "ev-transfer.md"),
+    )
+    return problems
+
+
+def check_issue38_material_anchor_requires_layer() -> list[str]:
+    """issue #38 58/59：CA503 的物质锚点不能是无 layer 的卡片。"""
+    problems = []
+    for layer, source in (("economy", "eco"), ("fiscal", "fis")):
+        problems += _expect_strict_rejection(
+            f"canonlint-issue38-{layer}-anchor-",
+            {
+                source: _card(source, (
+                    f"layer: {layer}\n"
+                    "depends_on:\n"
+                    "  - id: idea\n"
+                    "    kind: resource\n"
+                    "    critical: true\n"
+                ), load_bearing=True, body=_issue38_body(source)).replace(
+                    "type: location", "type: faction"),
+                "idea": _card("idea", body=_issue38_body("idea")),
+            },
+            label=f"{layer} 承重墙依赖无 layer 的物质目标",
+            rules=("CA501", "CA503", "CA714"),
+            entry_any=(f"{source}.md", "idea.md"),
+        )
+    return problems
+
+
+def check_issue38_endpoint_actors_exist() -> list[str]:
+    """issue #38 63–65：端点事件也要查 by 施动者的存在窗口。"""
+    problems = []
+    problems += _expect_strict_rejection(
+        "canonlint-issue38-death-actor-",
+        {
+            "hero": _card("hero", body=_issue38_body("hero")).replace(
+                "type: location", "type: character"),
+            "killer": _card("killer", body=_issue38_body("killer")).replace(
+                "type: location", "type: character"),
+            "ev-birth": _card("ev-birth", (
+                "when: 元年\nevent_kind: birth\nwhen_sort: 2\nobject:\n  - killer\n"
+            ), body=_issue38_body("ev-birth")).replace("type: location", "type: event"),
+            "ev-death": _card("ev-death", (
+                "when: 元年\nevent_kind: death\nwhen_sort: 1\n"
+                "by:\n  - killer\nobject:\n  - hero\n"
+            ), body=_issue38_body("ev-death")).replace("type: location", "type: event"),
+        },
+        label="killer 在出生前杀人",
+        rules=("CA708", "CA714"),
+        entry_any=("ev-death.md",),
+    )
+    problems += _expect_strict_rejection(
+        "canonlint-issue38-destroy-actor-",
+        {
+            "old": _card("old", body=_issue38_body("old")).replace(
+                "type: location", "type: item"),
+            "killer": _card("killer", body=_issue38_body("killer")).replace(
+                "type: location", "type: character"),
+            "ev-birth": _card("ev-birth", (
+                "when: 元年\nevent_kind: birth\nwhen_sort: 2\nobject:\n  - killer\n"
+            ), body=_issue38_body("ev-birth")).replace("type: location", "type: event"),
+            "ev-destroy": _card("ev-destroy", (
+                "when: 元年\nevent_kind: destroy\nwhen_sort: 1\n"
+                "by:\n  - killer\nobject:\n  - old\n"
+            ), body=_issue38_body("ev-destroy")).replace("type: location", "type: event"),
+        },
+        label="killer 在出生前销毁物品",
+        rules=("CA708", "CA714"),
+        entry_any=("ev-destroy.md",),
+    )
+    problems += _expect_strict_rejection(
+        "canonlint-issue38-transform-actor-",
+        {
+            "old": _card("old", body=_issue38_body("old")).replace(
+                "type: location", "type: item"),
+            "new": _card("new", body=_issue38_body("new")).replace(
+                "type: location", "type: item"),
+            "smith": _card("smith", body=_issue38_body("smith")).replace(
+                "type: location", "type: character"),
+            "ev-birth": _card("ev-birth", (
+                "when: 元年\nevent_kind: birth\nwhen_sort: 2\nobject:\n  - smith\n"
+            ), body=_issue38_body("ev-birth")).replace("type: location", "type: event"),
+            "ev-transform": _card("ev-transform", (
+                "when: 元年\nevent_kind: transform\nwhen_sort: 1\n"
+                "by:\n  - smith\nobject:\n  - old\nresult:\n  - new\n"
+            ), body=_issue38_body("ev-transform")).replace("type: location", "type: event"),
+        },
+        label="smith 在出生前完成转化",
+        rules=("CA708", "CA714"),
+        entry_any=("ev-transform.md",),
+    )
+    return problems
+
+
+def check_issue38_membership_types() -> list[str]:
+    """issue #38 61/62：member_of 的主体与目标都要有类型门禁。"""
+    problems = []
+    problems += _expect_strict_rejection(
+        "canonlint-issue38-member-location-",
+        {
+            "loc": _card("loc", "member_of:\n  - org\n",
+                         body=_issue38_body("loc")),
+            "org": _card("org", body=_issue38_body("org")).replace(
+                "type: location", "type: faction"),
+        },
+        label="地点是组织成员",
+        rules=("CA712", "CA714"),
+        entry_any=("loc.md", "org.md"),
+    )
+    problems += _expect_strict_rejection(
+        "canonlint-issue38-member-event-",
+        {
+            "a": _card("a", "member_of:\n  - ev\n",
+                       body=_issue38_body("a")).replace(
+                           "type: location", "type: character"),
+            "ev": _card("ev", (
+                "when: 元年\nevent_kind: modify\nobject:\n  - a\n"
+            ), body=_issue38_body("ev")).replace("type: location", "type: event"),
+        },
+        label="人属于一个事件",
+        rules=("CA712", "CA714"),
+        entry_any=("a.md", "ev.md"),
+    )
+    return problems
+
+
 def check_supersede_exemption_requires_archived() -> list[str]:
     """审计 §1.2：`superseded_by` 只有声明方 status=archived 时才豁免 CA201。"""
     body = "正文" * 120
@@ -2961,8 +3163,9 @@ def _registry_ca_family_dual_run(family: str) -> list[str]:
         with tmp:
             compare("ledger/trajectory-break", world, rules, expected={"CA711"})
         tmp, world = _temp_world("canonlint-registry-time-ties-", {
-            "person": _card("person", "member_of:\n  - org\n"),
-            "org": _card("org"),
+            "person": _card("person", "member_of:\n  - org\n").replace(
+                "type: location", "type: character"),
+            "org": _card("org").replace("type: location", "type: faction"),
             "ev-death": _card("ev-death", (
                 "when: 同年\nevent_kind: death\nwhen_sort: 5\nobject:\n  - person\n"
             )).replace("type: location", "type: event"),
@@ -3434,6 +3637,14 @@ def main() -> int:
         ("death 事件自身也查 CA705（死人不当施动者）", check_death_events_are_checked_as_actors),
         ("事件腿都在存在窗口内：CA705 收 destroy、CA708 查 by/from/to（审计 §1.1）",
          check_event_legs_are_window_checked),
+        ("issue #38：交出者须是持有人、draft 断言不当正史来源",
+         check_issue38_ownership_source_and_status),
+        ("issue #38：CA503 的物质锚点须有可比较 layer",
+         check_issue38_material_anchor_requires_layer),
+        ("issue #38：端点事件的 by 施动者也须已出生",
+         check_issue38_endpoint_actors_exist),
+        ("issue #38：member_of 的主体/目标类型门禁",
+         check_issue38_membership_types),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),
