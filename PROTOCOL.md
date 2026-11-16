@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**40 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.16"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.17"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -103,6 +103,10 @@
 **v1.14 修订记录（2026-11-12，漏洞审计 §2.1：同刻未定序不再吞掉断言对账）：**
 
 37. **CA704/CA709 的「归属未定序」不再是对账的一键降级器**。漏洞审计 §2.1：作者只要补一笔同刻（`when_sort` 相同）、受方不同的 transfer，CA704 就会从 error 降成 warning——因为旧实现把 ambiguous 客体的**全部** `owns` 对账一起跳过。修法：未定序仍然不挑赢家，但断言照样对账——断言者必须同时落在全部候选受方的交集里（也就是对任何同刻结局都成立），否则照报 error「未定序时断言必须同时落在全部候选里（交集：…）」。CA709 的 `custody_of` 同口径。**多值受方（单笔 `to` 列表）不受影响**：单笔的受方列表仍按各受方逐个放行，只有「同刻多笔、集合不同」才走交集。§9.1 升 minor，规则编号不变，契约不动。
+
+**v1.17 修订记录（2026-11-16，口径收口：null、历史拼法、datetime）：**
+
+40. **三个解析口径收口**（issue #43/#45/#46）：①显式 `null` 的关系字段不再被当成「没写」——`depends_on: null` 等由 CA109 报「契约要求数组，null 不等于没写」，不再能顶替 CA302；②CA111 的迁移提示认契约登记的全部字段名拼法（`depends-on` 与 `depends_on` 同判）；③CA103 只收日期，带时间的 `datetime` 拒收。均按 §9.1 升 minor，规则编号不变，契约不动。
 
 **v1.16 修订记录（2026-11-16，回归修复：CA703 首笔豁免、端点死后 by 不双报）：**
 
@@ -492,15 +496,15 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA100 | error | 文件无法解析（无 frontmatter / YAML 错误 / 非映射） |
 | CA101 | error | 缺少必填字段（按 §2.2，含条件必填） |
 | CA102 | error | 枚举字段非法（`type`/`status`/`layer`/`stance`/`event_kind`）；`type` 或 `event_kind` 是 `x-` 实验值时降为 info（协议 1.1 / 1.2） |
-| CA103 | error | `date` 非法。**两种形态都收**：YAML 原生日期对象（`date: 2026-10-15` 没加引号时会被 YAML 解成 `datetime.date`）与契约要求的 ISO 字符串（`"2026-10-15"`）。字符串必须**逐字符**匹配 `^\d{4}-\d{2}-\d{2}$`——`"20261015"`（ISO 基本格式）与 `"2026-W42-6"`（周历）曾被 `date.fromisoformat` 静默收下，与本条文案和契约 pattern 都矛盾；形状对了还要验真日（`"2026-02-30"` 报错）。工具自己写出的卡是字符串形态 |
+| CA103 | error | `date` 非法。只收**日期**：YAML 原生日期对象（`date: 2026-10-15` 没加引号时会被 YAML 解成 `datetime.date`）与契约要求的 ISO 字符串（`"2026-10-15"`）；带时间的 `datetime`（`2026-01-01T08:00:00`）是「时间点」，不收（协议 1.17，issue #46）。字符串必须**逐字符**匹配 `^\d{4}-\d{2}-\d{2}$`——`"20261015"`（ISO 基本格式）与 `"2026-W42-6"`（周历）曾被 `date.fromisoformat` 静默收下，与本条文案和契约 pattern 都矛盾；形状对了还要验真日（`"2026-02-30"` 报错）。工具自己写出的卡是字符串形态 |
 | CA104 | warning | `trial`/`canon` 条目正文少于 200 字（计数算法见 §6.6） |
 | CA105 | error | `id` 语法非法：含小写字母/数字/连字符以外的字符，或不是字符串 |
 | CA106 | error | 存在不带 `x-` 前缀的未定义字段 |
 | CA107 | error | `depends_on` 对象违反 §5.4 schema（缺必填字段/含未定义的非 `x-` 字段） |
 | CA108 | error/info | `depends_on[].kind` 在初始集外：无 `x-` 前缀 = error；有 `x-` 前缀 = info（案例收集） |
-| CA109 | error | 字段类型/格式非法：`canon_refs` 非列表或元素非字符串、`load_bearing`/`ai_assisted`/`critical` 非 bool、id 引用不符合 `^[a-z0-9-]+$` 格式（`world:id` 形式除外，归 CA401）等；事件字段出现在非 `type: event` 的卡上（协议 1.8）也归本条 |
+| CA109 | error | 字段类型/格式非法：`canon_refs` 非列表或元素非字符串、`load_bearing`/`ai_assisted`/`critical` 非 bool、id 引用不符合 `^[a-z0-9-]+$` 格式（`world:id` 形式除外，归 CA401）等；关系字段写成显式 `null`（`depends_on: null` 等——null 不等于「没写」，协议 1.17）；事件字段出现在非 `type: event` 的卡上（协议 1.8）也归本条 |
 | CA110 | warning | 关系名拼写近失：规范形 `relations[].type` 与某个规范关系名的编辑距离 ≤1（如 `depends-onn`、`depend_on`、`extractss`）。距离在**去掉连字符/下划线之后**计算——不这么做，量的是分隔符风格而不是「打错没有」，协议自己举的例子 `depends-onn` 就会落在阈值之外、整条边静默。工具**真的把这条边按规范名建进图**（CA401/CA501/CA504 照判），本条只提示疑似拼写错误；距离 ≥2 的名字原样保留、不提示（自由档，见 §5.4） |
-| CA111 | warning | 旧写法迁移提示：某个关系名拆分前用「旧关系名 + 某个注解值」表达（见契约 `x-relation-vocabulary.deprecations`）。工具**已按新关系名判定**（结论与迁移后逐条相同），本条只提示作者改写，例如把 `depends_on` 里 `kind: legitimacy` 的那一条改写成关系名 `derives_legitimacy_from`。这是唯一允许的迁移提示；迁移完成后本条不再触发 |
+| CA111 | warning | 旧写法迁移提示：某个关系名拆分前用「旧关系名 + 某个注解值」表达（见契约 `x-relation-vocabulary.deprecations`）。工具**已按新关系名判定**（结论与迁移后逐条相同），本条只提示作者改写，例如把 `depends_on` 里 `kind: legitimacy` 的那一条改写成关系名 `derives_legitimacy_from`。字段名按契约登记的每一种拼法都认（`depends_on` / `depends-on` / `dependson`，协议 1.17，issue #45）。这是唯一允许的迁移提示；迁移完成后本条不再触发 |
 | CA112 | error | YAML frontmatter 里有**重复键**。PyYAML 是 last-wins 且一声不响：`depends_on` 写两遍时，写在前面的那一条边在解析结果里彻底消失，而所有规则都看不见它——「写了两遍」与「只写一遍」在工具眼里完全一样。本条规定必须报出来；写入命令（`link`）遇到重复键直接拒绝改写 |
 | CA114 | error | `id` 重复（两张卡撞同一个 id）。按路径序首个入索引：别人引用这个 id 时指的是前者，**被遮蔽那一份自己的出边照旧检查**（它没进索引不等于没写错） |
 | CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复；**豁免只认声明方 `status: archived`**——canon 等其它状态写 `superseded_by` 不免查重（协议 1.13） |
@@ -558,7 +562,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.16",
+  "protocol_version": "1.17",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

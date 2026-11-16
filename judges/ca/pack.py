@@ -211,6 +211,7 @@ def apply_core_ca(pack: Pack, all_entries, index, issues, known_fields, emit,
         run_entry("CA106", entry, known_fields=known_fields)
         run_entry("CA112", entry)
         run_entry("CA109", entry, phase="booleans")
+        run_entry("CA109", entry, phase="schema")
         run_schema_errors(entry.deps[1])
         run_entry("CA108", entry)
         run_schema_errors(entry.conflicts[1])

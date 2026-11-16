@@ -49,7 +49,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.16"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）
+PROTOCOL_VERSION = "1.17"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -83,7 +83,9 @@ def is_valid_date(value) -> bool:
     `date: 2026-10-15` 直接解成 `datetime.date`。两种都是作者会合理写出来的东西，规则
     就该两种都收下；JSON 入口来的（没有日期类型）必然是字符串。
     """
-    if isinstance(value, (date, datetime)):  # YAML 原生日期/时间对象
+    if isinstance(value, datetime):
+        return False  # 带时间的 datetime 是「时间点」，不是契约要求的日期
+    if isinstance(value, date):  # YAML 原生日期对象（没加引号的 date: 2026-10-15）
         return True
     if isinstance(value, str):
         # 契约的 pattern 是 `^\d{4}-\d{2}-\d{2}$`，而 `date.fromisoformat` 从 3.11 起
@@ -229,6 +231,13 @@ def check_structure(e: Entry, findings: list[Finding],
     # 完全静默，就等于留了一条只有工具知道的新关系名。
     for err in e.relation_migrations:
         findings.append(Finding(err.rule, "warning", rel, err.msg))
+    # CA109: 显式 null 的关系字段（issue #43）——null 不等于「没写」，契约要求数组。
+    for field in e.null_relation_field_names:
+        if field != "relations" and store.canonical_relation_name(field) is None:
+            continue  # classlint 专有字段（custody_of 等）不归 canonlint 的 CA109
+        findings.append(Finding("CA109", "error", rel,
+                                f"字段 `{field}` 写了显式 null；契约要求数组，"
+                                f"null 不等于「没写」——请删掉该字段或写成 []"))
 
 
 def check_content(e: Entry, findings: list[Finding]) -> None:

@@ -574,6 +574,24 @@ class Entry(RawEntry):
         """六个新接线具名字段的形状问题（三个老字段的问题仍在各自访问器里）。"""
         return self.named_relations[1]
 
+    @property
+    def null_relation_field_names(self) -> tuple[str, ...]:
+        """显式写成 `null` 的关系字段名（issue #43）。
+
+        存储层把「写了 null」与「没写」都解析成空列表，判定层又用「键是否存在」判断作者
+        是否做过声明——两个方向叠在一起，`depends_on: null` 能同时躲过 CA302 与形状检查。
+        这里只负责把显式 null 的字段名找出来，由判定层报 CA109；不改变解析结果。
+        """
+        names: list[str] = []
+        candidates = [RELATIONS_FIELD]
+        for canonical, accepts in RELATION_VOCABULARY.items():
+            candidates.append(canonical)
+            candidates.extend(accepts)
+        for field in dict.fromkeys(candidates):
+            if field in self.meta and self.meta[field] is None:
+                names.append(field)
+        return tuple(names)
+
     @cached_property
     def relation_migrations(self) -> list[SchemaError]:
         """旧写法的搬家记录（CA111，只提示、不改结论）。
@@ -585,14 +603,17 @@ class Entry(RawEntry):
         out: list[SchemaError] = []
         relations_raw = self.meta.get(RELATIONS_FIELD)
         for old_rel, old_kind, becomes in DEPRECATED_KIND_MIGRATIONS:
-            raw = self.meta.get(old_rel)
-            if isinstance(raw, list):
-                for i, item in enumerate(raw):
-                    if (isinstance(item, dict) and item.get("kind") == old_kind
-                            and isinstance(item.get("id"), str)):
-                        out.append(SchemaError("CA111", _migration_message(
-                            f"{old_rel}[{i}]", old_rel, old_kind, becomes,
-                            item["id"], kind_style=True)))
+            spellings = (old_rel, *(RELATION_VOCABULARY.get(old_rel) or ()),
+                         *shape_variants(old_rel))
+            for field in dict.fromkeys(spellings):
+                raw = self.meta.get(field)
+                if isinstance(raw, list):
+                    for i, item in enumerate(raw):
+                        if (isinstance(item, dict) and item.get("kind") == old_kind
+                                and isinstance(item.get("id"), str)):
+                            out.append(SchemaError("CA111", _migration_message(
+                                f"{field}[{i}]", old_rel, old_kind, becomes,
+                                item["id"], kind_style=True)))
             if not isinstance(relations_raw, list):
                 continue
             for i, item in enumerate(relations_raw):

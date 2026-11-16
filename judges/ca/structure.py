@@ -13,7 +13,9 @@ from .vocab import (KIND_INITIAL_SET, KNOWN_FIELDS, LAYER_INDEX, LAYERS,
 
 
 def is_valid_date(value) -> bool:
-    if isinstance(value, (date, datetime)):
+    if isinstance(value, datetime):
+        return False  # 带时间的 datetime 是「时间点」，不是契约要求的日期
+    if isinstance(value, date):
         return True
     if isinstance(value, str):
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
@@ -139,6 +141,12 @@ def check_ca109(e: Entry, rel: str, add, phase: str = "all", error=None) -> None
             if field in e.meta and not isinstance(e.meta[field], bool):
                 add("error", f"{field}={e.meta[field]!r} 必须是 bool（true/false）")
     if phase in ("all", "schema"):
+        for field in e.null_relation_field_names:
+            if field != "relations" and store.canonical_relation_name(field) is None:
+                continue
+            add("error", f"字段 `{field}` 写了显式 null；契约要求数组，"
+                         f"null 不等于「没写」——请删掉该字段或写成 []")
+    if phase in ("all", "errors"):
         for err in _schema_errors(e):
             if err.rule == "CA109":
                 add("error", err.msg)

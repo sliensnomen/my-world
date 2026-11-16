@@ -2588,6 +2588,90 @@ def check_event_legs_are_window_checked() -> list[str]:
     return problems
 
 
+def check_null_relation_fields_are_shape_errors() -> list[str]:
+    """issue #43：显式 null 的关系字段不能被当成「没写」——CA109 报，--strict 不得全绿。"""
+    problems = []
+    body = "正文" * 120
+    cases = {
+        "depends_on: null": _card("a", "depends_on: null\nlayer: ideology\n",
+                                  load_bearing=True, body=body),
+        "relations: null": _card("a", "relations: null\n", body=body),
+        "canon_refs: null": _card("a", "canon_refs: null\n", body=body),
+        "conflicts_with: null": _card("a", "conflicts_with: null\n", body=body),
+        "owns: null": _card("a", "owns: null\n", body=body),
+    }
+    for label, text in cases.items():
+        tmp, world = _temp_world("canonlint-null-rel-", {"a": text})
+        with tmp:
+            for backend, env in (("registry", None),
+                                 ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+                if env is None:
+                    code, out, err = _judge(world, "--strict")
+                else:
+                    code, env2 = None, env
+                    merged = dict(os.environ); merged.update(env)
+                    p = subprocess.run([PY, str(TOOL), str(world), "--strict"],
+                                       cwd=ROOT, capture_output=True, text=True,
+                                       env=merged)
+                    code, out, err = p.returncode, p.stdout, p.stderr
+                if err:
+                    problems.append(f"null 关系字段（{label}/{backend}）traceback：\n{err}")
+                if code != 1:
+                    problems.append(f"null 关系字段（{label}/{backend}）应 --strict exit 1，实际 {code}：\n{out}")
+                if not any("[CA109]" in ln and "a.md" in ln for ln in out.splitlines()):
+                    problems.append(f"null 关系字段（{label}/{backend}）应报 CA109：\n{out}")
+    return problems
+
+
+def check_ca111_recognizes_contract_alias_spellings() -> list[str]:
+    """issue #45：契约登记的字段名拼法（depends-on）也要给 CA111 迁移提示。"""
+    problems = []
+    body = "正文" * 120
+    cards = {
+        "b": _card("b", body=body),
+        "a": _card("a", "depends-on:\n  - id: b\n    kind: legitimacy\n",
+                   body=body),
+    }
+    tmp, world = _temp_world("canonlint-ca111-alias-", cards)
+    with tmp:
+        for backend, env in (("registry", None), ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+            merged = dict(os.environ)
+            if env:
+                merged.update(env)
+            p = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                               capture_output=True, text=True, env=merged)
+            out, err = p.stdout, p.stderr
+            if err:
+                problems.append(f"depends-on 别名（{backend}）traceback：\n{err}")
+            if not any("[CA111]" in ln and "a.md" in ln for ln in out.splitlines()):
+                problems.append(f"depends-on 别名的迁移提示缺失（{backend}）：\n{out}")
+    return problems
+
+
+def check_ca103_rejects_datetime() -> list[str]:
+    """issue #46：date 只收日期，不收带时间的 datetime。"""
+    problems = []
+    body = "正文" * 120
+    text = _card("a", body=body).replace("date: 2026-01-01",
+                                         "date: 2026-01-01T08:00:00")
+    tmp, world = _temp_world("canonlint-datetime-", {"a": text})
+    with tmp:
+        for backend, env in (("registry", None), ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+            merged = dict(os.environ)
+            if env:
+                merged.update(env)
+            p = subprocess.run([PY, str(TOOL), str(world), "--strict"], cwd=ROOT,
+                               capture_output=True, text=True, env=merged)
+            out, err = p.stdout, p.stderr
+            if err:
+                problems.append(f"datetime date（{backend}）traceback：\n{err}")
+            if p.returncode != 1:
+                problems.append(f"datetime date（{backend}）应 --strict exit 1，实际 {p.returncode}：\n{out}")
+            if not any("[CA103]" in ln for ln in out.splitlines()):
+                problems.append(f"datetime date（{backend}）应报 CA103：\n{out}")
+    return problems
+
+
 def check_issue38_ownership_source_and_status() -> list[str]:
     """issue #38 57/60：交出者必须是断言持有人；draft 断言不能当正史持有源。"""
     problems = []
@@ -3765,6 +3849,12 @@ def main() -> int:
          check_issue38_membership_types),
         ("issue #41：layer 写坏只报 CA102，不 traceback",
          check_layer_shape_does_not_crash),
+        ("issue #43：显式 null 关系字段报 CA109，不被当成缺省",
+         check_null_relation_fields_are_shape_errors),
+        ("issue #45：CA111 认契约登记的历史拼法（depends-on）",
+         check_ca111_recognizes_contract_alias_spellings),
+        ("issue #46：CA103 拒收 datetime（只收日期）",
+         check_ca103_rejects_datetime),
         ("issue #42：CA703 的 create/birth 豁免只限第一笔转手",
          check_ca703_creation_exemption_is_first_transfer_only),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
