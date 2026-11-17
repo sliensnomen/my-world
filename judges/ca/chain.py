@@ -48,7 +48,8 @@ def check_ca505(world: dict, emit) -> None:
     index = world["index"]
     layers_present = {
         e.meta.get("layer") for e in index.values()
-        if not e.parse_error and isinstance(e.meta.get("layer"), str)}
+        if (not e.parse_error and e.meta.get("type") != "event"
+            and isinstance(e.meta.get("layer"), str))}
     load_bearing_layers = {
         e.meta.get("layer") for e in index.values()
         if (not e.parse_error and e.meta.get("load_bearing") is True

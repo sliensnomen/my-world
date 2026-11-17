@@ -50,7 +50,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.20"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）
+PROTOCOL_VERSION = "1.21"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -181,6 +181,11 @@ def check_structure(e: Entry, findings: list[Finding],
         findings.append(Finding("CA112", "error", rel,
                                 f"字段 `{k}` 在 frontmatter 里出现了不止一次：YAML 只保留最后一个，"
                                 f"写在前面的那条等于没写"))
+    # CA109: 元数据类型（#38 元数据类）：title/author 必须是非空字符串
+    for sf in ("title", "author"):
+        if sf in e.meta and (not isinstance(e.meta[sf], str) or not e.meta[sf].strip()):
+            findings.append(Finding("CA109", "error", rel,
+                                    f"{sf}={e.meta[sf]!r} 必须是非空字符串"))
     # CA109: bool 字段类型
     for bf in ("load_bearing", "ai_assisted"):
         if bf in e.meta and not isinstance(e.meta[bf], bool):
@@ -344,6 +349,10 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
         if e.parse_error:
             continue
         rel = e.rel
+        for edge in e.relations:
+            if edge.target == e.id:
+                findings.append(Finding("CA109", "error", rel,
+                                        f"{edge.type} 指向自己：关系不能自指（自指在引用检查之外）"))
 
         def check_target(ref_id: str, via: str) -> Entry | None:
             if WORLD_REF_RE.match(ref_id):
@@ -525,7 +534,8 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
     # CA505: 仓库级——有 military/political 承重墙但全库无任何 layer=fiscal 条目
     layers_present = {
         e.meta.get("layer") for e in index.values()
-        if not e.parse_error and isinstance(e.meta.get("layer"), str)}
+        if (not e.parse_error and e.meta.get("type") != "event"
+            and isinstance(e.meta.get("layer"), str))}
     lb_layers = {
         e.meta.get("layer") for e in index.values()
         if (not e.parse_error and e.meta.get("load_bearing") is True

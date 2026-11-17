@@ -33,6 +33,7 @@ exit=1
 [CA403] warning entries/rumor-a.md: 与 `gh-customs` 的矛盾标注不对称（对方未回指）
 [CA503] warning entries/harbor-watch.md: military 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
 [CA503] warning entries/pirates.md: military 层承重墙条目无任何物质族 critical 依赖（空中楼阁提示）
+[CA505] warning (仓库级): 存在 military/political 层承重墙条目，但全库无 layer=fiscal 条目——财政维度可能缺失（刚铎型盲区）
 [CA108] info    entries/pirates.md: kind='x-faith' 为实验值，已计入案例收集
 
-25 个条目 | 19 错误 | 15 警告
+25 个条目 | 19 错误 | 16 警告
