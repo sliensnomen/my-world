@@ -123,6 +123,15 @@ BAD = {
     "deserter-dan": card("deserter-dan", "character", "member_of:\n  - house-a\n"),
     "ev-dan-leaves": event(
         "ev-dan-leaves", "leave", 10, "by:\n  - deserter-dan\nfrom:\n  - house-a\n"),
+    # CA714：twin-item 出生两次；wisp 先死后生（端点事件不唯一/顺序矛盾）
+    "twin-item": card("twin-item", "item"),
+    "ev-twin-birth": event("ev-twin-birth", "birth", 20,
+                           "object:\n  - twin-item\n"),
+    "ev-twin-create": event("ev-twin-create", "create", 21,
+                            "object:\n  - twin-item\n"),
+    "wisp": card("wisp", "character"),
+    "ev-wisp-death": event("ev-wisp-death", "death", 30, "object:\n  - wisp\n"),
+    "ev-wisp-birth": event("ev-wisp-birth", "birth", 31, "object:\n  - wisp\n"),
     # CA713：relay-item 上一笔落到 house-b，本笔却声称从 house-a 交出（转让起点断裂）
     "relay-item": card("relay-item", "item"),
     "ev-relay-1": event(
