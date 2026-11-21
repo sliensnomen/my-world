@@ -885,6 +885,29 @@ def check_advisory_rules_do_not_gate_drafts() -> list[str]:
             problems.append("定档条目提到关键词却漏报了 CA301：\n" + out)
         if code != 1:
             problems.append(f"定档条目 + --strict 应返回 1，实际 {code}")
+    # #38：军事/财政同义词也要触发 CA301（以前靠漏词逃逸）。
+    for word in ("军事", "财政", "赋税", "军饷", "俸禄"):
+        body = f"本条目涉及{word}收支结构。" + "正文" * 100
+        tmp3, world = _temp_world(f"canonlint-ca301-{word}-", {
+            "a-node": _card("a-node", status="canon", body=body)})
+        with tmp3:
+            _, out, _ = _judge(world)
+            if "CA301" not in out or word not in out:
+                problems.append(f"关键词「{word}」应触发 CA301：\n{out}")
+    # 已声明 load_bearing 的卡不再提示
+    tmp4, world = _temp_world("canonlint-ca301-declared-", {
+        "a-node": _card("a-node", (
+            "load_bearing: true\nlayer: military\n"
+            "depends_on:\n  - id: b-node\n    kind: resource\n    critical: true\n"
+        ), load_bearing=True, status="canon", body="本条目涉及军饷。" + "正文" * 100).replace(
+            "type: location", "type: faction"),
+        "b-node": _card("b-node", "load_bearing: true\nlayer: resource\n",
+                        load_bearing=True, body="资源节点" + "正文" * 100),
+    })
+    with tmp4:
+        _, out, _ = _judge(world)
+        if "CA301" in out:
+            problems.append(f"已声明 load_bearing 的卡不该被 CA301 提示：\n{out}")
     return problems
 
 

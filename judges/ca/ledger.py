@@ -104,7 +104,7 @@ def check_ca704(world: dict, emit) -> None:
                     emit("error", e.rel,
                          f"结论与流水打架：`{ref.target}` 在 when_sort={when:g} 归属未定序"
                          f"（同刻 {len(acts)} 笔转让，受方集合不同），卡上却断言 owns "
-                         f"`{e.id}`——未定序时断言必须同时落在全部候选里（交集：{shown}），"
+                         f"`{ref.target}`——未定序时断言必须同时落在全部候选里（交集：{shown}），"
                          "请拆开 when_sort、统一受方，或删掉这条断言")
                 continue
             recipients = set().union(*(set(to) for _event, _view, to in acts))
@@ -221,7 +221,7 @@ def check_ca709(world: dict, emit) -> None:
                     emit("error", e.rel,
                          f"结论与流水打架：`{obj}` 在 when_sort={when:g} 归属未定序"
                          f"（同刻 {len(acts)} 笔 custody，保管人集合不同），卡上却断言 "
-                         f"custody_of `{e.id}`——未定序时断言必须同时落在全部候选里"
+                         f"custody_of `{obj}`——未定序时断言必须同时落在全部候选里"
                          f"（交集：{shown}），请拆开 when_sort、统一保管人，或删掉这条断言")
                 continue
             recipients = set().union(*(set(to) for _event, _view, to in acts))
