@@ -1,4 +1,4 @@
-# WGP-econ 扩展包 · 草案 v0.1
+# WGP-econ 扩展包 · 草案 v0.2
 
 **状态：草案，未冻结 ｜ 依赖：WGP-core v1.0 ｜ 日期：2026-09-23**
 
@@ -21,16 +21,16 @@ figures:
 
 | 字段 | 必填 | 约束 |
 |---|---|---|
-| `value` | 必须 | 数字（int/float） |
-| `unit` | 必须 | 字符串，自由文本单位 |
+| `value` | 必须 | 有限非负数字（int/float；nan/inf/负数拒绝） |
+| `unit` | 必须 | 非空字符串，自由文本单位 |
 | `justification` | 条件必填 | 越界时必须（CA602），其余随意 |
 
 ## 3. 规则族 CA6xx
 
 | 编号 | 级别 | 定义 |
 |---|---|---|
-| CA601 | error | figure 缺 `value`/`unit`，或 `value` 非数字 |
-| CA602 | warning | figure 越参数表硬边界且无 `justification` |
+| CA601 | error | figure 缺 `value`/`unit`、`unit` 非非空字符串，或 `value` 非有限非负数字 |
+| CA602 | warning | figure 越参数表硬边界且无 `justification`；或分母为 0 但分子 >0（零人口不可能供养军队） |
 
 **缺数据不报错原则：** 参数表规则需要的一对 figure 缺其一时，该规则跳过——世界永远是大部未量化的，缺失不是违规。
 
@@ -43,3 +43,7 @@ figures:
 
 边界值故意宽松——它抓的是"贫穷农业国养十万常备军"级的结构裂缝，不抓细节误差。
 精细估算属 CA9xx AI 建议层。
+
+## 5. 修订记录
+
+- **v0.2（2026-11-24）**：数值收紧——`value` 必须是有限非负数字（nan/inf/负数报 CA601），`unit` 必须非空字符串；CA602 增加「分母为 0 而分子 >0」的 warning（此前静默跳过）。对应 issue #38 的 econ 数值类。

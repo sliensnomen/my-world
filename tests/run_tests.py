@@ -620,13 +620,25 @@ def check_econ_figures_are_shape_checked() -> list[str]:
          "必须是非空字符串"),
         ("unit 是 bool", "figures:\n  grain:\n    value: 100\n    unit: true\n",
          "必须是非空字符串"),
+        ("unit 是空串", "figures:\n  grain:\n    value: 100\n    unit: \"\"\n",
+         "必须是非空字符串"),
+        ("value 是 nan", "figures:\n  grain:\n    value: .nan\n    unit: 石\n",
+         "不是有限数字"),
+        ("value 是 inf", "figures:\n  grain:\n    value: .inf\n    unit: 石\n",
+         "不是有限数字"),
+        ("value 为负", "figures:\n  grain:\n    value: -5\n    unit: 石\n",
+         "不能为负"),
+        ("零人口有军队", "figures:\n  population:\n    value: 0\n    unit: 人\n"
+                    "  military_size:\n    value: 100000\n    unit: 人\n",
+         "零人口不可能供养军队"),
     ]
     for label, extra, want in cases:
         tmp, world = _temp_world("canonlint-econ-", {"a-node": _card("a-node", extra)})
         with tmp:
             _, out, _ = _judge(world, "--pack", "econ")
-            if "CA601" not in out or want not in out:
-                problems.append(f"{label}：应当报 CA601（含「{want}」）\n{out.strip()}")
+            rule = "CA602" if want == "零人口不可能供养军队" else "CA601"
+            if rule not in out or want not in out:
+                problems.append(f"{label}：应当报 {rule}（含「{want}」）\n{out.strip()}")
     # 反面：合法 figures 一条都不许报
     tmp, world = _temp_world("canonlint-econ-ok-", {
         "a-node": _card("a-node", "figures:\n  grain:\n    value: 100\n    unit: 石/亩\n")})
