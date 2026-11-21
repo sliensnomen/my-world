@@ -1847,7 +1847,8 @@ def check_modify_preserves_identity_and_state() -> list[str]:
                 if hit(items, rule, entry):
                     problems.append(f"合法 {entry} 不该报 {rule}：{items}")
         code, out, err = run_case(["ledger", str(world)])
-        expected = "relic: 持有者 owner（来自 `owner`） | 保管 keeper | 位置 old-place"
+        expected = ("relic: 持有者 owner（来自 `owner`）【流水结论】"
+                    " | 保管 keeper【流水结论】 | 位置 old-place【流水结论】")
         if code != 0 or err or expected not in out:
             problems.append(f"modify 改变了既有派生状态：\n{out}{err}")
         if "4 笔完整事件" not in out:
@@ -2588,6 +2589,171 @@ def check_event_legs_are_window_checked() -> list[str]:
     return problems
 
 
+def check_null_relation_fields_are_shape_errors() -> list[str]:
+    """issue #43：显式 null 的关系字段不能被当成「没写」——CA109 报，--strict 不得全绿。"""
+    problems = []
+    body = "正文" * 120
+    cases = {
+        "depends_on: null": _card("a", "depends_on: null\nlayer: ideology\n",
+                                  load_bearing=True, body=body),
+        "relations: null": _card("a", "relations: null\n", body=body),
+        "canon_refs: null": _card("a", "canon_refs: null\n", body=body),
+        "conflicts_with: null": _card("a", "conflicts_with: null\n", body=body),
+        "owns: null": _card("a", "owns: null\n", body=body),
+    }
+    for label, text in cases.items():
+        tmp, world = _temp_world("canonlint-null-rel-", {"a": text})
+        with tmp:
+            for backend, env in (("registry", None),
+                                 ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+                if env is None:
+                    code, out, err = _judge(world, "--strict")
+                else:
+                    code, env2 = None, env
+                    merged = dict(os.environ); merged.update(env)
+                    p = subprocess.run([PY, str(TOOL), str(world), "--strict"],
+                                       cwd=ROOT, capture_output=True, text=True,
+                                       env=merged)
+                    code, out, err = p.returncode, p.stdout, p.stderr
+                if err:
+                    problems.append(f"null 关系字段（{label}/{backend}）traceback：\n{err}")
+                if code != 1:
+                    problems.append(f"null 关系字段（{label}/{backend}）应 --strict exit 1，实际 {code}：\n{out}")
+                if not any("[CA109]" in ln and "a.md" in ln for ln in out.splitlines()):
+                    problems.append(f"null 关系字段（{label}/{backend}）应报 CA109：\n{out}")
+    return problems
+
+
+def check_ca111_recognizes_contract_alias_spellings() -> list[str]:
+    """issue #45：契约登记的字段名拼法（depends-on）也要给 CA111 迁移提示。"""
+    problems = []
+    body = "正文" * 120
+    cards = {
+        "b": _card("b", body=body),
+        "a": _card("a", "depends-on:\n  - id: b\n    kind: legitimacy\n",
+                   body=body),
+    }
+    tmp, world = _temp_world("canonlint-ca111-alias-", cards)
+    with tmp:
+        for backend, env in (("registry", None), ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+            merged = dict(os.environ)
+            if env:
+                merged.update(env)
+            p = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                               capture_output=True, text=True, env=merged)
+            out, err = p.stdout, p.stderr
+            if err:
+                problems.append(f"depends-on 别名（{backend}）traceback：\n{err}")
+            if not any("[CA111]" in ln and "a.md" in ln for ln in out.splitlines()):
+                problems.append(f"depends-on 别名的迁移提示缺失（{backend}）：\n{out}")
+    return problems
+
+
+def check_canonical_relations_validate_attrs_per_relation() -> list[str]:
+    """#40 F1：规范形的注解键按**关系名**校验，与旧写法同判。"""
+    problems = []
+    body = "正文" * 120
+    cases = [
+        ("named owns note", "owns:\n  - id: b\n    note: ok\n", None, True),
+        ("canonical owns note", "relations:\n  - type: owns\n    target: b\n    note: ok\n", None, True),
+        ("named owns what", "owns:\n  - id: b\n    what: grain\n", "CA107", True),
+        ("canonical owns what", "relations:\n  - type: owns\n    target: b\n    what: grain\n", "CA107", True),
+        ("named canon_refs kind", "canon_refs:\n  - id: b\n    kind: x\n", "CA109", False),
+        ("canonical canon_refs kind",
+         "relations:\n  - type: canon_refs\n    target: b\n    kind: x\n", "CA109", True),
+        ("canonical owns x-ext",
+         "relations:\n  - type: owns\n    target: b\n    x-note: ok\n", None, True),
+    ]
+    for label, extra, rule, tmpl in cases:
+        entries = {"a": _card("a", extra, body=body, template_relations=tmpl),
+                   "b": _card("b", body="另一段正文" * 40)}
+        tmp, world = _temp_world("world-canonical-attrs-", entries)
+        try:
+            code, out, err = _judge(world, "--strict")
+            if err:
+                problems.append(f"{label} traceback：\n{err}")
+                continue
+            if rule is None:
+                if code != 0:
+                    problems.append(f"{label} 应 exit 0，实际 {code}：\n{out}")
+            else:
+                if code != 1:
+                    problems.append(f"{label} 应 --strict exit 1，实际 {code}：\n{out}")
+                if f"[{rule}]" not in out:
+                    problems.append(f"{label} 应报 {rule}：\n{out}")
+        finally:
+            tmp.cleanup()
+    return problems
+
+
+def check_event_fields_only_on_event_cards() -> list[str]:
+    """#40 F2：非事件卡上的 when / when_sort 也报 CA109（协议 1.8）。"""
+    problems = []
+    body = "正文" * 120
+    for extra in ("when: 元年\n", "when_sort: 1\n", "when: 元年\nwhen_sort: 1\n"):
+        entries = {"a": _card("a", extra, body=body)}
+        tmp, world = _temp_world("world-eventfield-", entries)
+        try:
+            code, out, err = _judge(world, "--strict")
+            if err:
+                problems.append(f"{extra!r} traceback：\n{err}")
+                continue
+            if code != 1:
+                problems.append(f"{extra!r} 应 --strict exit 1，实际 {code}：\n{out}")
+            if "[CA109]" not in out or "事件字段" not in out:
+                problems.append(f"{extra!r} 应报 CA109 事件字段只能出现在 event 卡上：\n{out}")
+        finally:
+            tmp.cleanup()
+    return problems
+
+
+def check_broken_yaml_does_not_fake_dangling_refs() -> list[str]:
+    """#40 F3：坏 YAML 的卡不该让引用方被报成「指向不存在的 id」。"""
+    problems = []
+    body = "正文" * 120
+    entries = {"a": _card("a", "canon_refs:\n  - old\n", body=body)}
+    tmp, world = _temp_world("world-brokenref-", entries)
+    try:
+        (world / "entries" / "old.md").write_text(
+            "---\nid: old\ntitle: 坏卡\n  bad: [unclosed\n---\n\n正文\n",
+            encoding="utf-8")
+        code, out, err = _judge(world, "--strict")
+        if err:
+            problems.append(f"坏 YAML 世界 traceback：\n{err}")
+            return problems
+        if code != 1 or "[CA100]" not in out:
+            problems.append(f"坏卡应报 CA100 且 --strict exit 1，实际 {code}：\n{out}")
+        if "[CA401]" in out:
+            problems.append(f"引用方不该被报「指向不存在的 id」：\n{out}")
+    finally:
+        tmp.cleanup()
+    return problems
+
+
+def check_ca103_rejects_datetime() -> list[str]:
+    """issue #46：date 只收日期，不收带时间的 datetime。"""
+    problems = []
+    body = "正文" * 120
+    text = _card("a", body=body).replace("date: 2026-01-01",
+                                         "date: 2026-01-01T08:00:00")
+    tmp, world = _temp_world("canonlint-datetime-", {"a": text})
+    with tmp:
+        for backend, env in (("registry", None), ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+            merged = dict(os.environ)
+            if env:
+                merged.update(env)
+            p = subprocess.run([PY, str(TOOL), str(world), "--strict"], cwd=ROOT,
+                               capture_output=True, text=True, env=merged)
+            out, err = p.stdout, p.stderr
+            if err:
+                problems.append(f"datetime date（{backend}）traceback：\n{err}")
+            if p.returncode != 1:
+                problems.append(f"datetime date（{backend}）应 --strict exit 1，实际 {p.returncode}：\n{out}")
+            if not any("[CA103]" in ln for ln in out.splitlines()):
+                problems.append(f"datetime date（{backend}）应报 CA103：\n{out}")
+    return problems
+
+
 def check_issue38_ownership_source_and_status() -> list[str]:
     """issue #38 57/60：交出者必须是断言持有人；draft 断言不能当正史持有源。"""
     problems = []
@@ -2832,6 +2998,149 @@ def check_ca703_creation_exemption_is_first_transfer_only() -> list[str]:
                 problems.append(f"第二笔由 alice 交出应在 ev-t2 报 CA703（{label}）：\n{out}")
             if any("[CA703]" in ln and "ev-t1.md" in ln for ln in out.splitlines()):
                 problems.append(f"create 后的第一笔转手应豁免 CA703（{label}）：\n{out}")
+    return problems
+
+
+def check_ledger_report_surfaces_certainty_and_ledger_rules() -> list[str]:
+    """#48：`canonlint ledger` 报告必须带确定度三态、且「账本族告警」不止 CA703/704/705。"""
+    problems = []
+    body = "正文" * 120
+    entries = {
+        "gem": _card("gem", "type: item\n", body=body),
+        "alice": _card("alice", "owns:\n  - gem\n", body=body),
+        "bob": _card("bob", "owns:\n  - gem\n", body=body),
+        "ev-1": _card("ev-1",
+                      "type: event\nwhen_sort: 1\nevent_kind: transfer\n"
+                      "by: [alice]\nto: [bob]\nobject: [gem]\n", body=body),
+        "ev-frag": _card("ev-frag", "type: event\nwhen: 元年\n", body=body),
+    }
+    tmp, world = _temp_world("world-ledger-report-", entries)
+    try:
+        p1 = subprocess.run([PY, str(TOOL), "ledger", str(world)], cwd=ROOT,
+                            capture_output=True, text=True)
+        out = p1.stdout
+        if p1.returncode != 0:
+            problems.append(f"ledger 报告 exit {p1.returncode}\n{p1.stderr}")
+        if "未定" not in out or "按 id 序" not in out:
+            problems.append(f"互搏/未定序不该只印一个持有者：\n{out}")
+        if "[CA707]" not in out:
+            problems.append(f"「账本族告警」应有 CA707：\n{out}")
+        if "[CA706]" not in out:
+            problems.append(f"「账本族告警」应有 CA706：\n{out}")
+        if "(账平)" in out:
+            problems.append(f"有账本族告警却印了「账平」：\n{out}")
+        p2 = subprocess.run([PY, str(TOOL), "export", str(world)], cwd=ROOT,
+                            capture_output=True, text=True)
+        try:
+            cert = json.loads(p2.stdout)["ledger"]["states"]["gem"]["certainty"]
+        except Exception as exc:
+            problems.append(f"export 的 certainty 读不出来：{exc}\n{p2.stdout[:400]}")
+            cert = None
+        if cert != "ambiguous":
+            problems.append(f"export certainty 应为 ambiguous，实际 {cert!r}")
+        if cert == "ambiguous" and "未定" not in out:
+            problems.append("ledger 报告与 export 的确定度口径不一致")
+    finally:
+        tmp.cleanup()
+    return problems
+
+
+def check_impact_sees_shadowed_cards() -> list[str]:
+    """#49：被遮蔽卡（重复 id 的第二份）的出边也要进 CA504 的下游闭包。"""
+    problems = []
+    body = "正文" * 120
+    entries = {
+        "a-dup": _card("dup", "depends_on:\n  - id: subject\n    critical: false\n",
+                       body=body),
+        "b-dup": _card("dup",
+                       "depends_on:\n  - id: subject\n    critical: false\n",
+                       body="另一段正文" * 40),
+        "subject": _card("subject", "status: draft\n", body=body),
+    }
+    tmp, world = _temp_world("world-shadow-impact-", entries)
+    try:
+        for backend in (None, {"WGP_JUDGE_BACKEND": "legacy"}):
+            merged = dict(os.environ)
+            if backend:
+                merged.update(backend)
+            p1 = subprocess.run([PY, str(TOOL), str(world), "--impact", "subject"],
+                                cwd=ROOT, capture_output=True, text=True, env=merged)
+            out = p1.stdout
+            tag = "legacy" if backend else "registry"
+            if "[CA504]" not in out or "dup" not in out:
+                problems.append(f"CA504 下游闭包漏了被遮蔽卡（{tag}）：\n{out}")
+    finally:
+        tmp.cleanup()
+    return problems
+
+
+def check_layout_scanning_is_content_based() -> list[str]:
+    """#50：扁平世界的散文不产生假错误；entries/ 子目录里的卡不被静默跳过。"""
+    problems = []
+    body = "正文" * 120
+    # 现象 A：扁平世界 = 一张卡 + README + notes 散文
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "flat"
+        world.mkdir()
+        (world / "alpha.md").write_text(_card("alpha", body=body), encoding="utf-8")
+        (world / "README.md").write_text("# 说明\n\n不是卡片。\n", encoding="utf-8")
+        (world / "notes").mkdir()
+        (world / "notes" / "changelog.md").write_text("变更记录。\n", encoding="utf-8")
+        p1 = subprocess.run([PY, str(TOOL), str(world), "--strict"], cwd=ROOT,
+                            capture_output=True, text=True)
+        if p1.returncode != 0:
+            problems.append(f"扁平世界散文被当坏条目：\n{p1.stdout}")
+        if "CA100" in p1.stdout:
+            problems.append(f"扁平世界散文报 CA100：\n{p1.stdout}")
+        if "1 个条目" not in p1.stdout:
+            problems.append(f"扁平世界条目数不对：\n{p1.stdout}")
+    # 现象 B：entries/templates/ 里的卡必须进条目数并接受审计
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "sub"
+        (world / "entries").mkdir(parents=True)
+        (world / "entries" / "alpha.md").write_text(_card("alpha", body=body),
+                                                    encoding="utf-8")
+        tpl = world / "entries" / "templates"
+        tpl.mkdir()
+        (tpl / "ghost1.md").write_text(
+            _card("ghost1", "canon_refs:\n  - missing\n", body=body),
+            encoding="utf-8")
+        p2 = subprocess.run([PY, str(TOOL), str(world), "--strict"], cwd=ROOT,
+                            capture_output=True, text=True)
+        if "2 个条目" not in p2.stdout:
+            problems.append(f"entries/templates 里的卡被静默跳过（条目数）：\n{p2.stdout}")
+        if "CA401" not in p2.stdout or "ghost1" not in p2.stdout:
+            problems.append(f"entries/templates 里的卡没被审计：\n{p2.stdout}")
+    return problems
+
+
+def check_cli_write_runs_post_audit() -> list[str]:
+    """#52：CLI 写卡与 HTTP 同纪律——写后审计红则不落盘。"""
+    problems = []
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        world.mkdir()
+        p1 = subprocess.run(
+            [PY, str(TOOL), "event", "transfer", "--by", "jia", "--root", str(world)],
+            cwd=ROOT, capture_output=True, text=True)
+        if p1.returncode == 0:
+            problems.append(f"缺腿事件仍被写入（rc=0）：{p1.stdout}")
+        if "已回滚" not in p1.stderr or "CA702" not in p1.stderr:
+            problems.append(f"缺腿事件没报「已回滚 + CA702」：\n{p1.stderr}")
+        stray = world / "entries" / "events" / "transfer.md"
+        if stray.exists():
+            problems.append(f"写后审计红了却把卡留在磁盘：{stray}")
+        if "已建卡" in p1.stdout:
+            problems.append(f"回滚路径仍打印「已建卡」：{p1.stdout}")
+        p2 = subprocess.run(
+            [PY, str(TOOL), "new", "location", "灰港", "--id", "grey-harbor",
+             "--root", str(world)],
+            cwd=ROOT, capture_output=True, text=True)
+        if p2.returncode != 0:
+            problems.append(f"合法新卡被写后审计误拦：{p2.stdout}{p2.stderr}")
+        card = world / "entries" / "locations" / "grey-harbor.md"
+        if not card.exists():
+            problems.append("合法新卡没落盘")
     return problems
 
 
@@ -3765,8 +4074,27 @@ def main() -> int:
          check_issue38_membership_types),
         ("issue #41：layer 写坏只报 CA102，不 traceback",
          check_layer_shape_does_not_crash),
+        ("issue #43：显式 null 关系字段报 CA109，不被当成缺省",
+         check_null_relation_fields_are_shape_errors),
+        ("issue #45：CA111 认契约登记的历史拼法（depends-on）",
+         check_ca111_recognizes_contract_alias_spellings),
+        ("issue #46：CA103 拒收 datetime（只收日期）",
+         check_ca103_rejects_datetime),
         ("issue #42：CA703 的 create/birth 豁免只限第一笔转手",
          check_ca703_creation_exemption_is_first_transfer_only),
+        ("issue #40 F1：规范形注解键按关系名校验（与旧写法同判）",
+         check_canonical_relations_validate_attrs_per_relation),
+        ("issue #40 F2：非事件卡上的 when / when_sort 报 CA109",
+         check_event_fields_only_on_event_cards),
+        ("issue #40 F3：坏 YAML 不制造假悬空引用",
+         check_broken_yaml_does_not_fake_dangling_refs),
+        ("issue #48：ledger 报告带确定度与账本族全族告警",
+         check_ledger_report_surfaces_certainty_and_ledger_rules),
+        ("issue #49：CA504 下游闭包看见被遮蔽卡的出边",
+         check_impact_sees_shadowed_cards),
+        ("issue #50：扁平散文不误报、entries 子目录卡不被跳过",
+         check_layout_scanning_is_content_based),
+        ("issue #52：CLI 写卡写后自检，红则回滚", check_cli_write_runs_post_audit),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),

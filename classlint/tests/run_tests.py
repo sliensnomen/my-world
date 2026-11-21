@@ -720,6 +720,74 @@ def check_pe004_pe011_levels_are_registered() -> int:
     return failures
 
 
+def check_issue47_flow_guards() -> int:
+    """#47 P1/P2：自环运输报 PE016 且不顶替守恒；驻军只收到铁不算补给；悬空来源不作证。"""
+    failures = 0
+
+    def world_cards(cards: dict[str, str]) -> Path:
+        td = tempfile.mkdtemp()
+        world = Path(td) / "w"
+        (world / "codex").mkdir(parents=True)
+        (world / "classlint.yaml").write_text(
+            'name: guard\nclasslint: "0.1"\n', encoding="utf-8")
+        for name, text in cards.items():
+            (world / "codex" / f"{name}.md").write_text(text, encoding="utf-8")
+        return world
+
+    def findings(world: Path):
+        _, _, fs, _ = classlint.run_checks(world)
+        return [(f.rule, f.level, f.message) for f in fs]
+
+    # P1：自环物流线不能把「断供」消音
+    w = world_cards({
+        "city": "---\nid: city\ntitle: 城\ntype: location\n"
+                "demand:\n  grain:\n    amount: 100\n    unit: 石\n---\n城。\n",
+        "flow-self": "---\nid: flow-self\ntitle: 自运\ntype: flow\nline: logistics\n"
+                     "from: city\nto: city\nwhat: grain\namount: 100\nunit: 石\n"
+                     "trend: flat\n---\n自运。\n",
+    })
+    got = findings(w)
+    if not any(r == "PE016" and "自环" in m for r, _l, m in got):
+        failures += 1
+        print(f"FAIL 自环物流线应报 PE016：{got}")
+    if not any(r == "PE010" and "断供" in m for r, _l, m in got):
+        failures += 1
+        print(f"FAIL 自环线不该满足 city 的需求（PE010 断供应保留）：{got}")
+
+    # P2-4：驻军地只收到铁，PE011 应报品类对不上
+    w = world_cards({
+        "lord": "---\nid: lord\ntitle: 领主\ntype: faction\n---\n领主。\n",
+        "fort": "---\nid: fort\ntitle: 堡垒\ntype: location\n"
+                "demand:\n  grain:\n    amount: 100\n    unit: 石\n---\n堡垒。\n",
+        "flow-garrison": "---\nid: flow-garrison\ntitle: 驻军\ntype: flow\n"
+                         "line: violence\nfrom: lord\nto: fort\namount: 300\n"
+                         "unit: 人\nsupply_radius: 10\nradius_unit: 里\n---\n驻军。\n",
+        "flow-iron": "---\nid: flow-iron\ntitle: 铁料\ntype: flow\nline: logistics\n"
+                     "from: lord\nto: fort\nwhat: iron\namount: 0.5\nunit: 箱\n"
+                     "trend: flat\n---\n铁料。\n",
+    })
+    got = findings(w)
+    if not any(r == "PE011" and "品类" in m for r, _l, m in got):
+        failures += 1
+        print(f"FAIL 驻军地只收到铁应报 PE011 品类对不上：{got}")
+
+    # P2-5：悬空的 extracts 目标不能替 farm 消音 PE005
+    w = world_cards({
+        "lord": "---\nid: lord\ntitle: 领主\ntype: faction\nextracts:\n  - farm\n"
+                "controls:\n  - farm\n---\n领主。\n",
+        "farm": "---\nid: farm\ntitle: 农场\ntype: location\n"
+                "extracts:\n  - ghost-farm\n---\n农场。\n",
+    })
+    got = findings(w)
+    if not any(r == "PE005" and "物质" in m for r, _l, m in got):
+        failures += 1
+        print(f"FAIL 悬空 extracts 目标不该消掉 PE005：{got}")
+
+    if not failures:
+        print("PASS #47：自环运输/P011 品类/悬空来源三处守卫")
+    return failures
+
+
 def check_view_html_generation() -> int:
     """视图：`view` 生成自包含 HTML（关系图 + 时间线两页签，不外链）。"""
     failures = 0
@@ -840,8 +908,8 @@ def check_registry_cl_pe_dual_run() -> int:
         expect([r.id for r in pe.rules] == ["PE001", "PE002", "PE003", "PE004", "PE005",
                                             "PE006", "PE007", "PE008",
                                             "PE009", "PE010", "PE011", "PE012",
-                                            "PE013", "PE014", "PE015"],
-               f"pe 必须按原顺序登记十五条规则：{[r.id for r in pe.rules]}")
+                                            "PE013", "PE014", "PE015", "PE016"],
+               f"pe 必须按原顺序登记十六条规则：{[r.id for r in pe.rules]}")
         expect(core.ca106_fields == frozenset() and pe.ca106_fields == frozenset(),
                "classlint 的 CL103 私有字段政策不得写进 ca106_fields")
         expect(all(r.scope == "entry" and r.entry_domain == "all_entries"
@@ -1149,6 +1217,7 @@ def main() -> int:
     failures += check_finding_order_matters()
     failures += check_registry_cl_pe_dual_run()
     failures += check_pe004_pe011_levels_are_registered()
+    failures += check_issue47_flow_guards()
     failures += check_view_html_generation()
     failures += check_fork_branch()
     extra = set(EXPECTED) - set(worlds)

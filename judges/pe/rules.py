@@ -89,6 +89,12 @@ def check_pe003(world, emit) -> None:
              f"legitimizes 闭环无外部锚点: {loop}——合法性不能凭空互证")
 
 
+def _is_self_loop(flow) -> bool:
+    """流量线的起点与终点是同一实体。"""
+    frm, to = flow.meta.get("from"), flow.meta.get("to")
+    return isinstance(frm, str) and frm == to
+
+
 def check_pe004(world, emit) -> None:
     """剩余必须收敛：抽取不能超过剩余（定量：surplus 声明）。"""
     adj: dict[str, set[str]] = {}
@@ -110,7 +116,8 @@ def check_pe004(world, emit) -> None:
         surplus = entity.meta.get("surplus")
         if not isinstance(surplus, dict):
             continue
-        outflows = [flow for flow in logistics if flow.meta.get("from") == entity.id]
+        outflows = [flow for flow in logistics
+                    if flow.meta.get("from") == entity.id and not _is_self_loop(flow)]
         for what, spec in surplus.items():
             if not isinstance(spec, dict):
                 continue
@@ -138,6 +145,8 @@ def check_pe005(world, emit) -> None:
         for owner, edge, _rel in world.edges:
             if owner != src:
                 continue
+            if edge.target not in world.index:
+                continue  # 悬空边不作证（#47 P2-5）
             if edge.rel in ("extracts", "exchanges_with"):
                 return True
             if edge.rel == "depends_on" and edge.attrs.get("kind") in MATERIAL_KINDS:
@@ -230,7 +239,8 @@ def check_pe010(world, emit) -> None:
             if not (_is_finite_number(amount) and _nonempty_str(unit)):
                 continue
             incoming = [f for f in logistics
-                        if f.meta.get("to") == entry.id and f.meta.get("what") == what]
+                        if f.meta.get("to") == entry.id and f.meta.get("what") == what
+                        and not _is_self_loop(f)]
             same = [f for f in incoming if f.meta.get("unit") == unit]
             if same:
                 inflow = sum(f.meta["amount"] for f in same)
@@ -249,6 +259,8 @@ def check_pe010(world, emit) -> None:
                      f"但没有任何物流线流入——断供")
 
     for flow in logistics:
+        if _is_self_loop(flow):
+            continue  # 自环由 PE016 报
         to, what = flow.meta.get("to"), flow.meta.get("what")
         target_demand = world.index[to].meta.get("demand")
         if isinstance(target_demand, dict) and what in target_demand:
@@ -271,7 +283,8 @@ def check_pe011(world, emit) -> None:
                     and _nonempty_str(unit)):
                 continue
             ins = [flow for flow in logistics
-                   if flow.meta.get("to") == to and flow.meta.get("what") == what]
+                   if flow.meta.get("to") == to and flow.meta.get("what") == what
+                   and not _is_self_loop(flow)]
             same = [flow for flow in ins if flow.meta.get("unit") == unit]
             total = sum(float(flow.meta["amount"]) for flow in same
                         if _is_finite_number(flow.meta.get("amount")))
@@ -289,10 +302,32 @@ def check_pe011(world, emit) -> None:
                      f"驻军补给不足：`{to}` 的 `{what}` 需要 {amount:g} {unit}，"
                      f"同单位流入只有 {total:g} {unit}——断粮")
             continue
-        if any(flow.meta.get("to") == to for flow in logistics):
+        inbound = [flow for flow in logistics
+                   if flow.meta.get("to") == to and not _is_self_loop(flow)]
+        demand = world.index[to].meta.get("demand") if to in world.index else None
+        demanded = sorted(k for k in demand if isinstance(k, str)) \
+            if isinstance(demand, dict) else []
+        if demanded:
+            if not any(flow.meta.get("what") in demanded for flow in inbound):
+                emit(None, violence.rel,
+                     f"驻军补给不足：`{to}` 声明了需求（{'、'.join(demanded)}），"
+                     f"但没有任何物流线送到的品类与它对得上——军队跨线无补给")
+            continue
+        if inbound:
             continue
         emit(None, violence.rel,
              f"补给律：暴力线驻守 `{to}`，但没有任何物流线送到 `{to}`——军队跨线无补给")
+
+def check_pe016(world, emit) -> None:
+    """运输自环：物流/暴力线不能自己运给自己。"""
+    for line in ("logistics", "violence"):
+        for flow in _flow_entries(world, line):
+            if _is_self_loop(flow):
+                emit(None, flow.rel,
+                     f"自环运输：`{flow.id}` 的 `{line}` 线从 `{flow.meta.get('from')}` 出发、"
+                     f"又回到 `{flow.meta.get('from')}`——自己给自己运货不成立，"
+                     f"也不该顶替断供判定")
+
 
 def check_pe012(world, emit) -> None:
     """人口律：流失必须有可对账的端点。"""

@@ -56,6 +56,7 @@ class Contract:
     version: str | None
     fingerprint: str | None          # sha256 前 16 位；兼容模式没有
     names: dict[str, tuple[str, ...]]
+    attrs: dict[str, tuple[str, ...]]
     deprecations: tuple[tuple[str, str, str], ...]
     strict_vocabulary: dict[str, tuple[str, ...]]
     reason: str = ""                 # 兼容模式的原因（给人看）
@@ -94,6 +95,20 @@ def _validate_names(raw) -> dict[str, tuple[str, ...]]:
                 f"x-relation-vocabulary.names.{name}.accept 的每一项必须是非空字符串")
         names[name] = tuple(accept)
     return names
+
+
+def _validate_attrs(raw_names) -> dict[str, tuple[str, ...]]:
+    """每条关系允许的注解键（`names[*].attrs`）——规范形与旧写法的同一条真值。"""
+    _expect(isinstance(raw_names, dict), "x-relation-vocabulary.names 必须是对象")
+    attrs: dict[str, tuple[str, ...]] = {}
+    for name, spec in raw_names.items():
+        values = spec.get("attrs", []) if isinstance(spec, dict) else []
+        _expect(isinstance(values, list),
+                f"x-relation-vocabulary.names.{name}.attrs 必须是列表")
+        _expect(all(isinstance(v, str) and v for v in values),
+                f"x-relation-vocabulary.names.{name}.attrs 的每一项必须是非空字符串")
+        attrs[name] = tuple(values)
+    return attrs
 
 
 def _validate_deprecations(raw) -> tuple[tuple[str, str, str], ...]:
@@ -136,7 +151,7 @@ def load_contract(path: Path | None = None) -> Contract:
         if compat_requested():
             return Contract(
                 source="builtin", degraded=True, path=None, version=None, fingerprint=None,
-                names={}, deprecations=(), strict_vocabulary={},
+                names={}, attrs={}, deprecations=(), strict_vocabulary={},
                 reason=f"显式兼容模式（{COMPAT_ENV}=1），契约文件 {where.name} 不存在")
         raise _fail_missing(where)
 
@@ -159,13 +174,14 @@ def load_contract(path: Path | None = None) -> Contract:
     vocab = data.get("x-relation-vocabulary")
     _expect(isinstance(vocab, dict), "缺少 x-relation-vocabulary")
     names = _validate_names(vocab.get("names"))
+    attrs = _validate_attrs(vocab.get("names"))
     deprecations = _validate_deprecations(vocab.get("deprecations", []))
     strict = _validate_strict_vocabulary(data.get("x-strict-vocabulary", {}))
 
     return Contract(
         source="contract", degraded=False, path=where, version=version,
         fingerprint=hashlib.sha256(raw_bytes).hexdigest()[:16],
-        names=names, deprecations=deprecations, strict_vocabulary=strict)
+        names=names, attrs=attrs, deprecations=deprecations, strict_vocabulary=strict)
 
 
 _CACHED: Contract | None = None

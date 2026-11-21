@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**40 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.16"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.19"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -103,6 +103,18 @@
 **v1.14 修订记录（2026-11-12，漏洞审计 §2.1：同刻未定序不再吞掉断言对账）：**
 
 37. **CA704/CA709 的「归属未定序」不再是对账的一键降级器**。漏洞审计 §2.1：作者只要补一笔同刻（`when_sort` 相同）、受方不同的 transfer，CA704 就会从 error 降成 warning——因为旧实现把 ambiguous 客体的**全部** `owns` 对账一起跳过。修法：未定序仍然不挑赢家，但断言照样对账——断言者必须同时落在全部候选受方的交集里（也就是对任何同刻结局都成立），否则照报 error「未定序时断言必须同时落在全部候选里（交集：…）」。CA709 的 `custody_of` 同口径。**多值受方（单笔 `to` 列表）不受影响**：单笔的受方列表仍按各受方逐个放行，只有「同刻多笔、集合不同」才走交集。§9.1 升 minor，规则编号不变，契约不动。
+
+**v1.19 修订记录（2026-11-16，issue #49/#50：报告闭包与扫描判据）：**
+
+42. **CA504 的下游闭包从全部条目建图**（#49）：以前只遍历入索引的首份——被遮蔽卡的出边判定层看得见（CA401/CA404），报告层却说「无下游」。现在两套后端一致地收全。**扫描判据统一**（#50）：扁平世界与 `entries/` 世界共用「根目录里以 `---` 围栏开头、README 按名排除」的卡片判据，散文不再被当坏条目；`SKIP_DIRS` 只对根一级生效，`entries/templates/` 里的卡照常入册并接受审计。规则编号不变，契约不动。
+
+**v1.18 修订记录（2026-11-16，issue #40 F1–F3：规范形注解键 / 事件字段 / 坏 YAML）：**
+
+41. **规范形与旧写法同判**（F1）：`relations` 条目的注解键按**这条关系**校验（契约 `names[*].attrs`）——`owns` 只收 `note`、`canon_refs` 只收 `{type, target}`、`exchanges_with` 收 `what/note` 等；多写非 `x-` 键报 CA107（`canon_refs` 对象形态对齐旧路径的 CA109）。以前规范形只查七键并集，`owns + what` 这类「键用错了关系」在推荐写法下静默。**事件字段**（F2）：`when` / `when_sort` 与 `event_kind`、五条腿一并只许出现在 `type: event` 的卡上（CA109）。**坏 YAML**（F3）：解析失败的卡若原文里还能认出 `id:`，引用它的卡不再报 CA401「指向不存在的 id」——真正的错误是那张卡的 CA100。规则编号不变，契约不动。
+
+**v1.17 修订记录（2026-11-16，口径收口：null、历史拼法、datetime）：**
+
+40. **三个解析口径收口**（issue #43/#45/#46）：①显式 `null` 的关系字段不再被当成「没写」——`depends_on: null` 等由 CA109 报「契约要求数组，null 不等于没写」，不再能顶替 CA302；②CA111 的迁移提示认契约登记的全部字段名拼法（`depends-on` 与 `depends_on` 同判）；③CA103 只收日期，带时间的 `datetime` 拒收。均按 §9.1 升 minor，规则编号不变，契约不动。
 
 **v1.16 修订记录（2026-11-16，回归修复：CA703 首笔豁免、端点死后 by 不双报）：**
 
@@ -266,6 +278,8 @@ draft → trial → canon → archived
 - **升格** `draft → trial → canon`：不许跳级。
 - **降级** `canon → archived`：唯一降级路径。不存在 `canon → trial`——"降回试水档"的意图通过 `archived` + 恢复程序实现。**降级不删稿。**
 - **恢复**：一切恢复**必须**走评审。默认路径为 `archived → trial → canon`（与升格同标准，理由引用宪章条款）。
+
+工具侧：`set_fields`（CLI 与 `POST /api/status` 共用）按本节状态机校验迁移——跳级、降级、未在卡上声明 `x-fast-lane: true` 的 `archived → canon` 一律拒绝且**不写盘**；时间与次数类程序约束不参与判定。
 
 ### 3.3 恢复快速通道与上诉期
 
@@ -492,21 +506,21 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA100 | error | 文件无法解析（无 frontmatter / YAML 错误 / 非映射） |
 | CA101 | error | 缺少必填字段（按 §2.2，含条件必填） |
 | CA102 | error | 枚举字段非法（`type`/`status`/`layer`/`stance`/`event_kind`）；`type` 或 `event_kind` 是 `x-` 实验值时降为 info（协议 1.1 / 1.2） |
-| CA103 | error | `date` 非法。**两种形态都收**：YAML 原生日期对象（`date: 2026-10-15` 没加引号时会被 YAML 解成 `datetime.date`）与契约要求的 ISO 字符串（`"2026-10-15"`）。字符串必须**逐字符**匹配 `^\d{4}-\d{2}-\d{2}$`——`"20261015"`（ISO 基本格式）与 `"2026-W42-6"`（周历）曾被 `date.fromisoformat` 静默收下，与本条文案和契约 pattern 都矛盾；形状对了还要验真日（`"2026-02-30"` 报错）。工具自己写出的卡是字符串形态 |
+| CA103 | error | `date` 非法。只收**日期**：YAML 原生日期对象（`date: 2026-10-15` 没加引号时会被 YAML 解成 `datetime.date`）与契约要求的 ISO 字符串（`"2026-10-15"`）；带时间的 `datetime`（`2026-01-01T08:00:00`）是「时间点」，不收（协议 1.17，issue #46）。字符串必须**逐字符**匹配 `^\d{4}-\d{2}-\d{2}$`——`"20261015"`（ISO 基本格式）与 `"2026-W42-6"`（周历）曾被 `date.fromisoformat` 静默收下，与本条文案和契约 pattern 都矛盾；形状对了还要验真日（`"2026-02-30"` 报错）。工具自己写出的卡是字符串形态 |
 | CA104 | warning | `trial`/`canon` 条目正文少于 200 字（计数算法见 §6.6） |
 | CA105 | error | `id` 语法非法：含小写字母/数字/连字符以外的字符，或不是字符串 |
 | CA106 | error | 存在不带 `x-` 前缀的未定义字段 |
-| CA107 | error | `depends_on` 对象违反 §5.4 schema（缺必填字段/含未定义的非 `x-` 字段） |
+| CA107 | error | `depends_on` 对象违反 §5.4 schema（缺必填字段/含未定义的非 `x-` 字段）；规范形 `relations` 的注解键按**这条关系**校验（契约 `names[*].attrs`：`owns` 只收 `note`、`exchanges_with` 收 `what/note` 等），多写非 `x-` 键报本条（协议 1.18，issue #40 F1） |
 | CA108 | error/info | `depends_on[].kind` 在初始集外：无 `x-` 前缀 = error；有 `x-` 前缀 = info（案例收集） |
-| CA109 | error | 字段类型/格式非法：`canon_refs` 非列表或元素非字符串、`load_bearing`/`ai_assisted`/`critical` 非 bool、id 引用不符合 `^[a-z0-9-]+$` 格式（`world:id` 形式除外，归 CA401）等；事件字段出现在非 `type: event` 的卡上（协议 1.8）也归本条 |
+| CA109 | error | 字段类型/格式非法：`canon_refs` 非列表或元素非字符串、`load_bearing`/`ai_assisted`/`critical` 非 bool、id 引用不符合 `^[a-z0-9-]+$` 格式（`world:id` 形式除外，归 CA401）等；关系字段写成显式 `null`（`depends_on: null` 等——null 不等于「没写」，协议 1.17）；事件字段（`event_kind` / `when` / `when_sort` / 五条腿）出现在非 `type: event` 的卡上（协议 1.8；`when`/`when_sort` 自 1.18 起一并拦）也归本条 |
 | CA110 | warning | 关系名拼写近失：规范形 `relations[].type` 与某个规范关系名的编辑距离 ≤1（如 `depends-onn`、`depend_on`、`extractss`）。距离在**去掉连字符/下划线之后**计算——不这么做，量的是分隔符风格而不是「打错没有」，协议自己举的例子 `depends-onn` 就会落在阈值之外、整条边静默。工具**真的把这条边按规范名建进图**（CA401/CA501/CA504 照判），本条只提示疑似拼写错误；距离 ≥2 的名字原样保留、不提示（自由档，见 §5.4） |
-| CA111 | warning | 旧写法迁移提示：某个关系名拆分前用「旧关系名 + 某个注解值」表达（见契约 `x-relation-vocabulary.deprecations`）。工具**已按新关系名判定**（结论与迁移后逐条相同），本条只提示作者改写，例如把 `depends_on` 里 `kind: legitimacy` 的那一条改写成关系名 `derives_legitimacy_from`。这是唯一允许的迁移提示；迁移完成后本条不再触发 |
+| CA111 | warning | 旧写法迁移提示：某个关系名拆分前用「旧关系名 + 某个注解值」表达（见契约 `x-relation-vocabulary.deprecations`）。工具**已按新关系名判定**（结论与迁移后逐条相同），本条只提示作者改写，例如把 `depends_on` 里 `kind: legitimacy` 的那一条改写成关系名 `derives_legitimacy_from`。字段名按契约登记的每一种拼法都认（`depends_on` / `depends-on` / `dependson`，协议 1.17，issue #45）。这是唯一允许的迁移提示；迁移完成后本条不再触发 |
 | CA112 | error | YAML frontmatter 里有**重复键**。PyYAML 是 last-wins 且一声不响：`depends_on` 写两遍时，写在前面的那一条边在解析结果里彻底消失，而所有规则都看不见它——「写了两遍」与「只写一遍」在工具眼里完全一样。本条规定必须报出来；写入命令（`link`）遇到重复键直接拒绝改写 |
 | CA114 | error | `id` 重复（两张卡撞同一个 id）。按路径序首个入索引：别人引用这个 id 时指的是前者，**被遮蔽那一份自己的出边照旧检查**（它没进索引不等于没写错） |
 | CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复；**豁免只认声明方 `status: archived`**——canon 等其它状态写 `superseded_by` 不免查重（协议 1.13） |
 | CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明）。**只对已定档条目（trial/canon）发出**：draft 还没到做决定的时候，而 `--strict` 会把 warning 当失败 |
 | CA302 | error | `load_bearing: true` 但缺 `layer`，或既没有 `depends_on` 字段也没有规范形 `relations` 字段（显式空列表仍算已声明） |
-| CA401 | error | 引用指向不存在的 `id`；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`，和协议 1.2/1.4/1.7 的事件腿 `by`/`to`/`object`/`from`/`result` 与保管断言 `custody_of`、归属断言 `member_of`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
+| CA401 | error | 引用指向不存在的 `id`（坏 YAML 的卡若原文还能认出 `id:`，不报本条——由那张卡的 CA100 负责，协议 1.18，issue #40 F3）；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`，和协议 1.2/1.4/1.7 的事件腿 `by`/`to`/`object`/`from`/`result` 与保管断言 `custody_of`、归属断言 `member_of`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
 | CA402 | error | `canon_refs` 目标状态为 `draft`/`trial`；或目标为 `archived` 且已填**有效**的 `superseded_by`（提示迁移至承接条目）。目标为 `archived` 且没有有效承接者（未填、`null`、坏值、指向不存在、指向自己）时**不报本条**，由 CA405 在 archived 条目侧单独报告，避免双报；迁移指引里印出的承接条目一定是真存在的那一个 |
 | CA403 | warning | `conflicts_with` 双方均简式且缺回指（对象式标注豁免，见 §4.2） |
 | CA404 | error | `canon` 条目的 `depends_on` 目标状态非 `canon`（链条依赖只能建立在已定档上） |
@@ -558,7 +572,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.16",
+  "protocol_version": "1.19",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

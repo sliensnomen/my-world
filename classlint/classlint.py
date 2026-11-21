@@ -40,7 +40,7 @@ except ContractError as exc:
     print(f"error: {exc}", file=sys.stderr)
     sys.exit(2)
 
-VERSION = "0.8"
+VERSION = "0.9"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 
@@ -655,6 +655,12 @@ def pe003(world: World, emit) -> None:
              f"legitimizes 闭环无外部锚点: {loop}——合法性不能凭空互证")
 
 
+def _is_self_loop(flow: Entry) -> bool:
+    """流量线的起点与终点是同一实体（`was` 只看形状，不改语义）。"""
+    frm, to = flow.meta.get("from"), flow.meta.get("to")
+    return isinstance(frm, str) and frm == to
+
+
 @rule("PE004", "error", "剩余必须收敛：抽取不能超过剩余（定量：surplus 声明）")
 def pe004(world: World, emit) -> None:
     """定量版（v0.8）：实体卡 `surplus: {what: {amount, unit}}` = 满足需求后还能被抽走的
@@ -680,7 +686,8 @@ def pe004(world: World, emit) -> None:
         surplus = entity.meta.get("surplus")
         if not isinstance(surplus, dict):
             continue
-        outflows = [f for f in logistics if f.meta.get("from") == entity.id]
+        outflows = [f for f in logistics
+                    if f.meta.get("from") == entity.id and not _is_self_loop(f)]
         for what, spec in surplus.items():
             if not isinstance(spec, dict):
                 continue
@@ -719,6 +726,10 @@ def pe005(world: World, emit) -> None:
     def has_material_source(src: str) -> bool:
         for owner, e, _rel in world.edges:
             if owner != src:
+                continue
+            # 悬空目标不算来源侧边：一条指向不存在卡片的边不能给「再生产可见」作证
+            # （issue #47 P2-5；与 PE001 的存在性守卫同口径）。
+            if e.target not in world.index:
                 continue
             if e.rel in ("extracts", "exchanges_with"):
                 return True
@@ -848,7 +859,8 @@ def pe010(world: World, emit) -> None:
             if not (_is_finite_number(amount) and _nonempty_str(unit)):
                 continue
             incoming = [f for f in logistics
-                        if f.meta.get("to") == e.id and f.meta.get("what") == what]
+                        if f.meta.get("to") == e.id and f.meta.get("what") == what
+                        and not _is_self_loop(f)]
             same = [f for f in incoming if f.meta.get("unit") == unit]
             if same:
                 inflow = sum(f.meta["amount"] for f in same)
@@ -868,6 +880,8 @@ def pe010(world: World, emit) -> None:
 
     # 从流量侧看：每条流入都要有对账对象——目标没声明该需求，就无法判断够不够。
     for f in logistics:
+        if _is_self_loop(f):
+            continue  # 自环由 PE016 报，不在这里重复「无法对账」
         to, what = f.meta.get("to"), f.meta.get("what")
         if what in _demand_of(world, to):
             continue
@@ -893,7 +907,8 @@ def pe011(world: World, emit) -> None:
                     and _nonempty_str(unit)):
                 continue  # CL108 已报形状
             ins = [l for l in logistics
-                   if l.meta.get("to") == to and l.meta.get("what") == what]
+                   if l.meta.get("to") == to and l.meta.get("what") == what
+                   and not _is_self_loop(l)]
             same = [l for l in ins if l.meta.get("unit") == unit]
             total = sum(float(l.meta["amount"]) for l in same
                         if _is_finite_number(l.meta.get("amount")))
@@ -911,10 +926,36 @@ def pe011(world: World, emit) -> None:
                      f"驻军补给不足：`{to}` 的 `{what}` 需要 {amount:g} {unit}，"
                      f"同单位流入只有 {total:g} {unit}——断粮")
             continue
-        if any(l.meta.get("to") == to for l in logistics):
+        inbound = [l for l in logistics
+                   if l.meta.get("to") == to and not _is_self_loop(l)]
+        demand = world.index[to].meta.get("demand") if to in world.index else None
+        demanded = sorted(k for k in demand if isinstance(k, str)) \
+            if isinstance(demand, dict) else []
+        if demanded:
+            # 定性分支也做品类级比对：驻军地声明了需求（grain…），送到 0.5 箱铁不算
+            # 「有补给」（issue #47 P2-4）。
+            if not any(l.meta.get("what") in demanded for l in inbound):
+                emit(None, v.rel,
+                     f"驻军补给不足：`{to}` 声明了需求（{'、'.join(demanded)}），"
+                     f"但没有任何物流线送到的品类与它对得上——军队跨线无补给")
+            continue
+        if inbound:
             continue
         emit(None, v.rel,
              f"补给律：暴力线驻守 `{to}`，但没有任何物流线送到 `{to}`——军队跨线无补给")
+
+
+@rule("PE016", "error", "运输自环：物流/暴力线不能自己运给自己")
+def pe016(world: World, emit) -> None:
+    """self-loop 运输线：起点=终点。它既不成立，还会顶替 PE010/PE011 的守恒判定
+    （自己给自己运粮就把「断供」消音了，issue #47 P1）。"""
+    for line in ("logistics", "violence"):
+        for f in _flow_entries(world, line):
+            if _is_self_loop(f):
+                emit(None, f.rel,
+                     f"自环运输：`{f.id}` 的 `{line}` 线从 `{f.meta.get('from')}` 出发、"
+                     f"又回到 `{f.meta.get('from')}`——自己给自己运货不成立，"
+                     f"也不该顶替断供判定")
 
 
 @rule("PE012", "warning", "人口律：流失必须有可对账的端点")

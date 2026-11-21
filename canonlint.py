@@ -40,6 +40,7 @@ except ContractError as exc:
     print(f"error: {exc}", file=sys.stderr)
     sys.exit(2)
 import ledger  # 事件流水：解析与派生状态（判定原料；判语在本文件的 CA7xx）
+from store.parse import salvage_id  # #40 F3：坏 YAML 的卡也要能认出 id
 from judges.model import Pack
 from judges.registry import PackImportError, RegistryError, load_backend, select_packs
 from judges.ca.content import declares_dependencies  # #14：CA302 判据搬到判定层
@@ -49,7 +50,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.16"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）
+PROTOCOL_VERSION = "1.19"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -83,7 +84,9 @@ def is_valid_date(value) -> bool:
     `date: 2026-10-15` 直接解成 `datetime.date`。两种都是作者会合理写出来的东西，规则
     就该两种都收下；JSON 入口来的（没有日期类型）必然是字符串。
     """
-    if isinstance(value, (date, datetime)):  # YAML 原生日期/时间对象
+    if isinstance(value, datetime):
+        return False  # 带时间的 datetime 是「时间点」，不是契约要求的日期
+    if isinstance(value, date):  # YAML 原生日期对象（没加引号的 date: 2026-10-15）
         return True
     if isinstance(value, str):
         # 契约的 pattern 是 `^\d{4}-\d{2}-\d{2}$`，而 `date.fromisoformat` 从 3.11 起
@@ -229,6 +232,13 @@ def check_structure(e: Entry, findings: list[Finding],
     # 完全静默，就等于留了一条只有工具知道的新关系名。
     for err in e.relation_migrations:
         findings.append(Finding(err.rule, "warning", rel, err.msg))
+    # CA109: 显式 null 的关系字段（issue #43）——null 不等于「没写」，契约要求数组。
+    for field in e.null_relation_field_names:
+        if field != "relations" and store.canonical_relation_name(field) is None:
+            continue  # classlint 专有字段（custody_of 等）不归 canonlint 的 CA109
+        findings.append(Finding("CA109", "error", rel,
+                                f"字段 `{field}` 写了显式 null；契约要求数组，"
+                                f"null 不等于「没写」——请删掉该字段或写成 []"))
 
 
 def check_content(e: Entry, findings: list[Finding]) -> None:
@@ -275,11 +285,12 @@ def check_events(e: Entry, findings: list[Finding]) -> None:
         # 事件字段是流水的一部分，流水只收 `type: event` 的卡。以前只看有没有
         # event_kind：一张 location 卡带上事件字段就被当成完整事件参与派生状态，
         # 却永远不在 entries/events/ 里。类型是作者声明的，判定器不替它改。
-        if "event_kind" in e.meta or any(leg in e.meta for leg in ledger.LEG_FIELDS):
+        if ("event_kind" in e.meta or "when" in e.meta or "when_sort" in e.meta
+                or any(leg in e.meta for leg in ledger.LEG_FIELDS)):
             findings.append(Finding(
                 "CA109", "error", rel,
                 f"事件字段只能出现在 `type: event` 的卡上（本卡 type={e.meta.get('type')!r}）；"
-                f"要记账请建 event 卡，史料卡上不要放 event_kind/腿"))
+                f"要记账请建 event 卡，史料卡上不要放 event_kind/when/when_sort/腿"))
         return
     v = ledger.event_view(e)
     for msg in v.shape_errors:
@@ -325,6 +336,10 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
     摆着一条指向不存在条目的边」可以一直没人报——它只是没进索引，不是没写错。
     索引只用来查目标是否存在，被遮蔽的条目自己的出边一样要判。
     """
+    # 坏 YAML 的卡：id 常常还在原文里。把它们捞出来，CA401 才能区分
+    # 「真的不存在」与「存在但读不出来」（issue #40 F3）。
+    broken_ids = {salvage_id(e.path) for e in entries if e.parse_error}
+    broken_ids.discard(None)
     for e in entries:
         if e.parse_error:
             continue
@@ -336,7 +351,7 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
                                         f"{via} 引用 {ref_id!r} 为 world:id 形式，本版协议不支持"))
                 return None
             target = index.get(ref_id)
-            if target is None:
+            if target is None and ref_id not in broken_ids:
                 findings.append(Finding("CA401", "error", rel,
                                         f"{via} 引用指向不存在的 id `{ref_id}`"))
             return target
@@ -970,10 +985,15 @@ def check_duplicates(index: dict[str, Entry], threshold: float,
                     f"正文相似度 {ratio:.0%} ≥ {threshold:.0%}，疑似重复"))
 
 
-def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
-    """CA504: 输出 subject 的 depends_on 反向传递闭包，按链条序号降序。"""
+def impact_report(index: dict[str, Entry], subjects: list[str],
+                  entries: list[Entry] | None = None) -> list[dict]:
+    """CA504: 输出 subject 的 depends_on 反向传递闭包，按链条序号降序。
+
+    闭包从**全部条目**建图（不只是入索引的首份）：被遮蔽卡的出边判定层照旧检查，
+    报告层也必须看得见（issue #49）。
+    """
     dependents: dict[str, list[str]] = {}
-    for e in index.values():
+    for e in (entries if entries is not None else index.values()):
         if e.parse_error or not e.id:
             continue
         for d in e.edges_of("depends_on"):
@@ -1006,42 +1026,74 @@ def impact_report(index: dict[str, Entry], subjects: list[str]) -> list[dict]:
     return reports
 
 
-def ledger_report(root: Path, packs=()) -> int:
-    """`canonlint ledger <世界>`：打印派生状态与没算平的地方。
+CERTAINTY_LABEL = {
+    "known": "流水结论",
+    "unknown": "仅断言兜底，无流水佐证",
+    "ambiguous": "未定（同刻未定序或断言互搏）",
+}
 
-    与 --impact 同一条纪律：report 级输出，永不进退出码、永不写盘。
-    「没算平的」复用所选后端的判据（CA703/CA704/CA705），
-    报告与门禁不许各说一套。
+
+def ledger_report(root: Path, packs=()) -> int:
+    """`canonlint ledger <世界>`：打印派生状态与账本族的告警。
+
+    与 --impact 同一条纪律：report 级输出、永不进退出码、永不写盘。
+    「账本族的告警」与审计/导出共用同一份 findings 与同一个 `cert_` 三态——
+    报告与门禁不许各说一套（issue #48：三出口三套说法）。
     """
-    all_entries, index, _issues = store.collect(root)
+    all_entries, index, issues = store.collect(root)
     events = ledger.ordered_events(index)
     states = ledger.derive_state(index)
     findings: list[Finding] = []
     core_ca = next((p for p in packs
                     if isinstance(p, Pack) and p.name == "core-ca"), None)
     if core_ca is not None:
-        from judges.ca.pack import apply_core_ca_ledger
+        # 报告与门禁同口径：跑完整核心审计，再挑账本族（CA7xx），
+        # 这样 CA706/707/711/712/713 不会被「只跑流水子集」吞掉（issue #48）。
+        from judges.ca.pack import apply_core_ca
 
-        apply_core_ca_ledger(
-            core_ca, index,
-            lambda rule, level, rel, msg: findings.append(Finding(rule, level, rel, msg)))
+        apply_core_ca(
+            core_ca, all_entries, index, issues, KNOWN_FIELDS,
+            lambda rule, level, rel, msg: findings.append(Finding(rule, level, rel, msg)),
+            dup_threshold=0.85)
     else:
+        findings.extend(Finding(i.rule, "error", i.rel, i.message) for i in issues)
+        for e in all_entries:
+            check_structure(e, findings, KNOWN_FIELDS)
+            check_content(e, findings)
+        check_refs(all_entries, index, findings)
+        check_chain(index, findings)
+        for e in all_entries:
+            check_events(e, findings)
         check_ledger(index, findings)
     n_entries = sum(1 for e in all_entries if not e.parse_error)
     print(f"{n_entries} 个条目 | {len(events)} 笔完整事件（有 when_sort 才进流水）")
     print("\n== 派生状态（结论断言 + 流水）==")
     if not states:
         print("(没有可派生的客体：没有 owns 断言，也没有完整事件)")
+    def _mark(value: str | None, certainty: str) -> str:
+        if value is None:
+            return "-"
+        label = CERTAINTY_LABEL.get(certainty, certainty)
+        if certainty == "ambiguous":
+            return f"未定（显示值 {value}，仅 id 序，不代表结论）"
+        if certainty == "unknown":
+            return f"{value}（猜的）【{label}】"
+        return f"{value}【{label}】"
+
     for obj in sorted(states):
         st = states[obj]
         src = f"（来自 `{st.holder_source}`）" if st.holder_source else ""
-        print(f"{obj}: 持有者 {st.holder or '（无）'}{src}"
-              f" | 保管 {st.custodian or '-'} | 位置 {st.location or '-'}")
-    unbalanced = [f for f in findings if f.rule in ("CA703", "CA704", "CA705")]
-    print("\n== 没算平的 ==")
-    if not unbalanced:
+        holder = _mark(st.holder, st.certainty)
+        if st.holder and src and st.certainty != "ambiguous":
+            holder = holder.replace("【", f"{src}【", 1)
+        print(f"{obj}: 持有者 {holder}"
+              f" | 保管 {_mark(st.custodian, st.certainty)}"
+              f" | 位置 {_mark(st.location, st.certainty)}")
+    ledger_findings = [f for f in findings if f.rule.startswith("CA7")]
+    print("\n== 账本族告警（没算平的 + 参考口径）==")
+    if not ledger_findings:
         print("(账平)")
-    for f in unbalanced:
+    for f in ledger_findings:
         print(f"[{f.rule}] {f.entry}: {f.message}")
     membership = ledger.derive_membership(index)
     print("\n== 组织归属（join/leave 流水）==")
@@ -1292,10 +1344,11 @@ def _apply_core_ca(pack: Pack, all_entries, index, issues,
         dup_threshold=dup_threshold)
 
 
-def _apply_core_ca_reports(pack: Pack, index: dict, impact_ids: list[str]):
+def _apply_core_ca_reports(pack: Pack, index: dict, impact_ids: list[str],
+                           entries: list | None = None):
     from judges.ca.pack import apply_core_ca_reports
 
-    return apply_core_ca_reports(pack, index, impact_ids)
+    return apply_core_ca_reports(pack, index, impact_ids, entries=entries)
 
 
 # ---- 主流程 --------------------------------------------------------------
@@ -1335,10 +1388,21 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
     if not impact_ids:
         reports = []
     elif core_ca is not None:
-        reports = _apply_core_ca_reports(core_ca, index, impact_ids)
+        reports = _apply_core_ca_reports(core_ca, index, impact_ids, all_entries)
     else:
-        reports = impact_report(index, impact_ids)
+        reports = impact_report(index, impact_ids, all_entries)
     return all_entries, index, findings, reports
+
+
+def _post_write_problems(root: Path, path: Path, packs) -> list[str]:
+    """写后审计：新卡本身（按相对路径）的 error 级发现。"""
+    rel = path.relative_to(root).as_posix()
+    try:
+        _, _, findings, _ = run(root, 0.85, [], packs=packs)
+    except Exception as e:  # 自检失败也必须拒绝落盘，不能静默
+        return [f"写后自检失败：{e}"]
+    return [f"{f.rule} {f.level} {f.entry}: {f.message}"
+            for f in findings if f.level == "error" and f.entry == rel]
 
 
 def _event_fields_from_args(a) -> dict | None:
@@ -1443,16 +1507,22 @@ def main() -> int:
         if cmd == "new":
             # 层级词表是理论，归判定器；存储层只收下它
             fields = _event_fields_from_args(a)
-            return store.cmd_new(a.root, a.type, a.title, a.id,
-                                 author=a.author, load_bearing=a.load_bearing,
-                                 layer=a.layer, layer_choices=LAYERS, fields=fields)
+            packs, _ = _load_packs([])
+            return store.cmd_new(
+                a.root, a.type, a.title, a.id,
+                author=a.author, load_bearing=a.load_bearing,
+                layer=a.layer, layer_choices=LAYERS, fields=fields,
+                verify=lambda path: _post_write_problems(a.root, path, packs))
         if cmd == "event":
             fields = _event_fields_from_args(a) or {}
             fields["event_kind"] = a.kind
             title = a.title or f"{a.kind} 事件"
-            return store.cmd_new(a.root, "event", title, a.id,
-                                 author=a.author, layer_choices=LAYERS,
-                                 fields=fields)
+            packs, _ = _load_packs([])
+            return store.cmd_new(
+                a.root, "event", title, a.id,
+                author=a.author, layer_choices=LAYERS,
+                fields=fields,
+                verify=lambda path: _post_write_problems(a.root, path, packs))
         if cmd == "link":
             return store.cmd_link(a.root, a.src, a.dst, a.kind, a.critical,
                                   kind_choices=KIND_INITIAL_SET)

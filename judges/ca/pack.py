@@ -211,6 +211,7 @@ def apply_core_ca(pack: Pack, all_entries, index, issues, known_fields, emit,
         run_entry("CA106", entry, known_fields=known_fields)
         run_entry("CA112", entry)
         run_entry("CA109", entry, phase="booleans")
+        run_entry("CA109", entry, phase="schema")
         run_schema_errors(entry.deps[1])
         run_entry("CA108", entry)
         run_schema_errors(entry.conflicts[1])
@@ -268,10 +269,11 @@ def apply_core_ca_ledger(pack: Pack, index, emit) -> None:
             f"core-ca/ledger 日程与登记规则不一致：未调度 {missing}，未登记 {unknown}")
 
 
-def apply_core_ca_reports(pack: Pack, index, subjects):
+def apply_core_ca_reports(pack: Pack, index, subjects, entries=None):
     rule = next(rule for rule in pack.rules if rule.id == "CA504")
 
     def reject_emit(level, rel, message):
         raise RegistryError("CA504 只能生成 report，不能发射 Finding")
 
-    return rule.check({"index": index, "subjects": subjects}, reject_emit)
+    return rule.check({"index": index, "subjects": subjects, "entries": entries},
+                      reject_emit)

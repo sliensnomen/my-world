@@ -2,15 +2,15 @@ exit=0
 16 个条目 | 8 笔完整事件（有 when_sort 才进流水）
 
 == 派生状态（结论断言 + 流水）==
-east-gate: 持有者 （无） | 保管 - | 位置 -
-fox-blade: 持有者 lord-anna（来自 `ev-blade-to-anna`） | 保管 house-fox | 位置 -
-fox-host: 持有者 （无） | 保管 - | 位置 east-gate
-grey-rock: 持有者 house-fox（来自 `house-fox`） | 保管 - | 位置 -
-lord-anna: 持有者 （无） | 保管 - | 位置 -
-squire-bob: 持有者 （无） | 保管 - | 位置 -
-watch-command: 持有者 squire-bob（来自 `ev-command-granted`） | 保管 - | 位置 -
+east-gate: 持有者 - | 保管 - | 位置 -
+fox-blade: 持有者 lord-anna（来自 `ev-blade-to-anna`）【流水结论】 | 保管 house-fox【流水结论】 | 位置 -
+fox-host: 持有者 - | 保管 - | 位置 east-gate【流水结论】
+grey-rock: 持有者 house-fox（猜的）（来自 `house-fox`）【仅断言兜底，无流水佐证】 | 保管 - | 位置 -
+lord-anna: 持有者 - | 保管 - | 位置 -
+squire-bob: 持有者 - | 保管 - | 位置 -
+watch-command: 持有者 squire-bob（来自 `ev-command-granted`）【流水结论】 | 保管 - | 位置 -
 
-== 没算平的 ==
+== 账本族告警（没算平的 + 参考口径）==
 (账平)
 
 == 组织归属（join/leave 流水）==

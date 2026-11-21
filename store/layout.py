@@ -57,18 +57,23 @@ def iter_entry_paths(root: Path) -> list[Path]:
     dirs = [root / d for d in ENTRY_DIRS if (root / d).is_dir()]
     flat = not dirs
     if flat:
-        dirs = [root]
+        # 扁平世界与 entries/ 世界共用同一个「什么是卡片」的判据：根目录里
+        # 以 `---` 围栏开头的 .md（README 按名排除）——散文不再被当坏条目，
+        # 写坏的卡片仍交给解析器报 CA100（issue #50 现象 A）。
+        return root_cards(root)
     paths: list[Path] = []
     for d in dirs:
         for p in sorted(d.rglob(ENTRY_SUFFIX)):
             if not p.is_file():
                 # rglob("*.md") 也会返回同名目录与悬空符号链接，跳过而非崩溃
                 continue
-            if SKIP_DIRS & set(p.relative_to(root).parts):
+            rel = p.relative_to(root)
+            # SKIP_DIRS 只对**根一级**生效：entries/templates/ 里的卡是正经条目，
+            # 不能因为路径里出现 templates 就静默蒸发（issue #50 现象 B）。
+            if rel.parts and rel.parts[0] in SKIP_DIRS:
                 continue
             paths.append(p)
-    if not flat:
-        paths.extend(root_cards(root))
+    paths.extend(root_cards(root))
     return paths
 
 

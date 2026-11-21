@@ -275,7 +275,8 @@ def cmd_new(root: Path, type_: str | None, title: str | None,
             load_bearing: bool = False, layer: str | None = None,
             *, layer_choices: Sequence[str], fields: dict | None = None,
             interactive: bool | None = None,
-            out: dict | None = None) -> int:
+            out: dict | None = None,
+            verify: "Callable[[Path], list[str]] | None" = None) -> int:
     """建卡：生成合法 frontmatter，用户只管写正文。交互问答仅在 TTY 下启用。
 
     `fields` 是事件流水与断言字段（when/event_kind/腿/owns 等），白名单
@@ -368,6 +369,18 @@ def cmd_new(root: Path, type_: str | None, title: str | None,
     except OSError as e:
         print(f"error: 建卡失败：{e}", file=sys.stderr)
         return 2
+    if verify is not None:
+        # 写后自检：与 HTTP 写端点同纪律——红则不落盘（issue #52）。
+        problems = verify(path)
+        if problems:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            print("error: 写后审计不通过，已回滚", file=sys.stderr)
+            for line in problems:
+                print(f"  {line}", file=sys.stderr)
+            return 1
     print(f"已建卡: {path.relative_to(root)}（draft）")
     if out is not None:
         out["id"] = entry_id
@@ -572,6 +585,36 @@ def cmd_link(root: Path, src: str, dst: str, kind: str, critical: bool,
     return 0
 
 
+STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
+    # 协议 §3.2：draft → trial → canon → archived；archived → trial（默认恢复路径）、
+    # archived → canon（快速通道，须宪章声明）。升格不许跳级，降级只走 canon → archived。
+    "draft": frozenset({"trial"}),
+    "trial": frozenset({"canon"}),
+    "canon": frozenset({"archived"}),
+    "archived": frozenset({"trial", "canon"}),
+}
+
+
+def _status_transition_error(meta: dict, updates: dict) -> str | None:
+    """§3.2 迁移合法性（#51）：只拦「状态对不上」，不碰时间/次数类程序概念。"""
+    old = meta.get("status")
+    new = updates.get("status")
+    if not isinstance(new, str) or old == new or not isinstance(old, str):
+        return None
+    allowed = STATUS_TRANSITIONS.get(old, frozenset())
+    if new in allowed and not (old == "archived" and new == "canon"):
+        return None
+    if old == "archived" and new == "canon" and (
+            meta.get("x-fast-lane") is True or updates.get("x-fast-lane") is True):
+        return None  # 宪章声明过的快速通道：卡上有显式声明才放行
+    targets = "、".join(sorted(allowed)) or "（无）"
+    hint = ("；升格不许跳级：draft → trial → canon"
+            if old in ("draft", "trial") else
+            "；降级只走 canon → archived（archived → canon 须在卡上声明 x-fast-lane: true）")
+    return (f"非法状态迁移：`{old}` → `{new}` 不允许{hint}。"
+            f"从 `{old}` 出发允许的目标：{targets}")
+
+
 def set_fields(root: Path, entry_id: str, updates: dict) -> tuple[int, str]:
     """改一个条目的标量字段（如 `status` / `superseded_by`）：行级最小改动。
 
@@ -600,6 +643,9 @@ def set_fields(root: Path, entry_id: str, updates: dict) -> tuple[int, str]:
         if before.duplicate_keys:
             return 2, (f"这张卡的 frontmatter 有重复字段 "
                        f"{sorted(set(before.duplicate_keys))}：先修掉重复再改")
+        transition_error = _status_transition_error(before.meta, updates)
+        if transition_error:
+            return 2, transition_error
         fm = m.group(1)
         for key, value in updates.items():
             line = yaml.safe_dump({key: value}, allow_unicode=True,

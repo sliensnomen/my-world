@@ -9,10 +9,11 @@ def check_ca109(e: Entry, rel: str, add) -> None:
     if e.parse_error:
         return
     if not ledger.is_event_card(e):
-        if "event_kind" in e.meta or any(leg in e.meta for leg in ledger.LEG_FIELDS):
+        if ("event_kind" in e.meta or "when" in e.meta or "when_sort" in e.meta
+                or any(leg in e.meta for leg in ledger.LEG_FIELDS)):
             add("error",
                 f"事件字段只能出现在 `type: event` 的卡上（本卡 type={e.meta.get('type')!r}）；"
-                "要记账请建 event 卡，史料卡上不要放 event_kind/腿")
+                "要记账请建 event 卡，史料卡上不要放 event_kind/when/when_sort/腿")
         return
     for message in ledger.event_view(e).shape_errors:
         add("error", message)
