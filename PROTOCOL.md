@@ -7,9 +7,9 @@
 >
 > 1. `world.schema.json` —— 条目格式的唯一契约；
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
-> 3. 本文档 —— 规则表（§6.3，**41 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
+> 3. 本文档 —— 规则表（§6.3，**42 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.20"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.22"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -103,6 +103,14 @@
 **v1.14 修订记录（2026-11-12，漏洞审计 §2.1：同刻未定序不再吞掉断言对账）：**
 
 37. **CA704/CA709 的「归属未定序」不再是对账的一键降级器**。漏洞审计 §2.1：作者只要补一笔同刻（`when_sort` 相同）、受方不同的 transfer，CA704 就会从 error 降成 warning——因为旧实现把 ambiguous 客体的**全部** `owns` 对账一起跳过。修法：未定序仍然不挑赢家，但断言照样对账——断言者必须同时落在全部候选受方的交集里（也就是对任何同刻结局都成立），否则照报 error「未定序时断言必须同时落在全部候选里（交集：…）」。CA709 的 `custody_of` 同口径。**多值受方（单笔 `to` 列表）不受影响**：单笔的受方列表仍按各受方逐个放行，只有「同刻多笔、集合不同」才走交集。§9.1 升 minor，规则编号不变，契约不动。
+
+**v1.22 修订记录（2026-11-17，issue #38 状态门禁：CA715）：**
+
+45. **canon 条目引用非 canon 目标不再静默**（#38 的 46–51 组）：`canon_refs`/`depends_on` 已由 CA402/CA404 按 error 处理；其余关系（`owns`、`conflicts_with`、`exchanges_with`、`derives_legitimacy_from`、`coerces` 等）现在报 **CA715（warning）**——目标状态不是 canon 就提示「要么把目标升格，要么把这条关系写成 x-」。用 warning 而不是 error：交换/名分这类关系不必然要求目标已升格（与 §6.3 原有口径一致），但不能再完全看不见。新增规则编号 CA715，按 §9.1 升 minor，契约不动。
+
+**v1.21 修订记录（2026-11-17，issue #38 元数据/自指/泄压阀）：**
+
+44. **三处小口收口**：①`title` / `author` 的元数据类型纳入 CA109（非空字符串）；②关系边指向自己报 CA109「关系不能自指」（悬空检查之外的结构错误）；③CA505 的「全库有财政」不再把 `type: event` 的卡算进去——财政是制度存在，不是一次事件（旧口径下一张 `layer: fiscal` 的事件卡就能让 CA505 永久沉默，`--strict` 世界照样全绿）。判定语义变化按 §9.1 升 minor，契约不动。
 
 **v1.20 修订记录（2026-11-17，issue #38 端点类：CA714）：**
 
@@ -547,7 +555,9 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA711 | warning | 轨迹断裂：`move` 的 `from` 对不上链上当前位置（上一笔 `move` 的 `to`）。只查存在窗口内的 `move`（窗外归 CA708，不双报）；上一笔 `to` 多值则位置「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时当前位置在列表里即放行；缺 `from`/`when_sort` 不查。**同刻多笔 `move`**（协议 1.8）之间没有先后：同刻先合并位置（目的地一致才确定，不一致即「未定」），只有**严格更晚**的 `move` 才与它比对 |
 | CA712 | error | 结论与流水打架（成员版）：手写 `member_of` 断言，但该人流水里对那个组织的最后一个动作是 `leave`——要么补一笔 `join`，要么撤断言。组织没有流水时断言即全部历史，不判。`member_of` 多值合法（一个人可以在多个组织），所以只有对账、没有互搏规则。**同刻 join 与 leave 并存**时最后动作未定序 → fail-open，不报（协议 1.8）。**类型门禁**：主体须 `character`/`faction`，目标须 `faction`（目标悬空交 CA401）（协议 1.15） |
 | CA713 | warning | 转让起点断裂：`transfer`/`grant` 的 `from` 对不上链上上一笔的受方（上一笔 `to`）。口径同 CA711：上一笔 `to` 多值则起点「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时落点在列表里即放行；缺 `from`/`when_sort` 不查；同刻转让不排序、不互为「上一笔」 |
+| CA715 | warning | canon 条目通过 `canon_refs`/`depends_on` 之外的关系（`owns`、`conflicts_with`、`exchanges_with`、`derives_legitimacy_from` 等）引用了非 canon 目标——要么把目标升格，要么把这条关系写成 x- |
 | CA714 | error | 端点事件不唯一或顺序矛盾：同一客体出现两次 `birth`/`create`、两次 `death`/`destroy`，或先死后生；`transform` 的 result 早已出生/终结，或客体在销毁后又被 transform |
+| CA109（元数据） | error | `title` / `author` 必须是非空字符串；关系边指向自己（自指）也报 CA109 |
 
 **无传递违规原则：** CA402/CA404/CA405 只判**直接边**的违规。A 引用 B、B 违规并不使 A 连带违规；"连带影响"是 CA504 报告的职责，不是 error 的传染。
 
@@ -577,7 +587,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.20",
+  "protocol_version": "1.22",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

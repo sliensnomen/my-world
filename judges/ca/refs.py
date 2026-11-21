@@ -68,6 +68,24 @@ def check_ca109_assertion(e: Entry, rel: str, add, assertion: str, raw, item_ind
     return True
 
 
+def check_ca715(world: dict, emit) -> None:
+    index = world["index"]
+    for e in index.values():
+        if e.parse_error or e.status != "canon":
+            continue
+        for edge in e.relations:
+            if edge.type in ("canon_refs", "depends_on") or edge.type.startswith("x-"):
+                continue
+            target = index.get(edge.target)
+            if target is None or target.parse_error:
+                continue
+            if target.status != "canon":
+                emit("warning", e.rel,
+                     f"canon 条目通过 `{edge.type}` 引用了非 canon 目标 "
+                     f"`{edge.target}`（状态为 {target.status}）——要么把目标升格，"
+                     f"要么把这条关系写成 x-")
+
+
 def check_ca405(world: dict, emit) -> None:
     index = world["index"]
     for e in index.values():
@@ -80,6 +98,7 @@ def check_ca405(world: dict, emit) -> None:
         )
         if not referenced or _has_successor(e, index):
             continue
+
         successor = e.meta.get("superseded_by")
         if "superseded_by" not in e.meta:
             why = "未填 `superseded_by`"
@@ -165,5 +184,6 @@ def apply(entries, index, run_entry, run_world) -> None:
                     run_entry("CA401", e, index=index, ref_id=raw[item_index], via=assertion,
                               broken_ids=broken_ids)
 
+    run_world("CA715")
     run_world("CA405")
     run_world("CA403")
