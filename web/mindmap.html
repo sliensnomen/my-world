@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:,">
+<title>关系图 · 世界仓库</title>
+<!--
+  第一屏原型：中心一个条目 + 四周按关系类型分组的邻居；点邻居换中心。
+  数据只来自同源 GET /api/world（与 canonlint export 同一份），页面不写任何字段语义。
+  为什么这里内联了解析：docs/接口说明.md 让前端 <script src="/web/wgp-client.js">，
+  但仓库根的 wgp-client.js 没有 HTTP 路由，/wgp-client.js 与 /web/wgp-client.js 都是 404。
+  正式版二选一：把 wgp-client.js 拷进 web/，或给 serve.py 加一条根文件路由。
+-->
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --paper: #fff;
+    --ink: #1f2328;
+    --muted: #666b73;
+    --line: #d9d9d6;
+    --accent: #3d5a80;
+    --accent-soft: #e8eef7;
+    --red: #b3261e;
+    --red-soft: #fbe4e2;
+    --amber: #7a6000;
+    --amber-soft: #fdf3d7;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.55;
+  }
+  code { font-size: .92em; overflow-wrap: anywhere; }
+
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    align-items: baseline;
+    padding: 12px 20px;
+    background: var(--paper);
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: .02em; }
+  header .meta { color: var(--muted); font-size: 13px; }
+  header .hint { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 20px; }
+
+  /* 舞台：宽的时候中心卡在中间、枝条分列两侧；窄的时候单列。
+     用容器查询而不是媒体查询：布局跟着「内容区」宽窄走，与浏览器窗口解耦。 */
+  .stage-wrap { container-type: inline-size; }
+  .stage { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
+  @container (min-width: 860px) {
+    .stage { grid-template-columns: minmax(0, 1fr) minmax(280px, 380px) minmax(0, 1fr); }
+    #hub { grid-column: 2; grid-row: 1; position: sticky; top: 16px; }
+    #tree-left { grid-column: 1; grid-row: 1; }
+    #tree-right { grid-column: 3; grid-row: 1; }
+    .branch::after { content: ""; }
+  }
+
+  .center-card {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / .05), 0 8px 24px rgb(0 0 0 / .04);
+  }
+  .center-card:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .center-card.load-bearing { border-width: 2px; border-color: var(--accent); }
+  .center-card h2 { margin: 0 0 8px; font-size: 20px; overflow-wrap: anywhere; }
+  .center-card h2:focus { outline: none; }
+  .center-card .excerpt {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+    white-space: pre-line;
+    max-height: 9em;
+    overflow: auto;
+  }
+  .center-card .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+  .center-card .path { color: var(--muted); font-size: 12px; word-break: break-all; margin-top: 8px; }
+  .center-card button.more {
+    margin-top: 12px;
+    width: 100%;
+    padding: 7px 12px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .center-card button.more:hover { border-color: var(--accent); }
+
+  .badge {
+    display: inline-block;
+    padding: 0 7px;
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 1.7;
+    white-space: nowrap;
+    background: #ececea;
+    color: var(--muted);
+  }
+  .badge.load-bearing { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .badge.dangling, .badge.broken, .badge.level-error { background: var(--red-soft); color: var(--red); }
+  .badge.level-warning { background: var(--amber-soft); color: var(--amber); }
+
+  .branch {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    position: relative;
+  }
+  /* 通向中心卡的连接线：纯装饰，不进无障碍树 */
+  .branch::after {
+    position: absolute;
+    top: 26px;
+    width: 20px;
+    border-top: 1px solid var(--line);
+  }
+  #tree-left .branch::after { left: 100%; content: none; }
+  #tree-right .branch::after { right: 100%; content: none; }
+  @container (min-width: 860px) {
+    #tree-left .branch::after { content: ""; }
+    #tree-right .branch::after { content: ""; }
+  }
+  .branch h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .branch ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+
+  .node {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    width: 100%;
+    padding: 7px 10px;
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+    color: var(--ink);
+    background: #fbfbfa;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .node:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .node:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .node .title { flex: 1 1 auto; overflow-wrap: anywhere; }
+  .node.load-bearing .title { font-weight: 650; }
+  .node .dir { flex: none; color: var(--muted); font-size: 11px; }
+  .node.dangling {
+    cursor: default;
+    color: var(--red);
+    background: var(--red-soft);
+    border-style: dashed;
+    border-color: var(--red);
+  }
+  .node.dangling:hover { border-color: var(--red); }
+  .node .why { font-size: 12px; color: var(--red); }
+
+  .empty {
+    color: var(--muted);
+    font-size: 14px;
+    background: var(--paper);
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+    text-align: center;
+  }
+
+  .panel { margin-top: 24px; }
+  .panel h2 { font-size: 15px; margin: 0 0 8px; }
+  .panel.dangling-panel h2 { color: var(--red); }
+  .panel.broken-panel h2 { color: var(--red); }
+  .line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    align-items: baseline;
+    font-size: 14px;
+    padding: 7px 10px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin-bottom: 6px;
+  }
+  .line.dangling { border-color: var(--red); border-style: dashed; background: var(--red-soft); }
+  .line.broken { background: #f1f1ef; color: var(--muted); }
+  .line .via { color: var(--muted); font-size: 12px; }
+  .line .why { color: var(--red); font-size: 12px; }
+  .line .file-btn {
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 8px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .line .file-btn:hover { border-color: var(--accent); }
+
+  footer {
+    margin-top: 32px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+  }
+
+  /* 详情：原生 <dialog> 负责 top layer / 焦点圈定 / Esc / 焦点归还 */
+  dialog {
+    width: min(680px, calc(100vw - 32px));
+    max-height: min(80vh, 760px);
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+    color: var(--ink);
+    box-shadow: 0 24px 60px rgb(0 0 0 / .28);
+  }
+  dialog::backdrop {
+    background: rgb(15 20 28 / .45);
+    backdrop-filter: blur(2px);
+    /* MANDATORY：::backdrop 不是滚动容器，不写这两行会漏滚动 */
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
+  dialog:modal { overscroll-behavior: contain; }
+  dialog .dlg-body { overscroll-behavior: contain; }
+  dialog .dlg-head {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 16px 18px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  dialog .dlg-head h2 { margin: 0; font-size: 18px; overflow-wrap: anywhere; flex: 1; }
+  dialog .dlg-body { padding: 14px 18px 18px; overflow: auto; max-height: min(62vh, 560px); }
+  dialog .dlg-body h3 { font-size: 14px; margin: 18px 0 8px; color: var(--muted); }
+  dialog .dlg-body h3:first-child { margin-top: 0; }
+  dialog .dlg-body p { margin: 0 0 12px; white-space: pre-line; font-size: 14px; }
+  dialog table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  dialog th, dialog td { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  dialog th { color: var(--muted); font-weight: 600; width: 40%; }
+  .close-btn {
+    flex: none;
+    padding: 4px 10px;
+    font: inherit;
+    font-size: 13px;
+    background: #f1f1ef;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .close-btn:hover { border-color: var(--accent); }
+  .close-btn:focus-visible, .file-btn:focus-visible, .center-cta:focus-visible,
+  .center-card button.more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .edge-list, .finding-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .edge-list li, .finding-list li { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+  .edge-list .dir { color: var(--muted); font-size: 12px; min-width: 3.5em; }
+  .finding-list .rule { color: var(--muted); font-size: 12px; }
+  .center-cta {
+    margin-top: 16px;
+    padding: 7px 12px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .center-cta:hover { border-color: var(--accent); }
+
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) { animation: none !important; }
+  }
+  @media (forced-colors: active) {
+    .badge, .node, .branch, .center-card, .line { border: 1px solid CanvasText; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>关系图</h1>
+  <span class="meta" id="meta">加载中…</span>
+  <span class="hint">点四周的条目换中心 · 点中心卡看详情</span>
+</header>
+
+<main>
+  <div class="stage-wrap">
+    <div class="stage">
+      <div id="hub"></div>
+      <div id="tree-left"></div>
+      <div id="tree-right"></div>
+    </div>
+  </div>
+  <section class="panel dangling-panel" id="dangling-panel" hidden></section>
+  <section class="panel broken-panel" id="broken-panel" hidden></section>
+  <footer>
+    <span id="versions"></span>
+    <span id="counts"></span>
+  </footer>
+</main>
+
+<dialog id="detail" closedby="any" aria-labelledby="detail-title">
+  <div class="dlg-head">
+    <h2 id="detail-title">详情</h2>
+    <form method="dialog">
+      <button class="close-btn" value="close">关闭</button>
+    </form>
+  </div>
+  <div class="dlg-body" id="detail-body"></div>
+</dialog>
+
+<script>
+"use strict";
+
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const pretty = (v) => (v === null || v === undefined || v === "" ? "" : String(v));
+
+let WORLD = null;          // 原始导出（字段名是合同）
+let BY_ID = {};            // id → entry
+let BY_PATH = {};          // path → entry（坏文件没有 id）
+let EDGES_OUT = {};        // id → 出边
+let EDGES_IN = {};         // id → 入边
+let FINDINGS_BY_PATH = {}; // path → [finding]
+
+/* ---------- 相当于 wgp-client.js 的极小解析（正式版换用它） ---------- */
+
+function indexWorld(data) {
+  BY_ID = {}; BY_PATH = {}; EDGES_OUT = {}; EDGES_IN = {}; FINDINGS_BY_PATH = {};
+  for (const e of data.entries || []) {
+    if (e.path) BY_PATH[e.path] = e;
+    if (e.id && !BY_ID[e.id]) BY_ID[e.id] = e;
+  }
+  for (const r of data.relations || []) {
+    (EDGES_OUT[r.source] ||= []).push(r);
+    (EDGES_IN[r.target] ||= []).push(r);
+  }
+  for (const f of data.findings || []) {
+    if (f.entry) (FINDINGS_BY_PATH[f.entry] ||= []).push(f);
+  }
+}
+
+function danglingReason(edge) {
+  const d = (WORLD.dangling || []).find((x) =>
+    x.source === edge.source && x.type === edge.type && x.target === edge.target);
+  return (d && d.reason) || (/^[A-Za-z0-9_-]+:/.test(edge.target || "") ? "world-ref" : "missing-id");
+}
+
+function neighbors(center) {
+  if (!center.id) return [];
+  const out = (EDGES_OUT[center.id] || []).map((r) => ({
+    edge: r, dir: "out", other: r.target, dangling: !BY_ID[r.target],
+  }));
+  const into = (EDGES_IN[center.id] || []).map((r) => ({
+    edge: r, dir: "in", other: r.source, dangling: !BY_ID[r.source],
+  }));
+  return out.concat(into).sort((a, b) =>
+    (a.edge.type + "\u0000" + a.other).localeCompare(b.edge.type + "\u0000" + b.other));
+}
+
+function mindmap(key) {
+  const center = BY_ID[key] || BY_PATH[key] || null;
+  if (!center) return null;
+  const groups = {};
+  for (const n of neighbors(center)) (groups[n.edge.type] ||= []).push(n);
+  const branches = Object.keys(groups).sort().map((type) => ({
+    type,
+    items: groups[type].sort((a, b) => {
+      const at = (BY_ID[a.other] || {}).title || a.other || "";
+      const bt = (BY_ID[b.other] || {}).title || b.other || "";
+      return (at + "\u0000" + a.other).localeCompare(bt + "\u0000" + b.other);
+    }),
+  }));
+  return { center, branches };
+}
+
+/* ---------- 渲染 ---------- */
+
+const badge = (text, cls) => `<span class="badge ${cls || ""}">${esc(text)}</span>`;
+
+function centerCard(center, hasRelations) {
+  return `<article class="center-card${center.load_bearing ? " load-bearing" : ""}" id="center-card">
+    <h2 id="center-title" tabindex="-1">${esc(center.title || center.id || center.path)}</h2>
+    <div class="row">
+      ${pretty(center.type) ? badge(center.type) : ""}
+      ${pretty(center.status) ? badge(center.status) : ""}
+      ${pretty(center.layer) ? badge(center.layer) : ""}
+      ${center.load_bearing ? badge("承重", "load-bearing") : ""}
+      ${center.parse_error ? badge("读不出", "broken") : ""}
+    </div>
+    ${center.body_excerpt ? `<p class="excerpt">${esc(center.body_excerpt)}</p>` : ""}
+    ${hasRelations ? "" : `<p class="excerpt">这个条目还没有关系 —— 从别的条目点进来，或先给它补一条边。</p>`}
+    <div class="path"><code>${esc(center.path || "")}</code></div>
+    <button type="button" class="more" data-detail="center">查看全部字段与关系</button>
+  </article>`;
+}
+
+function nodeItem(n) {
+  const other = BY_ID[n.other];
+  if (n.dangling) {
+    // 指不到人的边：标红、写清原因，但不是可点的链接（没有目的地）
+    return `<span class="node dangling">
+      <span class="title">${esc(n.other || "(空)")}</span>
+      ${badge("断链", "dangling")}
+      <span class="why">${esc(danglingReason(n.edge))}</span>
+    </span>`;
+  }
+  if (!other) {
+    return `<span class="node"><span class="title">${esc(n.other)}</span></span>`;
+  }
+  const dirText = n.dir === "out" ? "出" : "入";
+  return `<button type="button" class="node${other.load_bearing ? " load-bearing" : ""}"
+      data-center="${esc(other.id || other.path)}"
+      aria-label="${n.dir === "out" ? "出边" : "入边"}：以 ${esc(other.title || other.id)} 为中心">
+    <span class="dir" aria-hidden="true">${dirText}</span>
+    <span class="title">${esc(other.title || other.id)}</span>
+    ${pretty(other.type) ? badge(other.type) : ""}
+    ${other.load_bearing ? badge("承重", "load-bearing") : ""}
+  </button>`;
+}
+
+function branchSection(branch) {
+  const items = branch.items.map((n) => `<li>${nodeItem(n)}</li>`).join("");
+  return `<section class="branch" aria-labelledby="br-${esc(branch.type)}">
+    <h3 id="br-${esc(branch.type)}"><span>${esc(branch.type)}</span><span>${branch.items.length}</span></h3>
+    <ul>${items}</ul>
+  </section>`;
+}
+
+/* 按条目数均衡左右两列（按关系名顺序贪心，结果稳定） */
+function splitBranches(branches) {
+  const left = [], right = [];
+  let l = 0, r = 0;
+  for (const b of branches) {
+    if (r < l) { right.push(b); r += b.items.length; }
+    else { left.push(b); l += b.items.length; }
+  }
+  return [left, right];
+}
+
+function render(key) {
+  const mm = mindmap(key);
+  if (!mm) {
+    $("#hub").innerHTML = `<div class="empty">没有这个条目：${esc(key)}</div>`;
+    $("#tree-left").innerHTML = "";
+    $("#tree-right").innerHTML = "";
+    return;
+  }
+  const [left, right] = splitBranches(mm.branches);
+  $("#hub").innerHTML = centerCard(mm.center, mm.branches.length > 0);
+  $("#tree-left").innerHTML = left.length ? left.map(branchSection).join("") : "";
+  $("#tree-right").innerHTML = right.length ? right.map(branchSection).join("")
+    : (left.length ? `<div class="empty">其余关系都在左边</div>` : "");
+  $("#hub").querySelector("[data-detail]")
+    .addEventListener("click", () => openDetail(mm.center));
+  document.querySelectorAll("[data-center]").forEach((b) =>
+    b.addEventListener("click", () => goTo(b.dataset.center)));
+}
+
+/* ---------- 换中心：View Transitions + 焦点路由 ---------- */
+
+function applyCenter(key) {
+  if (location.hash.slice(1) !== encodeURIComponent(key)) {
+    history.pushState(null, "", "#" + encodeURIComponent(key));
+  }
+  render(key);
+}
+
+function focusCenter() {
+  const heading = document.getElementById("center-title");
+  if (heading) heading.focus();
+}
+
+
+function goTo(key) {
+  // 不支持 View Transitions 就立即更新 DOM —— 指南：直接更新，不报错
+  if (typeof document.startViewTransition !== "function") {
+    applyCenter(key);
+    focusCenter();
+    return;
+  }
+  const t = document.startViewTransition(() => applyCenter(key));
+  // MANDATORY：转场只管画面；不主动路由焦点，焦点会跟着旧节点一起消失
+  t.finished.finally(focusCenter);
+}
+
+/* ---------- 详情对话框 ---------- */
+
+function fillDetail(entry) {
+  $("#detail-title").textContent = entry.title || entry.id || entry.path || "详情";
+  const rows = [
+    ["id", entry.id], ["type", entry.type], ["status", entry.status],
+    ["layer", entry.layer], ["author", entry.author], ["date", entry.date],
+    ["load_bearing", entry.load_bearing], ["ai_assisted", entry.ai_assisted],
+    ["superseded_by", entry.superseded_by], ["path", entry.path],
+    ["body_chars", entry.body_chars],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== "");
+
+  let html = "";
+  if (entry.parse_error) {
+    html += `<p><strong>这个文件读不出来：</strong>${esc(entry.parse_error)}</p>`;
+  }
+  html += `<h3>字段</h3><table>${rows.map(([k, v]) =>
+    `<tr><th>${esc(k)}</th><td><code>${esc(v)}</code></td></tr>`).join("")}</table>`;
+  if (entry.body_excerpt) html += `<h3>正文摘录</h3><p>${esc(entry.body_excerpt)}</p>`;
+
+  const out = entry.id ? (EDGES_OUT[entry.id] || []) : [];
+  const into = entry.id ? (EDGES_IN[entry.id] || []) : [];
+  if (out.length || into.length) {
+    const line = (r, dir) => `<li><span class="dir">${dir === "out" ? "出" : "入"}</span>
+      <code>${esc(r.type)}</code><span>${esc(dir === "out" ? r.target : r.source)}</span>
+      ${dir === "in" ? "" : (BY_ID[r.target] ? "" : badge("断链", "dangling"))}</li>`;
+    html += `<h3>关系（${out.length} 出 / ${into.length} 入）</h3><ul class="edge-list">` +
+      out.map((r) => line(r, "out")).join("") + into.map((r) => line(r, "in")).join("") + `</ul>`;
+  }
+
+  const fs = FINDINGS_BY_PATH[entry.path] || [];
+  if (fs.length) {
+    html += `<h3>检查结果（${fs.length}）</h3><ul class="finding-list">` +
+      fs.map((f) => `<li>${badge(f.level === "error" ? "错误" : f.level === "warning" ? "警告" : "提示",
+                               "level-" + f.level)}<span class="rule">${esc(f.rule)}</span>
+        <span>${esc(f.message)}</span></li>`).join("") + `</ul>`;
+  }
+
+  if (entry.id) {
+    html += `<button type="button" class="center-cta" data-center-from-dialog="${esc(entry.id)}">以它为中心看关系</button>`;
+  }
+  $("#detail-body").innerHTML = html;
+  $("#detail-body").querySelector("[data-center-from-dialog]")?.addEventListener("click", (e) => {
+    $("#detail").close();
+    goTo(e.target.dataset.centerFromDialog);
+  });
+}
+
+function openDetail(entry) {
+  fillDetail(entry);
+  const dlg = $("#detail");
+  if (typeof dlg.showModal === "function") dlg.showModal();
+  else dlg.setAttribute("open", "");   // 老浏览器兜底：不圈焦点，至少能看到内容
+}
+
+/* ---------- 全局断链 / 坏文件（不依赖当前中心也能看见） ---------- */
+
+function renderDangling() {
+  const ds = WORLD.dangling || [];
+  const sec = $("#dangling-panel");
+  sec.hidden = !ds.length;
+  if (!ds.length) { sec.innerHTML = ""; return; }
+  sec.innerHTML = `<h2>断链（${ds.length}）—— 指不到人的边不藏</h2>` + ds.map((d) => `
+    <div class="line dangling">
+      ${badge("断链", "dangling")}
+      <code>${esc((BY_ID[d.source] || {}).title || d.source)}</code>
+      <span class="via">—${esc(d.type)}→</span>
+      <code>${esc(d.target)}</code>
+      <span class="why">${esc(d.reason || "missing-id")}</span>
+    </div>`).join("");
+}
+
+function renderBroken() {
+  const broken = (WORLD.entries || []).filter((e) => e.parse_error);
+  const sec = $("#broken-panel");
+  sec.hidden = !broken.length;
+  if (!broken.length) { sec.innerHTML = ""; return; }
+  sec.innerHTML = `<h2>读不出来的文件（${broken.length}）</h2>` + broken.map((e) => `
+    <div class="line broken">
+      ${badge("坏文件", "broken")}
+      <code>${esc(e.path)}</code>
+      <span class="why">${esc(e.parse_error)}</span>
+      <button type="button" class="file-btn" data-detail-path="${esc(e.path)}">详情</button>
+    </div>`).join("");
+  sec.querySelectorAll("[data-detail-path]").forEach((b) =>
+    b.addEventListener("click", () => openDetail(BY_PATH[b.dataset.detailPath])));
+}
+
+/* ---------- 启动 ---------- */
+
+function pickDefaultCenter() {
+  const candidates = (WORLD.entries || []).filter((e) => e.id && !e.parse_error);
+  if (!candidates.length) return null;
+  const degree = (e) => (EDGES_OUT[e.id] || []).length + (EDGES_IN[e.id] || []).length;
+  return candidates.reduce((best, e) => (degree(e) > degree(best) ? e : best), candidates[0]);
+}
+
+async function boot() {
+  const [resWorld, resHealth] = await Promise.all([
+    fetch("/api/world"),
+    fetch("/api/health").catch(() => null),
+  ]);
+  if (!resWorld.ok) throw new Error("取 /api/world 失败：" + resWorld.status);
+  WORLD = await resWorld.json();
+  indexWorld(WORLD);
+
+  const health = resHealth && resHealth.ok ? await resHealth.json().catch(() => null) : null;
+  const c = WORLD.counts || {};
+  $("#meta").textContent = `${health ? health.world + " · " : ""}${c.entries} 条目 · ${c.relations} 条边` +
+    (c.dangling ? ` · ${c.dangling} 条断链` : "") + (c.unparsed ? ` · ${c.unparsed} 个坏文件` : "");
+  $("#versions").textContent = `协议 ${WORLD.protocol_version ?? "?"} / 契约 ${WORLD.contract_version ?? "?"}`;
+  $("#counts").textContent =
+    `${c.entries ?? 0} 条目 · ${c.relations ?? 0} 边 · 检查 ${(WORLD.findings || []).length} 项` +
+    `（${c.errors ?? 0} 错误 / ${c.warnings ?? 0} 警告 / ${c.infos ?? 0} 提示）` +
+    ` · ${(WORLD.vocabularies && Object.keys(WORLD.vocabularies.relation_types || {}).length) || 0} 种关系`;
+
+  renderDangling();
+  renderBroken();
+
+  const fromHash = decodeURIComponent(location.hash.slice(1) || "");
+  const fallback = pickDefaultCenter();
+  const initial = (fromHash && (BY_ID[fromHash] || BY_PATH[fromHash])) ? fromHash : (fallback ? fallback.id : null);
+  if (initial) render(initial);
+  else $("#hub").innerHTML = `<div class="empty">这个世界里没有可作中心的条目。</div>`;
+
+  window.addEventListener("popstate", () => {
+    const key = decodeURIComponent(location.hash.slice(1) || "");
+    if (BY_ID[key] || BY_PATH[key]) render(key);
+    else if (fallback) render(fallback.id);
+  });
+
+  // closedby 支持有限（Safari 尚未支持）：按指南补「按下和抬起都在框外」才关的兜底
+  if (!("closedBy" in HTMLDialogElement.prototype)) {
+    const dlg = $("#detail");
+    const outside = (e) => {
+      const r = dlg.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    };
+    let pressedOutside = false;
+    dlg.addEventListener("pointerdown", (e) => { pressedOutside = outside(e); });
+    dlg.addEventListener("pointerup", (e) => { if (pressedOutside && outside(e)) dlg.close(); });
+  }
+}
+
+boot().catch((e) => {
+  $("#hub").innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+});
+</script>
+</body>
+</html>
