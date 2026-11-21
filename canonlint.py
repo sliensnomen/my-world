@@ -50,7 +50,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.23"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502
+PROTOCOL_VERSION = "1.24"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -765,7 +765,7 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                         "CA704", "error", e.rel,
                         f"结论与流水打架：`{r.target}` 在 when_sort={when:g} 归属未定序"
                         f"（同刻 {len(acts)} 笔转让，受方集合不同），卡上却断言 owns "
-                        f"`{e.id}`——未定序时断言必须同时落在全部候选里（交集：{shown}），"
+                        f"`{r.target}`——未定序时断言必须同时落在全部候选里（交集：{shown}），"
                         "请拆开 when_sort、统一受方，或删掉这条断言"))
                 continue
             recipients = set().union(*(set(to) for _ev, _v, to in acts))
@@ -889,7 +889,7 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                         "CA709", "error", e.rel,
                         f"结论与流水打架：`{obj}` 在 when_sort={when:g} 归属未定序"
                         f"（同刻 {len(acts)} 笔 custody，保管人集合不同），卡上却断言 "
-                        f"custody_of `{e.id}`——未定序时断言必须同时落在全部候选里"
+                        f"custody_of `{obj}`——未定序时断言必须同时落在全部候选里"
                         f"（交集：{shown}），请拆开 when_sort、统一保管人，或删掉这条断言"))
                 continue
             recipients = set().union(*(set(to) for _ev, _v, to in acts))
