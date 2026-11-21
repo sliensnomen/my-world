@@ -1,7 +1,7 @@
 ---
 id: gh-customs
 title: 灰港关税
-type: event
+type: location
 author: tester
 date: 2026-09-23
 status: canon

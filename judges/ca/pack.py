@@ -96,6 +96,9 @@ PACK = Pack(
         Rule(id="CA405", pack="core-ca", scope="world", entry_domain="",
              check=refs.check_ca405, default_level="error",
              levels=frozenset({"error"}), order=405),
+        Rule(id="CA715", pack="core-ca", scope="world", entry_domain="",
+             check=refs.check_ca715, default_level="warning",
+             levels=frozenset({"warning"}), order=715),
         Rule(id="CA501", pack="core-ca", scope="entry", entry_domain="index_parseable",
              check=chain.check_ca501, default_level="error",
              levels=frozenset({"error"}), order=501),
@@ -150,6 +153,9 @@ PACK = Pack(
         Rule(id="CA713", pack="core-ca", scope="world", entry_domain="",
              check=ca_ledger.check_ca713, default_level="warning",
              levels=frozenset({"warning"}), order=713),
+        Rule(id="CA714", pack="core-ca", scope="world", entry_domain="",
+             check=ca_ledger.check_ca714, default_level="error",
+             levels=frozenset({"error"}), order=714),
     ),
 )
 

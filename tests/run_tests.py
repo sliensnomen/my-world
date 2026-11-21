@@ -1941,7 +1941,8 @@ def check_ledger_bad_world_fires_every_rule() -> list[str]:
     if err:
         problems.append(f"world-ledger-bad 把 traceback 写到了 stderr：\n{err}")
     for rule in ("CA701", "CA702", "CA703", "CA704", "CA705", "CA706", "CA708",
-                 "CA709", "CA710", "CA712", "CA713", "CA102", "CA401"):
+                 "CA709", "CA710", "CA712", "CA713", "CA714", "CA102",
+                 "CA401"):
         if f"[{rule}]" not in out:
             problems.append(f"world-ledger-bad 没有触发 {rule}（触发矩阵失效）：\n{out}")
     if code != 1:
@@ -3001,6 +3002,146 @@ def check_ca703_creation_exemption_is_first_transfer_only() -> list[str]:
     return problems
 
 
+def check_canon_card_referencing_non_canon() -> list[str]:
+    """#38 状态门禁：canon 卡通过 owns 引用 draft 目标 → CA715；目标升格后不报。"""
+    problems = []
+    body = "正文" * 120
+    canon = (_card("lord", "owns:\n  - relic\n", body=body)
+             .replace("type: location", "type: faction"))
+    draft = _card("relic", body=body, status="draft")
+    cases = {"draft 目标": (draft, True), "canon 目标": (_card("relic", body=body), False)}
+    for label, (target_card, want) in cases.items():
+        if not want:
+            target_card = target_card.replace("status: draft", "status: canon")
+        tmp, world = _temp_world(f"world-ca715-{label}-", {"lord": canon, "relic": target_card})
+        try:
+            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
+                            {"WGP_JUDGE_BACKEND": "legacy"}):
+                merged = dict(os.environ)
+                merged.update(backend)
+                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                    capture_output=True, text=True, env=merged)
+                hit = "[CA715]" in p1.stdout
+                if want and not hit:
+                    problems.append(f"{label}（{backend}）漏报 CA715：\n{p1.stdout}")
+                if not want and hit:
+                    problems.append(f"{label}（{backend}）误报 CA715：\n{p1.stdout}")
+        finally:
+            tmp.cleanup()
+    return problems
+
+
+def check_issue38_misc_shape_and_selfref() -> list[str]:
+    """#38 元数据/自指：title 空、author 非字符串、owns 自指都要报 CA109（双后端）。"""
+    problems = []
+    body = "正文" * 120
+    cases = {
+        "title 空": (_card("a", "title: \"\"\n", body=body), "CA109", "title"),
+        "author 非字符串": (_card("b", "author: 42\n", body=body), "CA109", "author"),
+        "owns 自指": (_card("c", "owns:\n  - c\n", body=body), "CA109", "自己"),
+    }
+    for label, (card, rule, needle) in cases.items():
+        tmp, world = _temp_world(f"world-misc-{label}-", {"card": card})
+        try:
+            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
+                            {"WGP_JUDGE_BACKEND": "legacy"}):
+                merged = dict(os.environ)
+                merged.update(backend)
+                p1 = subprocess.run([PY, str(TOOL), str(world), "--strict"],
+                                    cwd=ROOT, capture_output=True, text=True,
+                                    env=merged)
+                lines = [ln for ln in p1.stdout.splitlines() if f"[{rule}]" in ln]
+                if not lines or not any(needle in ln for ln in lines):
+                    problems.append(f"{label}（{backend}）漏报 {rule} {needle}：\n{p1.stdout}")
+        finally:
+            tmp.cleanup()
+    return problems
+
+
+def check_ca505_ignores_event_layer() -> list[str]:
+    """#38 泄压阀：`layer: fiscal` 的 event 卡不算「全库有财政」，非事件卡才算。"""
+    problems = []
+    body = "正文" * 120
+    fleet = (_card("fleet", "layer: military\nload_bearing: true\n", body=body)
+             .replace("type: location", "type: faction"))
+
+    def run(entries: dict[str, str], label: str) -> str:
+        tmp, world = _temp_world(f"world-ca505-{label}-", entries)
+        try:
+            out = []
+            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
+                            {"WGP_JUDGE_BACKEND": "legacy"}):
+                merged = dict(os.environ)
+                merged.update(backend)
+                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                    capture_output=True, text=True, env=merged)
+                out.append(p1.stdout)
+            return "\n".join(out)
+        finally:
+            tmp.cleanup()
+
+    fiscal_event = (_card("ev-fiscal", "layer: fiscal\nwhen: 元年\n"
+                          "event_kind: modify\nwhen_sort: 1\nobject:\n  - fleet\n",
+                          body=body).replace("type: location", "type: event"))
+    if "[CA505]" not in run({"fleet": fleet, "ev-fiscal": fiscal_event}, "event"):
+        problems.append("财政只挂在一张 event 卡上，CA505 仍应报（event 不算财政）")
+    fiscal_card = _card("customs", "layer: fiscal\n", body=body)
+    if "[CA505]" in run({"fleet": fleet, "customs": fiscal_card}, "card"):
+        problems.append("财政挂在非事件卡上，CA505 不应报")
+    return problems
+
+
+def check_endpoint_events_are_unique() -> list[str]:
+    """#38 端点类：CA714 拦住重复出生/重复死亡/先死后生/transform 越界。"""
+    problems = []
+    body = "正文" * 120
+
+    def ev(eid: str, kind: str, when: float, legs: str = "") -> str:
+        return (_card(eid, f"when: 元年\nevent_kind: {kind}\nwhen_sort: {when}\n"
+                           + legs, body=body)
+                .replace("type: location", "type: event"))
+
+    def check(label: str, entries: dict[str, str], want: bool) -> None:
+        tmp, world = _temp_world(f"world-endpoint-{label}-", entries)
+        try:
+            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
+                            {"WGP_JUDGE_BACKEND": "legacy"}):
+                merged = dict(os.environ)
+                merged.update(backend)
+                p1 = subprocess.run([PY, str(TOOL), str(world), "--strict"],
+                                    cwd=ROOT, capture_output=True, text=True,
+                                    env=merged)
+                hit = "[CA714]" in p1.stdout
+                if want and not hit:
+                    problems.append(f"{label}（{backend}）漏报 CA714：\n{p1.stdout}")
+                if not want and hit:
+                    problems.append(f"{label}（{backend}）误报 CA714：\n{p1.stdout}")
+        finally:
+            tmp.cleanup()
+
+    base = {"obj": _card("obj", "type: item\n", body=body)}
+    check("重复出生",
+          {**base, "b1": ev("b1", "birth", 1, "object:\n  - obj\n"),
+           "b2": ev("b2", "create", 2, "object:\n  - obj\n")}, True)
+    check("先死后生",
+          {**base, "d1": ev("d1", "death", 1, "object:\n  - obj\n"),
+           "b2": ev("b2", "birth", 2, "object:\n  - obj\n")}, True)
+    check("transform result 早已出生",
+          {**base, "r": _card("r", "type: item\n", body=body),
+           "b1": ev("b1", "birth", 1, "object:\n  - r\n"),
+           "t1": ev("t1", "transform", 3,
+                    "object:\n  - obj\nresult:\n  - r\n")}, True)
+    check("销毁后再 transform",
+          {**base, "r": _card("r", "type: item\n", body=body),
+           "d1": ev("d1", "destroy", 1, "object:\n  - obj\n"),
+           "t1": ev("t1", "transform", 3,
+                    "object:\n  - obj\nresult:\n  - r\n")}, True)
+    check("正常端点链",
+          {**base, "b1": ev("b1", "birth", 1, "object:\n  - obj\n"),
+           "d1": ev("d1", "death", 2, "object:\n  - obj\n")}, False)
+    return problems
+
+
 def check_ledger_report_surfaces_certainty_and_ledger_rules() -> list[str]:
     """#48：`canonlint ledger` 报告必须带确定度三态、且「账本族告警」不止 CA703/704/705。"""
     problems = []
@@ -3748,11 +3889,12 @@ def check_registry_ca_dual_run() -> list[str]:
         "CA501", "CA502", "CA503", "CA504", "CA505",
         "CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
         "CA707", "CA708", "CA709", "CA710", "CA711", "CA712", "CA713",
+        "CA714", "CA715",
     }
     world_rules = {
         "CA114", "CA201", "CA403", "CA405", "CA502", "CA504", "CA505",
         "CA701", "CA703", "CA704", "CA705", "CA707", "CA708", "CA709",
-        "CA710", "CA711", "CA712", "CA713",
+        "CA710", "CA711", "CA712", "CA713", "CA714", "CA715",
     }
     index_rules = {"CA501", "CA503"}
     try:
@@ -4095,6 +4237,10 @@ def main() -> int:
         ("issue #50：扁平散文不误报、entries 子目录卡不被跳过",
          check_layout_scanning_is_content_based),
         ("issue #52：CLI 写卡写后自检，红则回滚", check_cli_write_runs_post_audit),
+        ("issue #38 端点类：CA714 重复/顺序端点事件", check_endpoint_events_are_unique),
+        ("issue #38 元数据/自指：title/author 类型与关系自指", check_issue38_misc_shape_and_selfref),
+        ("issue #38 状态门禁：canon 卡引用非 canon 目标报 CA715", check_canon_card_referencing_non_canon),
+        ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),

@@ -518,7 +518,7 @@ ai_assisted: false
 open("world-clean/entries/grain-belt.md", "w").write(
     fm % ("grain-belt", "谷带平原", "location", "geo", "[]", "[]") + body1)
 open("world-clean/entries/gh-customs.md", "w").write(
-    fm % ("gh-customs", "灰港关税", "event", "fiscal", "[grain-belt]",
+    fm % ("gh-customs", "灰港关税", "location", "fiscal", "[grain-belt]",
           "\n  - id: grain-belt\n    kind: economy\n    critical: true") + body2)
 open("world-clean/entries/gh-fleet.md", "w").write(
     fm % ("gh-fleet", "灰港舰队", "faction", "military", "[gh-customs]",

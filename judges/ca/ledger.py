@@ -350,8 +350,53 @@ def check_ca713(world: dict, emit) -> None:
                 recipient[obj] = (holder, view.when_sort)
 
 
+def check_ca714(world: dict, emit) -> None:
+    """端点事件不唯一或顺序矛盾（#38 端点类）。"""
+    index = world["index"]
+    events = event_ledger.ordered_events(index)
+    created: dict[str, tuple[float, str]] = {}
+    ended: dict[str, tuple[float, str]] = {}
+    for e, view in events:
+        if view.kind in ("birth", "create"):
+            for obj in view.legs.get("object", []):
+                if obj in created:
+                    emit("error", e.rel,
+                         f"端点事件不唯一：`{obj}` 已有开始事件 `{created[obj][1]}`"
+                         f"（when_sort={created[obj][0]:g}），又出现 `{e.id}`"
+                         f"（when_sort={view.when_sort:g}）——出生/创造只能发生一次")
+                elif obj in ended:
+                    emit("error", e.rel,
+                         f"先死后生：`{obj}` 在 when_sort={ended[obj][0]:g} 已死/被毁"
+                         f"（`{ended[obj][1]}`），when_sort={view.when_sort:g} 又出生")
+                created.setdefault(obj, (view.when_sort, e.id))
+        elif view.kind in ("death", "destroy"):
+            for obj in view.legs.get("object", []):
+                if obj in ended:
+                    emit("error", e.rel,
+                         f"端点事件不唯一：`{obj}` 已有结束事件 `{ended[obj][1]}`"
+                         f"（when_sort={ended[obj][0]:g}），又出现 `{e.id}`"
+                         f"（when_sort={view.when_sort:g}）——死亡/销毁只能发生一次")
+                ended.setdefault(obj, (view.when_sort, e.id))
+        elif view.kind == "transform":
+            for obj in view.legs.get("object", []):
+                if obj in ended and ended[obj][0] < view.when_sort:
+                    emit("error", e.rel,
+                         f"已销毁的客体又被 transform：`{obj}` 在 when_sort="
+                         f"{ended[obj][0]:g} 已死/被毁（`{ended[obj][1]}`）")
+            for res in view.legs.get("result", []):
+                if res in created and created[res][0] <= view.when_sort:
+                    emit("error", e.rel,
+                         f"transform 的 result 早已存在：`{res}` 在 when_sort="
+                         f"{created[res][0]:g} 已有开始事件（`{created[res][1]}`），"
+                         f"transform（`{e.id}` when_sort={view.when_sort:g}）不能再创造它")
+                if res in ended and ended[res][0] <= view.when_sort:
+                    emit("error", e.rel,
+                         f"transform 的 result 已经终结：`{res}` 在 when_sort="
+                         f"{ended[res][0]:g} 已死/被毁（`{ended[res][1]}`）")
+
+
 SCHEDULE = ("CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
-            "CA709", "CA710", "CA712", "CA711", "CA713")
+            "CA709", "CA710", "CA712", "CA711", "CA713", "CA714")
 
 
 def apply(run_world) -> None:

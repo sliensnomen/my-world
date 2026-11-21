@@ -137,6 +137,13 @@ def check_ca109(e: Entry, rel: str, add, phase: str = "all", error=None) -> None
             add("error", error.msg)
         return
     if phase in ("all", "booleans"):
+        for edge in e.relations:
+            if edge.target == e.id:
+                add("error", f"{edge.type} 指向自己：关系不能自指（自指在引用检查之外）")
+        for field in ("title", "author"):
+            if field in e.meta and (not isinstance(e.meta[field], str)
+                                    or not e.meta[field].strip()):
+                add("error", f"{field}={e.meta[field]!r} 必须是非空字符串")
         for field in ("load_bearing", "ai_assisted"):
             if field in e.meta and not isinstance(e.meta[field], bool):
                 add("error", f"{field}={e.meta[field]!r} 必须是 bool（true/false）")
