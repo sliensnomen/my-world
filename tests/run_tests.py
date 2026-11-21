@@ -2955,6 +2955,52 @@ def check_layer_shape_does_not_crash() -> list[str]:
     return problems
 
 
+def check_x_kind_cycles_are_reported() -> list[str]:
+    """#38 52–56：x- 是泄压阀，但 x- 类别成环/自环不能被 CA502 静默。"""
+    problems = []
+    cards = {
+        "a": _card("a", (
+            "load_bearing: true\nlayer: economy\n"
+            "depends_on:\n  - id: b\n    kind: x-loop\n    critical: true\n"
+        ), load_bearing=True, body=_issue38_body("a")).replace(
+            "type: location", "type: faction"),
+        "b": _card("b", (
+            "load_bearing: true\nlayer: economy\n"
+            "depends_on:\n  - id: a\n    kind: x-loop\n    critical: true\n"
+        ), load_bearing=True, body=_issue38_body("b")).replace(
+            "type: location", "type: faction"),
+        "c": _card("c", (
+            "load_bearing: true\nlayer: economy\n"
+            "depends_on:\n  - id: c\n    kind: x-loop\n    critical: true\n"
+        ), load_bearing=True, body=_issue38_body("c")).replace(
+            "type: location", "type: faction"),
+        "d": _card("d", (
+            "load_bearing: true\nlayer: economy\n"
+            "depends_on:\n  - id: e\n    kind: x-loop\n    critical: true\n"
+        ), load_bearing=True, body=_issue38_body("d")).replace(
+            "type: location", "type: faction"),
+        "e": _card("e", "load_bearing: true\nlayer: resource\n",
+                   load_bearing=True, body=_issue38_body("e")).replace(
+            "type: location", "type: faction"),
+    }
+    tmp, world = _temp_world("canonlint-x-kind-cycle-", cards)
+    with tmp:
+        for label, env in (("registry", None),
+                           ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+            if env is None:
+                code, out, err = _judge(world)
+            else:
+                code, out, err = _judge_env(world, env)
+            if "Traceback" in err:
+                problems.append(f"x- 成环（{label}）写出了 traceback：\n{err}")
+            if code != 1:
+                problems.append(f"x- 成环（{label}）应因 CA502 exit 1，实际 {code}")
+            if out.count("[CA502]") != 2:
+                problems.append(
+                    f"x- 成环（{label}）应报 2 个环（a↔b、c 自环）且不把 d→e 误报，实际：\n{out}")
+    return problems
+
+
 def check_ca703_creation_exemption_is_first_transfer_only() -> list[str]:
     """#42：create/birth 只豁免第一笔转手；之后 from 必须命中持有证据。"""
     problems = []
@@ -4240,6 +4286,7 @@ def main() -> int:
         ("issue #38 端点类：CA714 重复/顺序端点事件", check_endpoint_events_are_unique),
         ("issue #38 元数据/自指：title/author 类型与关系自指", check_issue38_misc_shape_and_selfref),
         ("issue #38 状态门禁：canon 卡引用非 canon 目标报 CA715", check_canon_card_referencing_non_canon),
+        ("issue #38 x- 实验类别成环也要报 CA502", check_x_kind_cycles_are_reported),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
