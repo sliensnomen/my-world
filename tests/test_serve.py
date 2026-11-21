@@ -810,9 +810,9 @@ def check_并发写不互删():
                 outcomes.append((tag, code))
 
         for i in range(rounds):
-            good = {"event_kind": "create", "id": f"good-{i}",
+            good = {"event_kind": "modify", "id": f"good-{i}",
                     "when": "元年", "when_sort": i, "object": ["relic"]}
-            bad = {"event_kind": "create", "id": f"bad-{i}",
+            bad = {"event_kind": "modify", "id": f"bad-{i}",
                    "when": "元年", "when_sort": i, "object": ["ghost-item"]}
             threads = [threading.Thread(target=fire, args=("good", good)),
                        threading.Thread(target=fire, args=("bad", bad))]

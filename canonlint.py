@@ -50,7 +50,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.19"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）
+PROTOCOL_VERSION = "1.20"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -566,6 +566,56 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
                 color[node] = BLACK
 
 
+def check_endpoints(index: dict[str, Entry], findings: list[Finding]) -> None:
+    """CA714：端点事件不唯一或顺序矛盾（#38 端点类，与 registry 同文案）。"""
+    events = ledger.ordered_events(index)
+    created: dict[str, tuple[float, str]] = {}
+    ended: dict[str, tuple[float, str]] = {}
+    for e, view in events:
+        if view.kind in ("birth", "create"):
+            for obj in view.legs.get("object", []):
+                if obj in created:
+                    findings.append(Finding(
+                        "CA714", "error", e.rel,
+                        f"端点事件不唯一：`{obj}` 已有开始事件 `{created[obj][1]}`"
+                        f"（when_sort={created[obj][0]:g}），又出现 `{e.id}`"
+                        f"（when_sort={view.when_sort:g}）——出生/创造只能发生一次"))
+                elif obj in ended:
+                    findings.append(Finding(
+                        "CA714", "error", e.rel,
+                        f"先死后生：`{obj}` 在 when_sort={ended[obj][0]:g} 已死/被毁"
+                        f"（`{ended[obj][1]}`），when_sort={view.when_sort:g} 又出生"))
+                created.setdefault(obj, (view.when_sort, e.id))
+        elif view.kind in ("death", "destroy"):
+            for obj in view.legs.get("object", []):
+                if obj in ended:
+                    findings.append(Finding(
+                        "CA714", "error", e.rel,
+                        f"端点事件不唯一：`{obj}` 已有结束事件 `{ended[obj][1]}`"
+                        f"（when_sort={ended[obj][0]:g}），又出现 `{e.id}`"
+                        f"（when_sort={view.when_sort:g}）——死亡/销毁只能发生一次"))
+                ended.setdefault(obj, (view.when_sort, e.id))
+        elif view.kind == "transform":
+            for obj in view.legs.get("object", []):
+                if obj in ended and ended[obj][0] < view.when_sort:
+                    findings.append(Finding(
+                        "CA714", "error", e.rel,
+                        f"已销毁的客体又被 transform：`{obj}` 在 when_sort="
+                        f"{ended[obj][0]:g} 已死/被毁（`{ended[obj][1]}`）"))
+            for res in view.legs.get("result", []):
+                if res in created and created[res][0] <= view.when_sort:
+                    findings.append(Finding(
+                        "CA714", "error", e.rel,
+                        f"transform 的 result 早已存在：`{res}` 在 when_sort="
+                        f"{created[res][0]:g} 已有开始事件（`{created[res][1]}`），"
+                        f"transform（`{e.id}` when_sort={view.when_sort:g}）不能再创造它"))
+                if res in ended and ended[res][0] <= view.when_sort:
+                    findings.append(Finding(
+                        "CA714", "error", e.rel,
+                        f"transform 的 result 已经终结：`{res}` 在 when_sort="
+                        f"{ended[res][0]:g} 已死/被毁（`{ended[res][1]}`）"))
+
+
 def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
     """CA7xx 的跨条目部分：时序与账平。缺 when_sort 一律 fail-open（D2）。
 
@@ -940,6 +990,8 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                         holder = UNDETERMINED_OWNER
                 recipient[obj] = (holder, v.when_sort)
             # to 缺失/为空：CA702 已报，落点不动
+
+    check_endpoints(index, findings)
 
 
 def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:
