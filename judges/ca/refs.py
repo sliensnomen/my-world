@@ -115,6 +115,55 @@ def check_ca405(world: dict, emit) -> None:
              f"archived 条目仍被 canon_refs 引用，但{why}——降级处置不完整")
 
 
+def check_ca718(world: dict, emit) -> None:
+    """CA718：承接链状态/类型/环（#38 承接链 P0）。
+
+    CA405 只管「有没有可迁移的承接者」；这里管承接者本身站不站得住：
+    承接者没定档、类型对不上（法典由一把剑承接）、或者互相承接成环，都报 error。
+    """
+    index = world["index"]
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        successor = e.meta.get("superseded_by")
+        if not isinstance(successor, str) or not successor or successor == e.id:
+            continue
+        target = index.get(successor)
+        if target is None or target.parse_error:
+            continue  # 悬空由 CA401/CA405 管
+        if target.meta.get("status") != "canon":
+            emit("error", e.rel,
+                 f"承接者未定档：`{e.id}` 的承接者 `{successor}` 状态为"
+                 f" {target.meta.get('status')}——承接链要落在已定档条目上，请先升格")
+        if target.meta.get("type") != e.meta.get("type"):
+            emit("error", e.rel,
+                 f"承接者类型不符：`{e.id}`（{e.meta.get('type')}）由 `{successor}`"
+                 f"（{target.meta.get('type')}）承接——承接条目必须与原条目同类")
+    # 环：沿着 superseded_by 走，回到走过的点就是死循环（draft→draft 也走）
+    seen_cycles: set[frozenset[str]] = set()
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        path: list[str] = []
+        cur = e
+        while True:
+            nxt = cur.meta.get("superseded_by")
+            if not isinstance(nxt, str) or not nxt or nxt == cur.id:
+                break
+            if nxt in path:
+                cycle = path[path.index(nxt):]
+                key = frozenset(cycle)
+                if key not in seen_cycles:
+                    seen_cycles.add(key)
+                    emit("error", cur.rel,
+                         f"承接链成环：{' → '.join(cycle + [nxt])}——降级处置没有终点")
+                break
+            path.append(nxt)
+            cur = index.get(nxt)
+            if cur is None or cur.parse_error:
+                break
+
+
 def check_ca403(world: dict, emit) -> None:
     index = world["index"]
     for e in index.values():
@@ -187,3 +236,4 @@ def apply(entries, index, run_entry, run_world) -> None:
     run_world("CA715")
     run_world("CA405")
     run_world("CA403")
+    run_world("CA718")
