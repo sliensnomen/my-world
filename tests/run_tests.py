@@ -3036,6 +3036,36 @@ def check_x_kind_cycles_are_reported() -> list[str]:
     return problems
 
 
+def check_ca201_catches_short_exact_duplicates() -> list[str]:
+    """#38：96 字的完全重复正文不再因「低于 100 字」静默。"""
+    problems = []
+    body = "同一段正文" * 16  # 80 字
+    cards = {
+        "a-dup": _card("a-dup", status="canon", body=body),
+        "b-dup": _card("b-dup", status="canon", body=body),
+    }
+    tmp, world = _temp_world("canonlint-ca201-short-", cards)
+    with tmp:
+        for label, env in (("registry", None),
+                           ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+            if env is None:
+                _, out, _ = _judge(world)
+            else:
+                _, out, _ = _judge_env(world, env)
+            if "[CA201]" not in out:
+                problems.append(f"短正文精确重复（{label}）漏报 CA201：\n{out}")
+    # 反面：不同的短正文不报
+    tmp2, world2 = _temp_world("canonlint-ca201-short-ok-", {
+        "a-dup": _card("a-dup", status="canon", body=body),
+        "b-dup": _card("b-dup", status="canon", body="另一段不同的正文" * 10),
+    })
+    with tmp2:
+        _, out, _ = _judge(world2)
+        if "[CA201]" in out:
+            problems.append(f"不同的短正文误报 CA201：\n{out}")
+    return problems
+
+
 def check_when_and_when_sort_must_agree() -> list[str]:
     """#38：when 是数字时，故事时间与 when_sort 方向不能相反（CA716 warning）。"""
     problems = []
@@ -4360,6 +4390,7 @@ def main() -> int:
         ("issue #38 状态门禁：canon 卡引用非 canon 目标报 CA715", check_canon_card_referencing_non_canon),
         ("issue #38 x- 实验类别成环也要报 CA502", check_x_kind_cycles_are_reported),
         ("issue #38 when 与 when_sort 反向报 CA716", check_when_and_when_sort_must_agree),
+        ("issue #38 短正文精确重复也报 CA201", check_ca201_catches_short_exact_duplicates),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
