@@ -639,9 +639,14 @@ def check_治理端点的升格降级与回滚():
         assert code == 422, f"无承接者的降级应 422，实际 {code}：{body[:300]}"
         assert path.read_bytes() == before, "CA405 红了的降级没被回滚"
         # 没人引用、有承接者的降级 → 放行（降级处置完整的合法形态）
+        # #38 CA718：承接者必须已定档——先把 new-lore 升到 canon，再降级 reader-card。
         code, body, _ = post(f"{base}/api/entry",
                              {"type": "event", "title": "承接者", "id": "new-lore"})
         assert code == 201, body[:300]
+        for st in ("trial", "canon"):
+            code, body, _ = post(f"{base}/api/status",
+                                 {"id": "new-lore", "status": st})
+            assert code == 200, f"new-lore 升格到 {st} 失败：{code} {body[:300]}"
         for st in ("trial", "canon"):
             code, body, _ = post(f"{base}/api/status",
                                  {"id": "reader-card", "status": st})

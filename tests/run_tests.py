@@ -3069,6 +3069,48 @@ def check_ca201_catches_short_exact_duplicates() -> list[str]:
     return problems
 
 
+def check_supersede_chain_is_checked() -> list[str]:
+    """#38 承接链：承接者必须已定档、同类型、不成环（CA718）。"""
+    problems = []
+
+    def typed(eid: str, t: str, extra: str = "") -> str:
+        return _card(eid, extra).replace("type: location", f"type: {t}")
+
+    cases = [
+        ("承接者未定档", {
+            "old": typed("old", "event", "status: archived\nsuperseded_by: succ\n"),
+            "succ": typed("succ", "event", "status: draft\n"),
+        }, "CA718", True),
+        ("承接者类型不符", {
+            "old": typed("old", "event", "status: archived\nsuperseded_by: sword\n"),
+            "sword": typed("sword", "item", "status: canon\n"),
+        }, "CA718", True),
+        ("承接链成环", {
+            "a": typed("a", "event", "status: archived\nsuperseded_by: b\n"),
+            "b": typed("b", "event", "status: archived\nsuperseded_by: a\n"),
+        }, "CA718", True),
+        ("正常承接", {
+            "old": typed("old", "event", "status: archived\nsuperseded_by: succ\n"),
+            "succ": typed("succ", "event", "status: canon\n"),
+        }, "CA718", False),
+    ]
+    for label, cards, rule, want in cases:
+        tmp, world = _temp_world("canonlint-ca718-", cards)
+        with tmp:
+            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
+                            {"WGP_JUDGE_BACKEND": "legacy"}):
+                merged = dict(os.environ)
+                merged.update(backend)
+                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                    capture_output=True, text=True, env=merged)
+                hit = f"[{rule}]" in p1.stdout
+                if want and not hit:
+                    problems.append(f"{label}（{backend}）漏报 {rule}：\n{p1.stdout}")
+                if not want and hit:
+                    problems.append(f"{label}（{backend}）误报 {rule}：\n{p1.stdout}")
+    return problems
+
+
 def check_event_leg_types_are_checked() -> list[str]:
     """#38：事件腿指向的实体类型必须与事件语义相符（CA717）。"""
     problems = []
@@ -4088,12 +4130,13 @@ def check_registry_ca_dual_run() -> list[str]:
         "CA501", "CA502", "CA503", "CA504", "CA505",
         "CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
         "CA707", "CA708", "CA709", "CA710", "CA711", "CA712", "CA713",
-        "CA714", "CA715", "CA716", "CA717",
+        "CA714", "CA715", "CA716", "CA717", "CA718",
     }
     world_rules = {
         "CA114", "CA201", "CA403", "CA405", "CA502", "CA504", "CA505",
         "CA701", "CA703", "CA704", "CA705", "CA707", "CA708", "CA709",
         "CA710", "CA711", "CA712", "CA713", "CA714", "CA715", "CA716", "CA717",
+        "CA718",
     }
     index_rules = {"CA501", "CA503"}
     try:
@@ -4443,6 +4486,7 @@ def main() -> int:
         ("issue #38 when 与 when_sort 反向报 CA716", check_when_and_when_sort_must_agree),
         ("issue #38 短正文精确重复也报 CA201", check_ca201_catches_short_exact_duplicates),
         ("issue #38 事件腿类型与事件语义对不上报 CA717", check_event_leg_types_are_checked),
+        ("issue #38 承接链要落在定档且同类的条目上（CA718）", check_supersede_chain_is_checked),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),

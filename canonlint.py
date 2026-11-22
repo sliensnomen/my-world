@@ -51,7 +51,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.27"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id；1.25：#38 新增 CA716（when 数字与 when_sort 反向）；1.26：#38 CA201 精确短重复不设长度豁免；1.27：#38 事件腿类型表 CA717（by/join/move/birth/destroy 等）
+PROTOCOL_VERSION = "1.28"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id；1.25：#38 新增 CA716（when 数字与 when_sort 反向）；1.26：#38 CA201 精确短重复不设长度豁免；1.27：#38 事件腿类型表 CA717（by/join/move/birth/destroy 等）；1.28：#38 承接链 CA718（承接者须已定档、同类、无环）
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -501,6 +501,58 @@ def check_refs(entries: list[Entry], index: dict[str, Entry],
                 continue  # 本方对象式 = 有意不对称
             findings.append(Finding("CA403", "warning", e.rel,
                                     f"与 `{ref.target}` 的矛盾标注不对称（对方未回指）"))
+
+    check_supersede_chain(index, findings)
+
+
+def check_supersede_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
+    """CA718：承接链状态/类型/环（#38 承接链 P0）。
+
+    CA405 只管「有没有可迁移的承接者」；这里管承接者本身站不站得住：
+    承接者没定档、类型对不上（法典由一把剑承接）、或者互相承接成环，都报 error。
+    """
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        successor = e.meta.get("superseded_by")
+        if not isinstance(successor, str) or not successor or successor == e.id:
+            continue
+        target = index.get(successor)
+        if target is None or target.parse_error:
+            continue  # 悬空由 CA401/CA405 管
+        if target.meta.get("status") != "canon":
+            findings.append(Finding(
+                "CA718", "error", e.rel,
+                f"承接者未定档：`{e.id}` 的承接者 `{successor}` 状态为"
+                f" {target.meta.get('status')}——承接链要落在已定档条目上，请先升格"))
+        if target.meta.get("type") != e.meta.get("type"):
+            findings.append(Finding(
+                "CA718", "error", e.rel,
+                f"承接者类型不符：`{e.id}`（{e.meta.get('type')}）由 `{successor}`"
+                f"（{target.meta.get('type')}）承接——承接条目必须与原条目同类"))
+    seen_cycles: set[frozenset[str]] = set()
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        path: list[str] = []
+        cur = e
+        while True:
+            nxt = cur.meta.get("superseded_by")
+            if not isinstance(nxt, str) or not nxt or nxt == cur.id:
+                break
+            if nxt in path:
+                cycle = path[path.index(nxt):]
+                key = frozenset(cycle)
+                if key not in seen_cycles:
+                    seen_cycles.add(key)
+                    findings.append(Finding(
+                        "CA718", "error", cur.rel,
+                        f"承接链成环：{' → '.join(cycle + [nxt])}——降级处置没有终点"))
+                break
+            path.append(nxt)
+            cur = index.get(nxt)
+            if cur is None or cur.parse_error:
+                break
 
 
 def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
