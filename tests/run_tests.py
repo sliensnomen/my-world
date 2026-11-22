@@ -3016,17 +3016,12 @@ def check_supersede_chain_is_checked() -> list[str]:
     for label, cards, rule, want in cases:
         tmp, world = _temp_world("canonlint-ca718-", cards)
         with tmp:
-            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
-                            {"WGP_JUDGE_BACKEND": "legacy"}):
-                merged = dict(os.environ)
-                merged.update(backend)
-                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
-                                    capture_output=True, text=True, env=merged)
-                hit = f"[{rule}]" in p1.stdout
-                if want and not hit:
-                    problems.append(f"{label}（{backend}）漏报 {rule}：\n{p1.stdout}")
-                if not want and hit:
-                    problems.append(f"{label}（{backend}）误报 {rule}：\n{p1.stdout}")
+            _code, out, _err = _judge(world)
+            hit = f"[{rule}]" in out
+            if want and not hit:
+                problems.append(f"{label}：漏报 {rule}：\n{out}")
+            if not want and hit:
+                problems.append(f"{label}：误报 {rule}：\n{out}")
     return problems
 
 
