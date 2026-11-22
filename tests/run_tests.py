@@ -2988,6 +2988,56 @@ def check_ca201_catches_short_exact_duplicates() -> list[str]:
     return problems
 
 
+def check_member_chain_is_paired() -> list[str]:
+    """#38 成员链：leave 之前必须有过 join，或用 member_of 说明初始成员。"""
+    problems = []
+
+    def card(eid: str, t: str, extra: str = "") -> str:
+        return _card(eid, extra).replace("type: location", f"type: {t}")
+
+    def ev(extra: str) -> str:
+        return _card("ev-x", extra).replace("type: location", "type: event")
+
+    org = card("org", "faction")
+    person = card("alice", "character")
+    lone = card("bob", "character")
+    member_of = card("carol", "character", "member_of: [org]\n")
+    base = {"org": org, "alice": person, "bob": lone, "carol": member_of}
+
+    cases = [
+        ("leave 无 join", dict(base, **{"leave-1": ev(
+            "id: leave-1\ntype: event\nevent_kind: leave\nwhen: \"297 AC\"\n"
+            "when_sort: 297\nby:\n  - bob\nfrom:\n  - org\n")}), "CA719", True),
+        ("join 后 leave", dict(base,
+            **{"join-1": ev(
+                "id: join-1\ntype: event\nevent_kind: join\nwhen: \"293 AC\"\n"
+                "when_sort: 293\nby:\n  - alice\nto:\n  - org\n")},
+            **{"leave-1": ev(
+                "id: leave-1\ntype: event\nevent_kind: leave\nwhen: \"297 AC\"\n"
+                "when_sort: 297\nby:\n  - alice\nfrom:\n  - org\n")}), "CA719", False),
+        ("member_of 初始成员", dict(base, **{"leave-1": ev(
+            "id: leave-1\ntype: event\nevent_kind: leave\nwhen: \"297 AC\"\n"
+            "when_sort: 297\nby:\n  - carol\nfrom:\n  - org\n")}), "CA719", False),
+        ("同刻 join/leave 未定序", dict(base,
+            **{"join-1": ev(
+                "id: join-1\ntype: event\nevent_kind: join\nwhen: \"297 AC\"\n"
+                "when_sort: 297\nby:\n  - bob\nto:\n  - org\n")},
+            **{"leave-1": ev(
+                "id: leave-1\ntype: event\nevent_kind: leave\nwhen: \"297 AC\"\n"
+                "when_sort: 297\nby:\n  - bob\nfrom:\n  - org\n")}), "CA719", False),
+    ]
+    for label, cards, rule, want in cases:
+        tmp, world = _temp_world("canonlint-ca719-", cards)
+        with tmp:
+            _code, out, _err = _judge(world)
+            hit = f"[{rule}]" in out
+            if want and not hit:
+                problems.append(f"{label}：漏报 {rule}：\n{out}")
+            if not want and hit:
+                problems.append(f"{label}：误报 {rule}：\n{out}")
+    return problems
+
+
 def check_supersede_chain_is_checked() -> list[str]:
     """#38 承接链：承接者必须已定档、同类型、不成环（CA718）。"""
     problems = []
@@ -3668,12 +3718,13 @@ def check_registry_core_ca_pack() -> list[str]:
         "CA501", "CA502", "CA503", "CA504", "CA505",
         "CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
         "CA707", "CA708", "CA709", "CA710", "CA711", "CA712", "CA713",
-        "CA714", "CA715", "CA716", "CA717", "CA718",
+        "CA714", "CA715", "CA716", "CA717", "CA718", "CA719",
     }
     world_rules = {
         "CA114", "CA201", "CA403", "CA405", "CA502", "CA504", "CA505",
         "CA701", "CA703", "CA704", "CA705", "CA707", "CA708", "CA709",
         "CA710", "CA711", "CA712", "CA713", "CA714", "CA715", "CA716", "CA717",
+        "CA718", "CA719",
         "CA718",
     }
     index_rules = {"CA501", "CA503"}
@@ -3916,6 +3967,7 @@ def main() -> int:
         ("issue #38 短正文精确重复也报 CA201", check_ca201_catches_short_exact_duplicates),
         ("issue #38 事件腿类型与事件语义对不上报 CA717", check_event_leg_types_are_checked),
         ("issue #38 承接链要落在定档且同类的条目上（CA718）", check_supersede_chain_is_checked),
+        ("issue #38 成员链 join/leave 必须配对（CA719）", check_member_chain_is_paired),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
