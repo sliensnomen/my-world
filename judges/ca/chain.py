@@ -62,14 +62,9 @@ def check_ca505(world: dict, emit) -> None:
 
 def check_ca502(world: dict, emit) -> None:
     index = world["index"]
-    # CA502 纳入物质族与 x- 实验类别（#38 52–56：x- 是泄压阀，但成环不是）。
-    def _cycle_kind(kind) -> bool:
-        return kind in KIND_INITIAL_SET or (
-            isinstance(kind, str) and kind.startswith("x-"))
-
     graph = {
         e.id: [dep.target for dep in e.edges_of("depends_on")
-               if dep.target in index and _cycle_kind(dep.attrs.get("kind"))]
+               if dep.target in index and dep.attrs.get("kind") in KIND_INITIAL_SET]
         for e in index.values() if not e.parse_error and e.id
     }
     white, gray, black = 0, 1, 2
@@ -90,7 +85,7 @@ def check_ca502(world: dict, emit) -> None:
                     if key not in reported_cycles:
                         reported_cycles.add(key)
                         emit("error", index[node].rel,
-                             f"depends_on 存在环（物质族或实验类别）: {' → '.join(cycle)}")
+                             f"depends_on 存在环（物质族）: {' → '.join(cycle)}")
                 elif color.get(next_id) == white:
                     color[next_id] = gray
                     stack.append((next_id, path + [next_id]))

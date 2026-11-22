@@ -17,7 +17,7 @@ exit=1
 [CA405] error   entries/old-tax.md: archived 条目仍被 canon_refs 引用，但未填 `superseded_by`（没有可迁移的承接条目）——降级处置不完整
 [CA501] error   entries/coup-ledger.md: depends_on 目标 `council` 层级 political（序号 6）高于本条目 military（序号 5）
 [CA501] error   entries/harbor-watch.md: depends_on 目标 `gh-memo` 没有可比较的 layer——物质族承重依赖的锚点必须有 layer，否则层级方向无法判定
-[CA502] error   entries/ring-b.md: depends_on 存在环（物质族或实验类别）: ring-a → ring-b → ring-a
+[CA502] error   entries/ring-b.md: depends_on 存在环（物质族）: ring-a → ring-b → ring-a
 [CA104] warning entries/council.md: 正文 21 字，canon 档建议 ≥200 字
 [CA104] warning entries/coup-ledger.md: 正文 31 字，trial 档建议 ≥200 字
 [CA104] warning entries/gh-customs.md: 正文 55 字，canon 档建议 ≥200 字
