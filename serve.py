@@ -561,7 +561,13 @@ code{{background:#f2f2f2;padding:.1em .3em;border-radius:3px}}td{{padding:.2rem 
 def make_server(root: Path, host: str, port: int, packs=(), extra_known=frozenset(),
                 quiet: bool = False, writable: bool = False,
                 token: str | None = None, write_log: Path | None = None) -> ThreadingHTTPServer:
-    """起一个 server（不阻塞）。端口给 0 = 让系统随便挑一个空端口。"""
+    """起一个 server（不阻塞）。端口给 0 = 让系统随便挑一个空端口。
+
+    packs 为空时按默认选择（core-ca）加载——直接调工厂函数的调用方（测试、嵌入）
+    不该被迫先学会 Pack 加载。
+    """
+    if not packs:
+        packs, extra_known = canonlint._load_packs([])
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.wgp_root = root.resolve()            # type: ignore[attr-defined]
     httpd.wgp_packs = tuple(packs)             # type: ignore[attr-defined]

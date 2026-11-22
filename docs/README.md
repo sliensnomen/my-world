@@ -52,10 +52,10 @@
 | [docs/代码评审报告-测试.md](代码评审报告-测试.md) | 评审过程 | 历史 | 测试名实一致性与 CI 评审 | 以评审锚点为准，不改写 verdict |
 | [docs/代码评审报告-对账.md](代码评审报告-对账.md) | 评审过程 | 历史 | 契约、代码、测试、文档四方对账 | 以评审锚点为准，修复记录保留原貌 |
 | [docs/代码评审报告-事件流水与可写接口.md](代码评审报告-事件流水与可写接口.md) | 评审过程 | 历史 | 协议 1.7 时期事件与写接口评审 | 后续修复见提交史，不改写 verdict |
-| [docs/代码评审报告-判定器注册表.md](代码评审报告-判定器注册表.md) | 评审过程 | 草案 | CA/CL/PE/econ 双跑验收、Registry 原子切换与独立评审准备 | 独立评审、用户签核与发布周期状态变化时同步；未完成前不得删除 legacy |
+| [docs/代码评审报告-判定器注册表.md](代码评审报告-判定器注册表.md) | 评审过程 | 历史 | CA/CL/PE/econ 双跑验收、Registry 原子切换、独立评审与 legacy 删除记录（Task 7，2026-11-22 签核） | 历史留档，不改写 verdict 与删除记录 |
 | [docs/代码评审报告-PR20-28.md](代码评审报告-PR20-28.md) | 评审过程 | 历史 | PR#20–#28 的合并状态、规则边界与双后端对拍评审 | 以评审锚点为准，不改写 verdict；修复后另开报告 |
 | [docs/代码评审报告-判定规则漏洞审计.md](代码评审报告-判定规则漏洞审计.md) | 评审过程 | 草案 | 判定层漏洞审计：CA705/CA708 腿盲与 CA201 豁免两处 blocker，附最小复现与处置清单 | 每条口子处置（修复或明确豁免）后更新处置列；全部处置完成后转历史 |
-| [docs/代码评审报告-架构.md](代码评审报告-架构.md) | 评审过程 | 草案 | 架构稳固性与双后端嵌合度的锚点评审，附待拍板建议 P1–P3 | 建议处置完成或工程结构变化时同步 |
+| [docs/代码评审报告-架构.md](代码评审报告-架构.md) | 评审过程 | 草案 | 架构稳固性与双后端嵌合度的锚点评审（P1/P2 已处置、P3 待拍板；双后端结构已随 legacy 删除消失） | P3 处置或转历史时同步 |
 | [docs/superpowers/plans/2026-10-19-event-ledger.md](superpowers/plans/2026-10-19-event-ledger.md) | 设计路线 | 历史 | 协议 1.2 事件流水的已执行计划 | 历史留档，不批量补勾或改成 1.8 |
 | [docs/superpowers/specs/2026-10-24-works-layer-design.md](superpowers/specs/2026-10-24-works-layer-design.md) | 设计路线 | 草案 | 作品层视图、时间窗与分支设计 | 未实现，待作者拍板后再更新 |
 | [docs/superpowers/specs/2026-10-28-modify-event-design.md](superpowers/specs/2026-10-28-modify-event-design.md) | 设计路线 | 现行 | modify 同身份变化的事件语义与规则复用设计 | 已实施，后续 modify 语义变化时同步 |
@@ -63,7 +63,7 @@
 | [docs/superpowers/specs/2026-10-29-classlint-entity-mentions-design.md](superpowers/specs/2026-10-29-classlint-entity-mentions-design.md) | 设计路线 | 现行 | classlint 正文别名识别、注册表校验与 JSON mentions 设计 | 已实施，后续 mentions 语义变化时同步 |
 | [docs/superpowers/plans/2026-10-29-classlint-entity-mentions.md](superpowers/plans/2026-10-29-classlint-entity-mentions.md) | 设计路线 | 历史 | classlint 正文别名识别的红绿实施与验收计划 | 已执行，保留红绿验证与验收记录 |
 | [docs/superpowers/specs/2026-10-30-judge-registry-design.md](superpowers/specs/2026-10-30-judge-registry-design.md) | 设计路线 | 现行 | CA/CL/PE/econ 判定器注册表、双跑迁移与回退设计 | 设计已确认，实施与验收状态变化时同步 |
-| [docs/superpowers/plans/2026-10-30-judge-registry.md](superpowers/plans/2026-10-30-judge-registry.md) | 设计路线 | 草案 | 判定器注册表的分期迁移、双跑与原子切换计划 | 执行时逐项勾选，完成后转为历史 |
+| [docs/superpowers/plans/2026-10-30-judge-registry.md](superpowers/plans/2026-10-30-judge-registry.md) | 设计路线 | 历史 | 判定器注册表的分期迁移、双跑与原子切换计划（含 legacy 删除 Task 7，已完成） | 已执行完毕，保留红绿验证与验收记录 |
 | [docs/superpowers/specs/2026-10-28-documentation-governance-design.md](superpowers/specs/2026-10-28-documentation-governance-design.md) | 设计路线 | 现行 | 本轮文档治理的已确认设计规格 | 已实施，后续文档政策变化时同步 |
 | [docs/superpowers/plans/2026-10-28-documentation-governance.md](superpowers/plans/2026-10-28-documentation-governance.md) | 设计路线 | 历史 | 本轮文档治理的逐步实施计划 | 已执行，保留红绿验证与验收记录 |
 | [docs/superpowers/plans/2026-11-04-conclusion-assertions.md](superpowers/plans/2026-11-04-conclusion-assertions.md) | 设计路线 | 历史 | 结论断言与干净所有权模型（B 方案）的分期实施计划（已完成） | 执行时逐项勾选，完成后转为历史；对应 GitHub issue #10 的后续部分 |

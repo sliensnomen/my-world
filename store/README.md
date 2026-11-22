@@ -42,8 +42,9 @@
   version / fingerprint 暴露给三个出口，`tests/test_store.py` 的「契约读取严格且带版本/指纹」
   钉着「测试跑在真契约上」这件事。
 
-规则不在这里。层级方向、承重墙、盲区、合法性闭环、关系讲不讲得通——那些默认在
-`judges/` 的 Registry Pack 里；`canonlint.py` 与 `classlint/classlint.py` 只保留 legacy 回退实现。
+规则不在这里。层级方向、承重墙、盲区、合法性闭环、关系讲不讲得通——那些都在
+`judges/` 的 Registry Pack 里（唯一后端）；`canonlint.py` 与 `classlint/classlint.py`
+是引擎驱动（CLI、导出、扫描入口、World 模型）。
 **存储层不认识理论**：它不知道 `fiscal` 与 `manpower` 有什么区别，也不知道哪一层该养哪一层。
 
 ---
@@ -71,7 +72,7 @@ python3 classlint/tests/run_tests.py  # classlint 的 31 个夹具世界
 1. `store/model.py`：加进 `CORE_REQUIRED_FIELDS`（必填）或 `ANNOTATION_FIELDS`（可选）。
 2. `world.schema.json`：加进 `properties`；若属于严格档，同步 `x-strict-required`。
 3. `judges/ca/`：若它也要被严格规则检查（比如词表），再把词表加进 `x-strict-vocabulary`
-   并在对应 Rule 里加判定；legacy 是否同步按 `CONTRIBUTING.md` 的双跑要求处理。
+   并在对应 Rule 里加判定（Registry 是唯一后端，没有第二份实现要同步）。
 4. 跑六套测试。`tests/test_schema.py` 会在两张表不一致时直接报红。
 
 **加一个条目目录**（比如 `drafts/`）

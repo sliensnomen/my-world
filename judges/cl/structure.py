@@ -7,8 +7,8 @@ from store import parse as shared
 
 REQUIRED_FIELDS = ["id", "title", "type"]
 
-# 流量层数据模型（协议 v0.2，与 classlint.py 的 legacy 实现逐字同构）。
-# 两套实现必须给出逐条相同的 Finding——双跑测试（check_registry_cl_pe_dual_run）守着。
+# 流量层数据模型（协议 v0.2；core-cl Pack 的实现，词表只有这一份）。
+# classlint 引擎的 CL103 字段政策由本文件与 classlint/tests 的夹具期望钉死。
 FLOW_LINES = ("logistics", "violence", "information", "people")
 FLOW_COMMON_FIELDS = {"line", "from", "to", "note", "trend", "when"}
 FLOW_LINE_FIELDS = {
@@ -47,7 +47,7 @@ def _nonempty_str(value) -> bool:
 
 
 def _demand_errors(entry) -> list[str]:
-    """CL108（v0.3/v0.8 扩展）：实体卡需求侧与剩余声明的格式；顺序与 legacy 相同。"""
+    """CL108（v0.3/v0.8 扩展）：实体卡需求侧与剩余声明的格式。"""
     errors: list[str] = []
 
     if "population" in entry.meta:
