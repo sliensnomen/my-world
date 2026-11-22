@@ -3036,6 +3036,43 @@ def check_x_kind_cycles_are_reported() -> list[str]:
     return problems
 
 
+def check_when_and_when_sort_must_agree() -> list[str]:
+    """#38：when 是数字时，故事时间与 when_sort 方向不能相反（CA716 warning）。"""
+    problems = []
+    def world_for(when_a: str, when_b: str, ts_a: str = "1", ts_b: str = "2"):
+        cards = {
+            "obj": _card("obj", body=_issue38_body("obj")).replace(
+                "type: location", "type: item"),
+            "ev-a": _card("ev-a", (
+                f"when: {when_a}\nevent_kind: create\nwhen_sort: {ts_a}\nobject:\n  - obj\n"
+            ), body=_issue38_body("ev-a")).replace("type: location", "type: event"),
+            "ev-b": _card("ev-b", (
+                f"when: {when_b}\nevent_kind: destroy\nwhen_sort: {ts_b}\nobject:\n  - obj\n"
+            ), body=_issue38_body("ev-b")).replace("type: location", "type: event"),
+        }
+        return _temp_world("canonlint-ca716-", cards)
+    cases = [
+        ("when 反向", "5", "2", True),
+        ("when 同向", "2", "5", False),
+        ("when 是文本", "元年", "二年", False),
+    ]
+    for label, when_a, when_b, want in cases:
+        tmp, world = world_for(when_a, when_b)
+        with tmp:
+            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
+                            {"WGP_JUDGE_BACKEND": "legacy"}):
+                merged = dict(os.environ)
+                merged.update(backend)
+                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                    capture_output=True, text=True, env=merged)
+                hit = "[CA716]" in p1.stdout
+                if want and not hit:
+                    problems.append(f"{label}（{backend}）漏报 CA716：\n{p1.stdout}")
+                if not want and hit:
+                    problems.append(f"{label}（{backend}）误报 CA716：\n{p1.stdout}")
+    return problems
+
+
 def check_ca703_creation_exemption_is_first_transfer_only() -> list[str]:
     """#42：create/birth 只豁免第一笔转手；之后 from 必须命中持有证据。"""
     problems = []
@@ -3970,12 +4007,12 @@ def check_registry_ca_dual_run() -> list[str]:
         "CA501", "CA502", "CA503", "CA504", "CA505",
         "CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
         "CA707", "CA708", "CA709", "CA710", "CA711", "CA712", "CA713",
-        "CA714", "CA715",
+        "CA714", "CA715", "CA716",
     }
     world_rules = {
         "CA114", "CA201", "CA403", "CA405", "CA502", "CA504", "CA505",
         "CA701", "CA703", "CA704", "CA705", "CA707", "CA708", "CA709",
-        "CA710", "CA711", "CA712", "CA713", "CA714", "CA715",
+        "CA710", "CA711", "CA712", "CA713", "CA714", "CA715", "CA716",
     }
     index_rules = {"CA501", "CA503"}
     try:
@@ -4322,6 +4359,7 @@ def main() -> int:
         ("issue #38 元数据/自指：title/author 类型与关系自指", check_issue38_misc_shape_and_selfref),
         ("issue #38 状态门禁：canon 卡引用非 canon 目标报 CA715", check_canon_card_referencing_non_canon),
         ("issue #38 x- 实验类别成环也要报 CA502", check_x_kind_cycles_are_reported),
+        ("issue #38 when 与 when_sort 反向报 CA716", check_when_and_when_sort_must_agree),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),

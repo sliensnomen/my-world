@@ -1,6 +1,8 @@
 """canonlint 的跨条目事件时序与流水对账规则。"""
 from __future__ import annotations
 
+import re
+
 import ledger as event_ledger
 
 
@@ -27,6 +29,48 @@ def check_ca701(world: dict, emit) -> None:
                 emit("warning", e.rel,
                      f"时序倒流：本事件 when_sort={view_a.when_sort:g}，"
                      f"depends_on 的事件 `{b.id}` when_sort={view_b.when_sort:g}（要求 ≤ 本事件）")
+
+
+def _numeric_when(value) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+            return float(text)
+    return None
+
+
+def check_ca716(world: dict, emit) -> None:
+    index = world["index"]
+    by_object: dict[str, list[tuple[float, float, object, str]]] = {}
+    for event, view in event_ledger.ordered_events(index):
+        if not _is_event(view):
+            continue
+        when = _numeric_when(event.meta.get("when"))
+        if when is None:
+            continue
+        for obj in list(view.legs.get("object", [])) + list(view.legs.get("result", [])):
+            by_object.setdefault(obj, []).append(
+                (view.when_sort, when, event, view.kind))
+    for obj, events in by_object.items():
+        events.sort(key=lambda item: item[0])
+        for i in range(len(events)):
+            for j in range(i + 1, len(events)):
+                ts_a, when_a, ev_a, _ = events[i]
+                ts_b, when_b, ev_b, _ = events[j]
+                if when_a > when_b:
+                    emit("warning", ev_b.rel,
+                         f"when 与 when_sort 反向：`{obj}` 的事件 `{ev_a.id}`"
+                         f"（when={when_a:g}，when_sort={ts_a:g}）排在 `{ev_b.id}`"
+                         f"（when={when_b:g}，when_sort={ts_b:g}）之前，故事时间却更晚"
+                         "——排序号与 when 相反，请对齐两者")
+                    break
+            else:
+                continue
+            break
 
 
 def check_ca703(world: dict, emit) -> None:
@@ -396,7 +440,7 @@ def check_ca714(world: dict, emit) -> None:
 
 
 SCHEDULE = ("CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
-            "CA709", "CA710", "CA712", "CA711", "CA713", "CA714")
+            "CA709", "CA710", "CA712", "CA711", "CA713", "CA714", "CA716")
 
 
 def apply(run_world) -> None:

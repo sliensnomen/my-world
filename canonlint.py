@@ -50,7 +50,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 regist
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.24"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id
+PROTOCOL_VERSION = "1.25"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id；1.25：#38 新增 CA716（when 数字与 when_sort 反向）
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -598,6 +598,48 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
                 color[node] = BLACK
 
 
+def _numeric_when(value) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+            return float(text)
+    return None
+
+
+def check_when_order(index: dict[str, Entry], findings: list[Finding]) -> None:
+    """CA716：when 是数字时，排序方向必须与 when_sort 一致（#38 时间类）。"""
+    by_object: dict[str, list[tuple[float, float, Entry, str]]] = {}
+    for event, view in ledger.ordered_events(index):
+        if not ledger.is_complete_event(view):
+            continue
+        when = _numeric_when(event.meta.get("when"))
+        if when is None:
+            continue
+        for obj in list(view.legs.get("object", [])) + list(view.legs.get("result", [])):
+            by_object.setdefault(obj, []).append((view.when_sort, when, event, view.kind))
+    for obj, events in by_object.items():
+        events.sort(key=lambda item: item[0])
+        for i in range(len(events)):
+            for j in range(i + 1, len(events)):
+                ts_a, when_a, ev_a, _ = events[i]
+                ts_b, when_b, ev_b, _ = events[j]
+                if when_a > when_b:
+                    findings.append(Finding(
+                        "CA716", "warning", ev_b.rel,
+                        f"when 与 when_sort 反向：`{obj}` 的事件 `{ev_a.id}`"
+                        f"（when={when_a:g}，when_sort={ts_a:g}）排在 `{ev_b.id}`"
+                        f"（when={when_b:g}，when_sort={ts_b:g}）之前，故事时间却更晚"
+                        "——排序号与 when 相反，请对齐两者"))
+                    break
+            else:
+                continue
+            break
+
+
 def check_endpoints(index: dict[str, Entry], findings: list[Finding]) -> None:
     """CA714：端点事件不唯一或顺序矛盾（#38 端点类，与 registry 同文案）。"""
     events = ledger.ordered_events(index)
@@ -1024,6 +1066,7 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
             # to 缺失/为空：CA702 已报，落点不动
 
     check_endpoints(index, findings)
+    check_when_order(index, findings)
 
 
 def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:
