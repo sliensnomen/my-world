@@ -47,10 +47,11 @@ from judges.ca.content import declares_dependencies  # #14：CA302 判据搬到�
 from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 registry 共用（架构评审 P1）
     CA503_LAYERS, CA505_TRIGGER_LAYERS, KIND_INITIAL_SET, KNOWN_FIELDS,
     LAYER_INDEX, LAYERS, LOAD_BEARING_KEYWORDS, MIN_BODY_CHARS, MIN_DUP_CHARS,
+    MIN_EXACT_DUP_CHARS,
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.25"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id；1.25：#38 新增 CA716（when 数字与 when_sort 反向）
+PROTOCOL_VERSION = "1.26"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id；1.25：#38 新增 CA716（when 数字与 when_sort 反向）；1.26：#38 CA201 精确短重复不设长度豁免
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -1095,9 +1096,29 @@ def check_duplicates(index: dict[str, Entry], threshold: float,
     """CA201: 正文相似度（§6.6 预处理，双方 ≥100 字符才参与）。
 
     降级承接对（`superseded_by` 声明的两方）豁免：相似是**要求的**，不是疑似重复。
+    精确重复不设长度豁免（#38）：96 字的两张卡完全一样，仍报 CA201——「短到不值得
+    比」只该挡近似，不该挡一模一样。
     """
     exempt = _supersede_pairs(index)
     items = [(e.id, e.rel, e.clean_body) for e in index.values() if not e.parse_error]
+    exact: dict[str, list[tuple[str, str]]] = {}
+    for item in items:
+        body = item[2]
+        if MIN_EXACT_DUP_CHARS <= len(body) < MIN_DUP_CHARS:
+            exact.setdefault(body, []).append((item[0], item[1]))
+    for body, group in exact.items():
+        if len(group) < 2:
+            continue
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                id_i, rel_i = group[i]
+                id_j, rel_j = group[j]
+                if id_i and id_j and frozenset((id_i, id_j)) in exempt:
+                    continue
+                findings.append(Finding(
+                    "CA201", "warning", f"{rel_i} ↔ {rel_j}",
+                    f"正文完全重复（{len(body)} 字，低于常规查重长度 {MIN_DUP_CHARS}）"
+                    "——精确重复不设长度豁免，疑似重复"))
     items = [it for it in items if len(it[2]) >= MIN_DUP_CHARS]
     for i in range(len(items)):
         for j in range(i + 1, len(items)):

@@ -58,3 +58,4 @@ LOAD_BEARING_KEYWORDS = ["经济", "货币", "税收", "贸易", "铸币", "政�
 
 MIN_BODY_CHARS = 200        # CA104
 MIN_DUP_CHARS = 100         # CA201 最短参与长度
+MIN_EXACT_DUP_CHARS = 40    # CA201 精确重复的最低长度（低于此不比较）
