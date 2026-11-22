@@ -23,4 +23,4 @@ exit=0
 [CA505] warning (仓库级): 存在 military/political 层承重墙条目，但全库无 layer=fiscal 条目——财政维度可能缺失（刚铎型盲区）
 [CA108] info    entries/wight-army.md: kind='x-magic-logistics' 为实验值，已计入案例收集
 
-42 个条目 | 0 错误 | 22 警告
+43 个条目 | 0 错误 | 22 警告

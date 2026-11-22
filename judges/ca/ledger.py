@@ -401,6 +401,56 @@ def check_ca712(world: dict, emit) -> None:
                      "对该组织的最后一个动作是 leave——要么补一笔 join，要么把断言撤了")
 
 
+def check_ca719(world: dict, emit) -> None:
+    """CA719：成员链 join/leave 必须配对（#38 成员链 P0）。
+
+    leave 之前必须有过 join；卡上的 `member_of` 断言可作初始成员（世界开始时
+    已经在会里）。同刻 join/leave 并存时不排序，fail-open。
+    """
+    index = world["index"]
+    ordered = list(event_ledger.ordered_events(index))
+    # 每个 (person, org) 的同一 when_sort 若同时出现 join 与 leave，视为未定序
+    instant: dict[tuple[str, str, float], set[str]] = {}
+    for _e, view in ordered:
+        if view.kind not in ("join", "leave"):
+            continue
+        orgs = view.legs.get("to" if view.kind == "join" else "from", [])
+        for person in view.legs.get("by", []):
+            for org in orgs:
+                instant.setdefault((person, org, view.when_sort), set()).add(view.kind)
+    initial: set[tuple[str, str]] = set()
+    for e in index.values():
+        if e.parse_error or not e.id:
+            continue
+        for org in event_ledger.member_of_assertions(e):
+            initial.add((e.id, org))
+    member: dict[tuple[str, str], bool] = {}
+    for e, view in ordered:
+        if view.kind not in ("join", "leave"):
+            continue
+        orgs = view.legs.get("to" if view.kind == "join" else "from", [])
+        for person in view.legs.get("by", []):
+            for org in orgs:
+                key = (person, org)
+                kinds = instant.get((person, org, view.when_sort), set())
+                if len(kinds) > 1:
+                    member[key] = True  # 同刻未定，fail-open，不据此判错
+                    continue
+                if view.kind == "join":
+                    member[key] = True
+                    continue
+                if member.get(key) or key in initial:
+                    member[key] = False
+                    continue
+                emit("error", e.rel,
+                     f"无入会的退会：`{person}` 在 when_sort={view.when_sort:g} 从 "
+                     f"`{org}` 退出，但此前没有加入记录，卡上也没有 member_of 断言"
+                     "——成员链断了，请补 join 或用断言说明她是初始成员")
+
+
+
+
+
 def check_ca711(world: dict, emit) -> None:
     index = world["index"]
     windows = event_ledger.existence_windows(index)
@@ -504,7 +554,8 @@ def check_ca714(world: dict, emit) -> None:
 
 
 SCHEDULE = ("CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
-            "CA709", "CA710", "CA712", "CA711", "CA713", "CA714", "CA716", "CA717")
+            "CA709", "CA710", "CA712", "CA711", "CA713", "CA714", "CA716", "CA717",
+            "CA719")
 
 
 def apply(run_world) -> None:
