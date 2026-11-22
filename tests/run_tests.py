@@ -2193,9 +2193,9 @@ def check_ambiguous_final_without_assertion_is_reported() -> list[str]:
 
     # CA704：世界里没有任何 owns 断言
     tmp, world = _temp_world("canonlint-ambig704-", {
-        "alice": _card("alice", ""),
-        "bob": _card("bob", ""),
-        "relic": _card("relic", ""),
+        "alice": _card("alice", "").replace("type: location", "type: character"),
+        "bob": _card("bob", "").replace("type: location", "type: character"),
+        "relic": _card("relic", "").replace("type: location", "type: item"),
         "ev-a": ev("ev-a", "transfer",
                    "by:\n  - alice\nobject:\n  - relic\nto:\n  - alice\n"),
         "ev-b": ev("ev-b", "transfer",
@@ -2210,8 +2210,9 @@ def check_ambiguous_final_without_assertion_is_reported() -> list[str]:
 
     # CA709：世界里没有任何 custody_of 断言
     tmp, world = _temp_world("canonlint-ambig709-", {
-        "x": _card("x", ""), "y": _card("y", ""),
-        "relic": _card("relic", ""),
+        "x": _card("x", "").replace("type: location", "type: character"),
+        "y": _card("y", "").replace("type: location", "type: character"),
+        "relic": _card("relic", "").replace("type: location", "type: item"),
         "cu-a": ev("cu-a", "custody",
                    "by:\n  - x\nobject:\n  - relic\nto:\n  - x\n"),
         "cu-b": ev("cu-b", "custody",
@@ -2298,8 +2299,9 @@ def check_from_leg_is_legal() -> list[str]:
                      ).replace("type: location", "type: event")
 
     tmp, world = _temp_world("canonlint-from-", {
-        "alice": _card("alice", ""), "bob": _card("bob", ""),
-        "sword": _card("sword", ""),
+        "alice": _card("alice", "").replace("type: location", "type: character"),
+        "bob": _card("bob", "").replace("type: location", "type: character"),
+        "sword": _card("sword", "").replace("type: location", "type: item"),
         "ev-give": ev("ev-give", "transfer",
                       "by:\n  - alice\nfrom:\n  - alice\nobject:\n  - sword\nto:\n  - bob\n"),
         "ev-grant": ev("ev-grant", "grant",
@@ -2326,8 +2328,9 @@ def check_from_leg_is_legal() -> list[str]:
 
     # 缺 from 仍然合法：旧世界不能被判红（fail-open）
     tmp, world = _temp_world("canonlint-from-absent-", {
-        "alice": _card("alice", ""), "bob": _card("bob", ""),
-        "sword": _card("sword", ""),
+        "alice": _card("alice", "").replace("type: location", "type: character"),
+        "bob": _card("bob", "").replace("type: location", "type: character"),
+        "sword": _card("sword", "").replace("type: location", "type: item"),
         "ev-give": ev("ev-give", "transfer",
                       "by:\n  - alice\nobject:\n  - sword\nto:\n  - bob\n"),
     })
@@ -3063,6 +3066,54 @@ def check_ca201_catches_short_exact_duplicates() -> list[str]:
         _, out, _ = _judge(world2)
         if "[CA201]" in out:
             problems.append(f"不同的短正文误报 CA201：\n{out}")
+    return problems
+
+
+def check_event_leg_types_are_checked() -> list[str]:
+    """#38：事件腿指向的实体类型必须与事件语义相符（CA717）。"""
+    problems = []
+
+    def ev(eid: str, kind: str, legs: str) -> str:
+        return _card(eid, f"when: 元年\nevent_kind: {kind}\nwhen_sort: 1\n{legs}"
+                     ).replace("type: location", "type: event")
+
+    def typed(eid: str, t: str) -> str:
+        return _card(eid, "").replace("type: location", f"type: {t}")
+
+    cases = [
+        ("剑当施动者", ev("ev-x", "transfer",
+                        "by:\n  - sword\nobject:\n  - stone\nto:\n  - bob\n"),
+         "CA717", True),
+        ("move 到人", ev("ev-x", "move", "object:\n  - alice\nto:\n  - bob\n"),
+         "CA717", True),
+        ("join 到人", ev("ev-x", "join", "by:\n  - alice\nto:\n  - bob\n"),
+         "CA717", True),
+        ("正常转让", ev("ev-x", "transfer",
+                       "by:\n  - alice\nobject:\n  - stone\nto:\n  - bob\n"),
+         "CA717", False),
+    ]
+    for label, event_card, rule, want in cases:
+        cards = {
+            "alice": typed("alice", "character"),
+            "bob": typed("bob", "character"),
+            "sword": typed("sword", "item"),
+            "stone": typed("stone", "item"),
+            "home": typed("home", "location"),
+            "ev-x": event_card,
+        }
+        tmp, world = _temp_world("canonlint-ca717-", cards)
+        with tmp:
+            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
+                            {"WGP_JUDGE_BACKEND": "legacy"}):
+                merged = dict(os.environ)
+                merged.update(backend)
+                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                    capture_output=True, text=True, env=merged)
+                hit = f"[{rule}]" in p1.stdout
+                if want and not hit:
+                    problems.append(f"{label}（{backend}）漏报 {rule}：\n{p1.stdout}")
+                if not want and hit:
+                    problems.append(f"{label}（{backend}）误报 {rule}：\n{p1.stdout}")
     return problems
 
 
@@ -4037,12 +4088,12 @@ def check_registry_ca_dual_run() -> list[str]:
         "CA501", "CA502", "CA503", "CA504", "CA505",
         "CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
         "CA707", "CA708", "CA709", "CA710", "CA711", "CA712", "CA713",
-        "CA714", "CA715", "CA716",
+        "CA714", "CA715", "CA716", "CA717",
     }
     world_rules = {
         "CA114", "CA201", "CA403", "CA405", "CA502", "CA504", "CA505",
         "CA701", "CA703", "CA704", "CA705", "CA707", "CA708", "CA709",
-        "CA710", "CA711", "CA712", "CA713", "CA714", "CA715", "CA716",
+        "CA710", "CA711", "CA712", "CA713", "CA714", "CA715", "CA716", "CA717",
     }
     index_rules = {"CA501", "CA503"}
     try:
@@ -4391,6 +4442,7 @@ def main() -> int:
         ("issue #38 x- 实验类别成环也要报 CA502", check_x_kind_cycles_are_reported),
         ("issue #38 when 与 when_sort 反向报 CA716", check_when_and_when_sort_must_agree),
         ("issue #38 短正文精确重复也报 CA201", check_ca201_catches_short_exact_duplicates),
+        ("issue #38 事件腿类型与事件语义对不上报 CA717", check_event_leg_types_are_checked),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),

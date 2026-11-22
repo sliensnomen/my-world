@@ -43,6 +43,70 @@ def _numeric_when(value) -> float | None:
     return None
 
 
+def _entity_type(world: dict, eid: str) -> str:
+    """腿目标的 type（只认 strict vocabulary 五类；未知类型返回空串，fail-open）。"""
+    entry = world["index"].get(eid)
+    if entry is None or entry.parse_error:
+        return ""
+    t = entry.meta.get("type")
+    return t if isinstance(t, str) else ""
+
+
+LEG_TYPE_TABLE: dict[str, dict[str, frozenset[str]]] = {
+    "transfer": {
+        "by": frozenset({"character", "faction"}),
+        "from": frozenset({"character", "faction"}),
+        "to": frozenset({"character", "faction"}),
+        "object": frozenset({"character", "faction", "item", "location"}),
+    },
+    "grant": {
+        "by": frozenset({"character", "faction"}),
+        "from": frozenset({"character", "faction"}),
+        "to": frozenset({"character", "faction"}),
+        "object": frozenset({"character", "faction", "item", "location"}),
+    },
+    "custody": {
+        "by": frozenset({"character", "faction"}),
+        "to": frozenset({"character", "faction"}),
+        "object": frozenset({"character", "faction", "item", "location"}),
+    },
+    "move": {
+        "object": frozenset({"character", "faction", "item"}),
+        "to": frozenset({"location"}),
+        "from": frozenset({"location"}),
+    },
+    "join": {"by": frozenset({"character"}), "to": frozenset({"faction"})},
+    "leave": {"by": frozenset({"character"}), "from": frozenset({"faction"})},
+    "birth": {"object": frozenset({"character"})},
+    "create": {"object": frozenset({"character", "faction", "item", "location"})},
+    "death": {"object": frozenset({"character", "item"})},
+    "destroy": {"object": frozenset({"item", "location"})},
+    "transform": {
+        "object": frozenset({"character", "item", "location"}),
+        "result": frozenset({"character", "item", "location"}),
+    },
+}
+
+
+def check_ca717(world: dict, emit) -> None:
+    """CA717：事件腿指向的实体类型必须与事件语义相符（#38 腿类型表）。"""
+    index = world["index"]
+    for event, view in event_ledger.ordered_events(index):
+        if not _is_event(view):
+            continue
+        table = LEG_TYPE_TABLE.get(view.kind)
+        if table is None:
+            continue
+        for leg, allowed in table.items():
+            for target in view.legs.get(leg, []):
+                t = _entity_type(world, target)
+                if t and t not in allowed:
+                    emit("error", event.rel,
+                         f"腿类型不匹配：`{view.kind}` 的 {leg} `{target}` 是 {t}，"
+                         f"该位置只收 {'/'.join(sorted(allowed))}——事件语义对不上"
+                         "（类型写错请改；特殊关系请用 x- 事件）")
+
+
 def check_ca716(world: dict, emit) -> None:
     index = world["index"]
     by_object: dict[str, list[tuple[float, float, object, str]]] = {}
@@ -440,7 +504,7 @@ def check_ca714(world: dict, emit) -> None:
 
 
 SCHEDULE = ("CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
-            "CA709", "CA710", "CA712", "CA711", "CA713", "CA714", "CA716")
+            "CA709", "CA710", "CA712", "CA711", "CA713", "CA714", "CA716", "CA717")
 
 
 def apply(run_world) -> None:
