@@ -1,7 +1,7 @@
 ---
 id: twin-item
 title: twin-item
-type: item
+type: character
 author: fixture
 date: 2026-01-01
 status: canon

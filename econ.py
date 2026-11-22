@@ -1,11 +1,13 @@
-"""WGP-econ 扩展包 v0.1 —— 数值系统审计（CA6xx）。
+"""WGP-econ 扩展包 v0.2 —— 数值系统审计（CA6xx）。
 
 由 canonlint --pack econ 启用。core 不依赖本模块。
 """
 from __future__ import annotations
 
+import math
+
 PACK_NAME = "econ"
-PACK_VERSION = "0.1"
+PACK_VERSION = "0.2"
 
 # 启用本包时注入 core 的合法字段集
 KNOWN_FIELDS = {"figures"}
@@ -38,14 +40,20 @@ def check_entry(meta: dict, rel: str, add) -> None:
         v, u = f.get("value"), f.get("unit")
         if u is None:
             add("CA601", "error", f"figures.{name} 缺 unit")
-        elif not isinstance(u, str):
+        elif not isinstance(u, str) or not u.strip():
             # 规格 PROTOCOL-ECON.md:25「unit 必须是字符串，自由文本单位」。类型不查的话
-            # `unit: 123` / `true` / `[a]` / `{}` 全都静默通过，而 CA602 照样拿它参与
-            # 参数表比较——一个不是单位的单位，在结论里被当成合法的单位。
+            # `unit: 123` / `true` / `[a]` / `{}` / 空串 全都静默通过，而 CA602 照样拿它
+            # 参与参数表比较——一个不是单位的单位，在结论里被当成合法的单位。
             add("CA601", "error",
                 f"figures.{name}.unit={u!r} 必须是非空字符串（自由文本单位，如 `石/亩`）")
         if not isinstance(v, (int, float)) or isinstance(v, bool):
             add("CA601", "error", f"figures.{name}.value={v!r} 非数字")
+            continue
+        if not math.isfinite(float(v)):
+            add("CA601", "error", f"figures.{name}.value={v!r} 不是有限数字（nan/inf 不能当世界数）")
+            continue
+        if float(v) < 0:
+            add("CA601", "error", f"figures.{name}.value={v!r} 不能为负（数量没有负值）")
             continue
         parsed[name] = float(v)
 
@@ -55,6 +63,10 @@ def check_entry(meta: dict, rel: str, add) -> None:
         if s not in parsed or b not in parsed:
             continue
         if parsed[b] == 0:
+            if parsed[s] > 0:
+                add("CA602", "warning",
+                    f"{b}=0 但 {s}={parsed[s]:g}——零分母无法评估参数表；"
+                    f"零人口不可能供养军队，请检查 figures")
             continue
         ratio = parsed[s] / parsed[b]
         if ratio > rule["max_ratio"]:

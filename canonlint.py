@@ -47,10 +47,11 @@ from judges.ca.content import declares_dependencies  # #14：CA302 判据搬到�
 from judges.ca.vocab import (  # 协议词表唯一定义点：legacy 与 registry 共用（架构评审 P1）
     CA503_LAYERS, CA505_TRIGGER_LAYERS, KIND_INITIAL_SET, KNOWN_FIELDS,
     LAYER_INDEX, LAYERS, LOAD_BEARING_KEYWORDS, MIN_BODY_CHARS, MIN_DUP_CHARS,
+    MIN_EXACT_DUP_CHARS,
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.22"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）
+PROTOCOL_VERSION = "1.27"  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id；1.25：#38 新增 CA716（when 数字与 when_sort 反向）；1.26：#38 CA201 精确短重复不设长度豁免；1.27：#38 事件腿类型表 CA717（by/join/move/birth/destroy 等）
 CONTRACT_VERSION = "0.8"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -514,8 +515,12 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
         if e.parse_error or not e.id:
             continue
         deps = e.edges_of("depends_on")
+        # CA502 纳入物质族与 x- 实验类别（#38 52–56：x- 是泄压阀，但成环不是）。
         graph[e.id] = [d.target for d in deps
-                       if d.target in index and d.attrs.get("kind") in KIND_INITIAL_SET]
+                       if d.target in index and (
+                           d.attrs.get("kind") in KIND_INITIAL_SET
+                           or (isinstance(d.attrs.get("kind"), str)
+                               and d.attrs["kind"].startswith("x-")))]
 
         if e.meta.get("load_bearing") is not True:
             continue
@@ -583,7 +588,7 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
                     if key not in reported_cycles:
                         reported_cycles.add(key)
                         findings.append(Finding("CA502", "error", index[node].rel,
-                                                f"depends_on 存在环（物质族）: {' → '.join(cycle)}"))
+                                                f"depends_on 存在环（物质族或实验类别）: {' → '.join(cycle)}"))
                 elif color.get(nxt) == WHITE:
                     color[nxt] = GRAY
                     stack.append((nxt, path + [nxt]))  # path 逐层复制，深图 O(n²) 空间，世界观量级可接受
@@ -592,6 +597,95 @@ def check_chain(index: dict[str, Entry], findings: list[Finding]) -> None:
             if not advanced:
                 stack.pop()
                 color[node] = BLACK
+
+
+def _numeric_when(value) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+            return float(text)
+    return None
+
+
+LEG_TYPE_TABLE = {
+    "transfer": {"by": {"character", "faction"}, "from": {"character", "faction"},
+                 "to": {"character", "faction"},
+                 "object": {"character", "faction", "item", "location"}},
+    "grant": {"by": {"character", "faction"}, "from": {"character", "faction"},
+              "to": {"character", "faction"},
+              "object": {"character", "faction", "item", "location"}},
+    "custody": {"by": {"character", "faction"}, "to": {"character", "faction"},
+                "object": {"character", "faction", "item", "location"}},
+    "move": {"object": {"character", "faction", "item"}, "to": {"location"},
+             "from": {"location"}},
+    "join": {"by": {"character"}, "to": {"faction"}},
+    "leave": {"by": {"character"}, "from": {"faction"}},
+    "birth": {"object": {"character"}},
+    "create": {"object": {"character", "faction", "item", "location"}},
+    "death": {"object": {"character", "item"}},
+    "destroy": {"object": {"item", "location"}},
+    "transform": {"object": {"character", "item", "location"},
+                  "result": {"character", "item", "location"}},
+}
+
+
+def check_leg_types(index: dict[str, Entry], findings: list[Finding]) -> None:
+    """CA717：事件腿指向的实体类型必须与事件语义相符（#38 腿类型表）。"""
+    for event in index.values():
+        if event.parse_error or not ledger.is_event_card(event):
+            continue
+        view = ledger.event_view(event)
+        if not ledger.is_complete_event(view):
+            continue
+        table = LEG_TYPE_TABLE.get(view.kind)
+        if table is None:
+            continue
+        for leg, allowed in table.items():
+            for target in view.legs.get(leg, []):
+                entry = index.get(target)
+                if entry is None or entry.parse_error:
+                    continue
+                t = entry.meta.get("type")
+                if isinstance(t, str) and t and t not in allowed:
+                    findings.append(Finding(
+                        "CA717", "error", event.rel,
+                        f"腿类型不匹配：`{view.kind}` 的 {leg} `{target}` 是 {t}，"
+                        f"该位置只收 {'/'.join(sorted(allowed))}——事件语义对不上"
+                        "（类型写错请改；特殊关系请用 x- 事件）"))
+
+
+def check_when_order(index: dict[str, Entry], findings: list[Finding]) -> None:
+    """CA716：when 是数字时，排序方向必须与 when_sort 一致（#38 时间类）。"""
+    by_object: dict[str, list[tuple[float, float, Entry, str]]] = {}
+    for event, view in ledger.ordered_events(index):
+        if not ledger.is_complete_event(view):
+            continue
+        when = _numeric_when(event.meta.get("when"))
+        if when is None:
+            continue
+        for obj in list(view.legs.get("object", [])) + list(view.legs.get("result", [])):
+            by_object.setdefault(obj, []).append((view.when_sort, when, event, view.kind))
+    for obj, events in by_object.items():
+        events.sort(key=lambda item: item[0])
+        for i in range(len(events)):
+            for j in range(i + 1, len(events)):
+                ts_a, when_a, ev_a, _ = events[i]
+                ts_b, when_b, ev_b, _ = events[j]
+                if when_a > when_b:
+                    findings.append(Finding(
+                        "CA716", "warning", ev_b.rel,
+                        f"when 与 when_sort 反向：`{obj}` 的事件 `{ev_a.id}`"
+                        f"（when={when_a:g}，when_sort={ts_a:g}）排在 `{ev_b.id}`"
+                        f"（when={when_b:g}，when_sort={ts_b:g}）之前，故事时间却更晚"
+                        "——排序号与 when 相反，请对齐两者"))
+                    break
+            else:
+                continue
+            break
 
 
 def check_endpoints(index: dict[str, Entry], findings: list[Finding]) -> None:
@@ -761,7 +855,7 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                         "CA704", "error", e.rel,
                         f"结论与流水打架：`{r.target}` 在 when_sort={when:g} 归属未定序"
                         f"（同刻 {len(acts)} 笔转让，受方集合不同），卡上却断言 owns "
-                        f"`{e.id}`——未定序时断言必须同时落在全部候选里（交集：{shown}），"
+                        f"`{r.target}`——未定序时断言必须同时落在全部候选里（交集：{shown}），"
                         "请拆开 when_sort、统一受方，或删掉这条断言"))
                 continue
             recipients = set().union(*(set(to) for _ev, _v, to in acts))
@@ -885,7 +979,7 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
                         "CA709", "error", e.rel,
                         f"结论与流水打架：`{obj}` 在 when_sort={when:g} 归属未定序"
                         f"（同刻 {len(acts)} 笔 custody，保管人集合不同），卡上却断言 "
-                        f"custody_of `{e.id}`——未定序时断言必须同时落在全部候选里"
+                        f"custody_of `{obj}`——未定序时断言必须同时落在全部候选里"
                         f"（交集：{shown}），请拆开 when_sort、统一保管人，或删掉这条断言"))
                 continue
             recipients = set().union(*(set(to) for _ev, _v, to in acts))
@@ -1020,6 +1114,8 @@ def check_ledger(index: dict[str, Entry], findings: list[Finding]) -> None:
             # to 缺失/为空：CA702 已报，落点不动
 
     check_endpoints(index, findings)
+    check_when_order(index, findings)
+    check_leg_types(index, findings)
 
 
 def _supersede_pairs(index: dict[str, Entry]) -> set[frozenset[str]]:
@@ -1048,9 +1144,29 @@ def check_duplicates(index: dict[str, Entry], threshold: float,
     """CA201: 正文相似度（§6.6 预处理，双方 ≥100 字符才参与）。
 
     降级承接对（`superseded_by` 声明的两方）豁免：相似是**要求的**，不是疑似重复。
+    精确重复不设长度豁免（#38）：96 字的两张卡完全一样，仍报 CA201——「短到不值得
+    比」只该挡近似，不该挡一模一样。
     """
     exempt = _supersede_pairs(index)
     items = [(e.id, e.rel, e.clean_body) for e in index.values() if not e.parse_error]
+    exact: dict[str, list[tuple[str, str]]] = {}
+    for item in items:
+        body = item[2]
+        if MIN_EXACT_DUP_CHARS <= len(body) < MIN_DUP_CHARS:
+            exact.setdefault(body, []).append((item[0], item[1]))
+    for body, group in exact.items():
+        if len(group) < 2:
+            continue
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                id_i, rel_i = group[i]
+                id_j, rel_j = group[j]
+                if id_i and id_j and frozenset((id_i, id_j)) in exempt:
+                    continue
+                findings.append(Finding(
+                    "CA201", "warning", f"{rel_i} ↔ {rel_j}",
+                    f"正文完全重复（{len(body)} 字，低于常规查重长度 {MIN_DUP_CHARS}）"
+                    "——精确重复不设长度豁免，疑似重复"))
     items = [it for it in items if len(it[2]) >= MIN_DUP_CHARS]
     for i in range(len(items)):
         for j in range(i + 1, len(items)):

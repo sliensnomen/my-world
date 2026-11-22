@@ -21,6 +21,7 @@ exit=0
 [CA104] warning entries/spice-harvest.md: 正文 46 字，canon 档建议 ≥200 字
 [CA104] warning entries/spice-melange.md: 正文 78 字，canon 档建议 ≥200 字
 [CA104] warning entries/water-rings.md: 正文 53 字，canon 档建议 ≥200 字
+[CA301] warning entries/choam-dividends.md: 命中承重墙关键词 ['财政']，但未声明 load_bearing——请考虑声明
 [CA108] info    entries/bene-gesserit.md: kind='x-faith-engineering' 为实验值，已计入案例收集
 
-22 个条目 | 0 错误 | 22 警告
+22 个条目 | 0 错误 | 23 警告

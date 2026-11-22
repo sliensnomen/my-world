@@ -124,7 +124,7 @@ BAD = {
     "ev-dan-leaves": event(
         "ev-dan-leaves", "leave", 10, "by:\n  - deserter-dan\nfrom:\n  - house-a\n"),
     # CA714：twin-item 出生两次；wisp 先死后生（端点事件不唯一/顺序矛盾）
-    "twin-item": card("twin-item", "item"),
+    "twin-item": card("twin-item", "character"),
     "ev-twin-birth": event("ev-twin-birth", "birth", 20,
                            "object:\n  - twin-item\n"),
     "ev-twin-create": event("ev-twin-create", "create", 21,

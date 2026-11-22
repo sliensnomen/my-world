@@ -1,6 +1,8 @@
 """canonlint 的跨条目事件时序与流水对账规则。"""
 from __future__ import annotations
 
+import re
+
 import ledger as event_ledger
 
 
@@ -27,6 +29,112 @@ def check_ca701(world: dict, emit) -> None:
                 emit("warning", e.rel,
                      f"时序倒流：本事件 when_sort={view_a.when_sort:g}，"
                      f"depends_on 的事件 `{b.id}` when_sort={view_b.when_sort:g}（要求 ≤ 本事件）")
+
+
+def _numeric_when(value) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+            return float(text)
+    return None
+
+
+def _entity_type(world: dict, eid: str) -> str:
+    """腿目标的 type（只认 strict vocabulary 五类；未知类型返回空串，fail-open）。"""
+    entry = world["index"].get(eid)
+    if entry is None or entry.parse_error:
+        return ""
+    t = entry.meta.get("type")
+    return t if isinstance(t, str) else ""
+
+
+LEG_TYPE_TABLE: dict[str, dict[str, frozenset[str]]] = {
+    "transfer": {
+        "by": frozenset({"character", "faction"}),
+        "from": frozenset({"character", "faction"}),
+        "to": frozenset({"character", "faction"}),
+        "object": frozenset({"character", "faction", "item", "location"}),
+    },
+    "grant": {
+        "by": frozenset({"character", "faction"}),
+        "from": frozenset({"character", "faction"}),
+        "to": frozenset({"character", "faction"}),
+        "object": frozenset({"character", "faction", "item", "location"}),
+    },
+    "custody": {
+        "by": frozenset({"character", "faction"}),
+        "to": frozenset({"character", "faction"}),
+        "object": frozenset({"character", "faction", "item", "location"}),
+    },
+    "move": {
+        "object": frozenset({"character", "faction", "item"}),
+        "to": frozenset({"location"}),
+        "from": frozenset({"location"}),
+    },
+    "join": {"by": frozenset({"character"}), "to": frozenset({"faction"})},
+    "leave": {"by": frozenset({"character"}), "from": frozenset({"faction"})},
+    "birth": {"object": frozenset({"character"})},
+    "create": {"object": frozenset({"character", "faction", "item", "location"})},
+    "death": {"object": frozenset({"character", "item"})},
+    "destroy": {"object": frozenset({"item", "location"})},
+    "transform": {
+        "object": frozenset({"character", "item", "location"}),
+        "result": frozenset({"character", "item", "location"}),
+    },
+}
+
+
+def check_ca717(world: dict, emit) -> None:
+    """CA717：事件腿指向的实体类型必须与事件语义相符（#38 腿类型表）。"""
+    index = world["index"]
+    for event, view in event_ledger.ordered_events(index):
+        if not _is_event(view):
+            continue
+        table = LEG_TYPE_TABLE.get(view.kind)
+        if table is None:
+            continue
+        for leg, allowed in table.items():
+            for target in view.legs.get(leg, []):
+                t = _entity_type(world, target)
+                if t and t not in allowed:
+                    emit("error", event.rel,
+                         f"腿类型不匹配：`{view.kind}` 的 {leg} `{target}` 是 {t}，"
+                         f"该位置只收 {'/'.join(sorted(allowed))}——事件语义对不上"
+                         "（类型写错请改；特殊关系请用 x- 事件）")
+
+
+def check_ca716(world: dict, emit) -> None:
+    index = world["index"]
+    by_object: dict[str, list[tuple[float, float, object, str]]] = {}
+    for event, view in event_ledger.ordered_events(index):
+        if not _is_event(view):
+            continue
+        when = _numeric_when(event.meta.get("when"))
+        if when is None:
+            continue
+        for obj in list(view.legs.get("object", [])) + list(view.legs.get("result", [])):
+            by_object.setdefault(obj, []).append(
+                (view.when_sort, when, event, view.kind))
+    for obj, events in by_object.items():
+        events.sort(key=lambda item: item[0])
+        for i in range(len(events)):
+            for j in range(i + 1, len(events)):
+                ts_a, when_a, ev_a, _ = events[i]
+                ts_b, when_b, ev_b, _ = events[j]
+                if when_a > when_b:
+                    emit("warning", ev_b.rel,
+                         f"when 与 when_sort 反向：`{obj}` 的事件 `{ev_a.id}`"
+                         f"（when={when_a:g}，when_sort={ts_a:g}）排在 `{ev_b.id}`"
+                         f"（when={when_b:g}，when_sort={ts_b:g}）之前，故事时间却更晚"
+                         "——排序号与 when 相反，请对齐两者")
+                    break
+            else:
+                continue
+            break
 
 
 def check_ca703(world: dict, emit) -> None:
@@ -104,7 +212,7 @@ def check_ca704(world: dict, emit) -> None:
                     emit("error", e.rel,
                          f"结论与流水打架：`{ref.target}` 在 when_sort={when:g} 归属未定序"
                          f"（同刻 {len(acts)} 笔转让，受方集合不同），卡上却断言 owns "
-                         f"`{e.id}`——未定序时断言必须同时落在全部候选里（交集：{shown}），"
+                         f"`{ref.target}`——未定序时断言必须同时落在全部候选里（交集：{shown}），"
                          "请拆开 when_sort、统一受方，或删掉这条断言")
                 continue
             recipients = set().union(*(set(to) for _event, _view, to in acts))
@@ -221,7 +329,7 @@ def check_ca709(world: dict, emit) -> None:
                     emit("error", e.rel,
                          f"结论与流水打架：`{obj}` 在 when_sort={when:g} 归属未定序"
                          f"（同刻 {len(acts)} 笔 custody，保管人集合不同），卡上却断言 "
-                         f"custody_of `{e.id}`——未定序时断言必须同时落在全部候选里"
+                         f"custody_of `{obj}`——未定序时断言必须同时落在全部候选里"
                          f"（交集：{shown}），请拆开 when_sort、统一保管人，或删掉这条断言")
                 continue
             recipients = set().union(*(set(to) for _event, _view, to in acts))
@@ -396,7 +504,7 @@ def check_ca714(world: dict, emit) -> None:
 
 
 SCHEDULE = ("CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
-            "CA709", "CA710", "CA712", "CA711", "CA713", "CA714")
+            "CA709", "CA710", "CA712", "CA711", "CA713", "CA714", "CA716", "CA717")
 
 
 def apply(run_world) -> None:

@@ -620,13 +620,25 @@ def check_econ_figures_are_shape_checked() -> list[str]:
          "必须是非空字符串"),
         ("unit 是 bool", "figures:\n  grain:\n    value: 100\n    unit: true\n",
          "必须是非空字符串"),
+        ("unit 是空串", "figures:\n  grain:\n    value: 100\n    unit: \"\"\n",
+         "必须是非空字符串"),
+        ("value 是 nan", "figures:\n  grain:\n    value: .nan\n    unit: 石\n",
+         "不是有限数字"),
+        ("value 是 inf", "figures:\n  grain:\n    value: .inf\n    unit: 石\n",
+         "不是有限数字"),
+        ("value 为负", "figures:\n  grain:\n    value: -5\n    unit: 石\n",
+         "不能为负"),
+        ("零人口有军队", "figures:\n  population:\n    value: 0\n    unit: 人\n"
+                    "  military_size:\n    value: 100000\n    unit: 人\n",
+         "零人口不可能供养军队"),
     ]
     for label, extra, want in cases:
         tmp, world = _temp_world("canonlint-econ-", {"a-node": _card("a-node", extra)})
         with tmp:
             _, out, _ = _judge(world, "--pack", "econ")
-            if "CA601" not in out or want not in out:
-                problems.append(f"{label}：应当报 CA601（含「{want}」）\n{out.strip()}")
+            rule = "CA602" if want == "零人口不可能供养军队" else "CA601"
+            if rule not in out or want not in out:
+                problems.append(f"{label}：应当报 {rule}（含「{want}」）\n{out.strip()}")
     # 反面：合法 figures 一条都不许报
     tmp, world = _temp_world("canonlint-econ-ok-", {
         "a-node": _card("a-node", "figures:\n  grain:\n    value: 100\n    unit: 石/亩\n")})
@@ -873,6 +885,29 @@ def check_advisory_rules_do_not_gate_drafts() -> list[str]:
             problems.append("定档条目提到关键词却漏报了 CA301：\n" + out)
         if code != 1:
             problems.append(f"定档条目 + --strict 应返回 1，实际 {code}")
+    # #38：军事/财政同义词也要触发 CA301（以前靠漏词逃逸）。
+    for word in ("军事", "财政", "赋税", "军饷", "俸禄"):
+        body = f"本条目涉及{word}收支结构。" + "正文" * 100
+        tmp3, world = _temp_world(f"canonlint-ca301-{word}-", {
+            "a-node": _card("a-node", status="canon", body=body)})
+        with tmp3:
+            _, out, _ = _judge(world)
+            if "CA301" not in out or word not in out:
+                problems.append(f"关键词「{word}」应触发 CA301：\n{out}")
+    # 已声明 load_bearing 的卡不再提示
+    tmp4, world = _temp_world("canonlint-ca301-declared-", {
+        "a-node": _card("a-node", (
+            "load_bearing: true\nlayer: military\n"
+            "depends_on:\n  - id: b-node\n    kind: resource\n    critical: true\n"
+        ), load_bearing=True, status="canon", body="本条目涉及军饷。" + "正文" * 100).replace(
+            "type: location", "type: faction"),
+        "b-node": _card("b-node", "load_bearing: true\nlayer: resource\n",
+                        load_bearing=True, body="资源节点" + "正文" * 100),
+    })
+    with tmp4:
+        _, out, _ = _judge(world)
+        if "CA301" in out:
+            problems.append(f"已声明 load_bearing 的卡不该被 CA301 提示：\n{out}")
     return problems
 
 
@@ -2158,9 +2193,9 @@ def check_ambiguous_final_without_assertion_is_reported() -> list[str]:
 
     # CA704：世界里没有任何 owns 断言
     tmp, world = _temp_world("canonlint-ambig704-", {
-        "alice": _card("alice", ""),
-        "bob": _card("bob", ""),
-        "relic": _card("relic", ""),
+        "alice": _card("alice", "").replace("type: location", "type: character"),
+        "bob": _card("bob", "").replace("type: location", "type: character"),
+        "relic": _card("relic", "").replace("type: location", "type: item"),
         "ev-a": ev("ev-a", "transfer",
                    "by:\n  - alice\nobject:\n  - relic\nto:\n  - alice\n"),
         "ev-b": ev("ev-b", "transfer",
@@ -2175,8 +2210,9 @@ def check_ambiguous_final_without_assertion_is_reported() -> list[str]:
 
     # CA709：世界里没有任何 custody_of 断言
     tmp, world = _temp_world("canonlint-ambig709-", {
-        "x": _card("x", ""), "y": _card("y", ""),
-        "relic": _card("relic", ""),
+        "x": _card("x", "").replace("type: location", "type: character"),
+        "y": _card("y", "").replace("type: location", "type: character"),
+        "relic": _card("relic", "").replace("type: location", "type: item"),
         "cu-a": ev("cu-a", "custody",
                    "by:\n  - x\nobject:\n  - relic\nto:\n  - x\n"),
         "cu-b": ev("cu-b", "custody",
@@ -2263,8 +2299,9 @@ def check_from_leg_is_legal() -> list[str]:
                      ).replace("type: location", "type: event")
 
     tmp, world = _temp_world("canonlint-from-", {
-        "alice": _card("alice", ""), "bob": _card("bob", ""),
-        "sword": _card("sword", ""),
+        "alice": _card("alice", "").replace("type: location", "type: character"),
+        "bob": _card("bob", "").replace("type: location", "type: character"),
+        "sword": _card("sword", "").replace("type: location", "type: item"),
         "ev-give": ev("ev-give", "transfer",
                       "by:\n  - alice\nfrom:\n  - alice\nobject:\n  - sword\nto:\n  - bob\n"),
         "ev-grant": ev("ev-grant", "grant",
@@ -2291,8 +2328,9 @@ def check_from_leg_is_legal() -> list[str]:
 
     # 缺 from 仍然合法：旧世界不能被判红（fail-open）
     tmp, world = _temp_world("canonlint-from-absent-", {
-        "alice": _card("alice", ""), "bob": _card("bob", ""),
-        "sword": _card("sword", ""),
+        "alice": _card("alice", "").replace("type: location", "type: character"),
+        "bob": _card("bob", "").replace("type: location", "type: character"),
+        "sword": _card("sword", "").replace("type: location", "type: item"),
         "ev-give": ev("ev-give", "transfer",
                       "by:\n  - alice\nobject:\n  - sword\nto:\n  - bob\n"),
     })
@@ -2952,6 +2990,167 @@ def check_layer_shape_does_not_crash() -> list[str]:
                 problems.append(f"layer 坏形状（{label}）应因 CA102 exit 1，实际 {code}")
             if not any("[CA102]" in ln and "bad.md" in ln for ln in out.splitlines()):
                 problems.append(f"layer 坏形状（{label}）应报 CA102：\n{out}")
+    return problems
+
+
+def check_x_kind_cycles_are_reported() -> list[str]:
+    """#38 52–56：x- 是泄压阀，但 x- 类别成环/自环不能被 CA502 静默。"""
+    problems = []
+    cards = {
+        "a": _card("a", (
+            "load_bearing: true\nlayer: economy\n"
+            "depends_on:\n  - id: b\n    kind: x-loop\n    critical: true\n"
+        ), load_bearing=True, body=_issue38_body("a")).replace(
+            "type: location", "type: faction"),
+        "b": _card("b", (
+            "load_bearing: true\nlayer: economy\n"
+            "depends_on:\n  - id: a\n    kind: x-loop\n    critical: true\n"
+        ), load_bearing=True, body=_issue38_body("b")).replace(
+            "type: location", "type: faction"),
+        "c": _card("c", (
+            "load_bearing: true\nlayer: economy\n"
+            "depends_on:\n  - id: c\n    kind: x-loop\n    critical: true\n"
+        ), load_bearing=True, body=_issue38_body("c")).replace(
+            "type: location", "type: faction"),
+        "d": _card("d", (
+            "load_bearing: true\nlayer: economy\n"
+            "depends_on:\n  - id: e\n    kind: x-loop\n    critical: true\n"
+        ), load_bearing=True, body=_issue38_body("d")).replace(
+            "type: location", "type: faction"),
+        "e": _card("e", "load_bearing: true\nlayer: resource\n",
+                   load_bearing=True, body=_issue38_body("e")).replace(
+            "type: location", "type: faction"),
+    }
+    tmp, world = _temp_world("canonlint-x-kind-cycle-", cards)
+    with tmp:
+        for label, env in (("registry", None),
+                           ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+            if env is None:
+                code, out, err = _judge(world)
+            else:
+                code, out, err = _judge_env(world, env)
+            if "Traceback" in err:
+                problems.append(f"x- 成环（{label}）写出了 traceback：\n{err}")
+            if code != 1:
+                problems.append(f"x- 成环（{label}）应因 CA502 exit 1，实际 {code}")
+            if out.count("[CA502]") != 2:
+                problems.append(
+                    f"x- 成环（{label}）应报 2 个环（a↔b、c 自环）且不把 d→e 误报，实际：\n{out}")
+    return problems
+
+
+def check_ca201_catches_short_exact_duplicates() -> list[str]:
+    """#38：96 字的完全重复正文不再因「低于 100 字」静默。"""
+    problems = []
+    body = "同一段正文" * 16  # 80 字
+    cards = {
+        "a-dup": _card("a-dup", status="canon", body=body),
+        "b-dup": _card("b-dup", status="canon", body=body),
+    }
+    tmp, world = _temp_world("canonlint-ca201-short-", cards)
+    with tmp:
+        for label, env in (("registry", None),
+                           ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
+            if env is None:
+                _, out, _ = _judge(world)
+            else:
+                _, out, _ = _judge_env(world, env)
+            if "[CA201]" not in out:
+                problems.append(f"短正文精确重复（{label}）漏报 CA201：\n{out}")
+    # 反面：不同的短正文不报
+    tmp2, world2 = _temp_world("canonlint-ca201-short-ok-", {
+        "a-dup": _card("a-dup", status="canon", body=body),
+        "b-dup": _card("b-dup", status="canon", body="另一段不同的正文" * 10),
+    })
+    with tmp2:
+        _, out, _ = _judge(world2)
+        if "[CA201]" in out:
+            problems.append(f"不同的短正文误报 CA201：\n{out}")
+    return problems
+
+
+def check_event_leg_types_are_checked() -> list[str]:
+    """#38：事件腿指向的实体类型必须与事件语义相符（CA717）。"""
+    problems = []
+
+    def ev(eid: str, kind: str, legs: str) -> str:
+        return _card(eid, f"when: 元年\nevent_kind: {kind}\nwhen_sort: 1\n{legs}"
+                     ).replace("type: location", "type: event")
+
+    def typed(eid: str, t: str) -> str:
+        return _card(eid, "").replace("type: location", f"type: {t}")
+
+    cases = [
+        ("剑当施动者", ev("ev-x", "transfer",
+                        "by:\n  - sword\nobject:\n  - stone\nto:\n  - bob\n"),
+         "CA717", True),
+        ("move 到人", ev("ev-x", "move", "object:\n  - alice\nto:\n  - bob\n"),
+         "CA717", True),
+        ("join 到人", ev("ev-x", "join", "by:\n  - alice\nto:\n  - bob\n"),
+         "CA717", True),
+        ("正常转让", ev("ev-x", "transfer",
+                       "by:\n  - alice\nobject:\n  - stone\nto:\n  - bob\n"),
+         "CA717", False),
+    ]
+    for label, event_card, rule, want in cases:
+        cards = {
+            "alice": typed("alice", "character"),
+            "bob": typed("bob", "character"),
+            "sword": typed("sword", "item"),
+            "stone": typed("stone", "item"),
+            "home": typed("home", "location"),
+            "ev-x": event_card,
+        }
+        tmp, world = _temp_world("canonlint-ca717-", cards)
+        with tmp:
+            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
+                            {"WGP_JUDGE_BACKEND": "legacy"}):
+                merged = dict(os.environ)
+                merged.update(backend)
+                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                    capture_output=True, text=True, env=merged)
+                hit = f"[{rule}]" in p1.stdout
+                if want and not hit:
+                    problems.append(f"{label}（{backend}）漏报 {rule}：\n{p1.stdout}")
+                if not want and hit:
+                    problems.append(f"{label}（{backend}）误报 {rule}：\n{p1.stdout}")
+    return problems
+
+
+def check_when_and_when_sort_must_agree() -> list[str]:
+    """#38：when 是数字时，故事时间与 when_sort 方向不能相反（CA716 warning）。"""
+    problems = []
+    def world_for(when_a: str, when_b: str, ts_a: str = "1", ts_b: str = "2"):
+        cards = {
+            "obj": _card("obj", body=_issue38_body("obj")).replace(
+                "type: location", "type: item"),
+            "ev-a": _card("ev-a", (
+                f"when: {when_a}\nevent_kind: create\nwhen_sort: {ts_a}\nobject:\n  - obj\n"
+            ), body=_issue38_body("ev-a")).replace("type: location", "type: event"),
+            "ev-b": _card("ev-b", (
+                f"when: {when_b}\nevent_kind: destroy\nwhen_sort: {ts_b}\nobject:\n  - obj\n"
+            ), body=_issue38_body("ev-b")).replace("type: location", "type: event"),
+        }
+        return _temp_world("canonlint-ca716-", cards)
+    cases = [
+        ("when 反向", "5", "2", True),
+        ("when 同向", "2", "5", False),
+        ("when 是文本", "元年", "二年", False),
+    ]
+    for label, when_a, when_b, want in cases:
+        tmp, world = world_for(when_a, when_b)
+        with tmp:
+            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
+                            {"WGP_JUDGE_BACKEND": "legacy"}):
+                merged = dict(os.environ)
+                merged.update(backend)
+                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                    capture_output=True, text=True, env=merged)
+                hit = "[CA716]" in p1.stdout
+                if want and not hit:
+                    problems.append(f"{label}（{backend}）漏报 CA716：\n{p1.stdout}")
+                if not want and hit:
+                    problems.append(f"{label}（{backend}）误报 CA716：\n{p1.stdout}")
     return problems
 
 
@@ -3889,12 +4088,12 @@ def check_registry_ca_dual_run() -> list[str]:
         "CA501", "CA502", "CA503", "CA504", "CA505",
         "CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
         "CA707", "CA708", "CA709", "CA710", "CA711", "CA712", "CA713",
-        "CA714", "CA715",
+        "CA714", "CA715", "CA716", "CA717",
     }
     world_rules = {
         "CA114", "CA201", "CA403", "CA405", "CA502", "CA504", "CA505",
         "CA701", "CA703", "CA704", "CA705", "CA707", "CA708", "CA709",
-        "CA710", "CA711", "CA712", "CA713", "CA714", "CA715",
+        "CA710", "CA711", "CA712", "CA713", "CA714", "CA715", "CA716", "CA717",
     }
     index_rules = {"CA501", "CA503"}
     try:
@@ -4240,6 +4439,10 @@ def main() -> int:
         ("issue #38 端点类：CA714 重复/顺序端点事件", check_endpoint_events_are_unique),
         ("issue #38 元数据/自指：title/author 类型与关系自指", check_issue38_misc_shape_and_selfref),
         ("issue #38 状态门禁：canon 卡引用非 canon 目标报 CA715", check_canon_card_referencing_non_canon),
+        ("issue #38 x- 实验类别成环也要报 CA502", check_x_kind_cycles_are_reported),
+        ("issue #38 when 与 when_sort 反向报 CA716", check_when_and_when_sort_must_agree),
+        ("issue #38 短正文精确重复也报 CA201", check_ca201_catches_short_exact_duplicates),
+        ("issue #38 事件腿类型与事件语义对不上报 CA717", check_event_leg_types_are_checked),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),

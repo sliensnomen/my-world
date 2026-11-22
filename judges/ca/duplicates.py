@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import difflib
 
-from .vocab import MIN_DUP_CHARS
+from .vocab import MIN_DUP_CHARS, MIN_EXACT_DUP_CHARS
 
 
 def _supersede_pairs(index) -> set[frozenset[str]]:
@@ -25,6 +25,23 @@ def check_ca201(world: dict, emit) -> None:
     threshold = world["dup_threshold"]
     exempt = _supersede_pairs(index)
     items = [(e.id, e.rel, e.clean_body) for e in index.values() if not e.parse_error]
+    exact: dict[str, list[tuple[str, str]]] = {}
+    for item in items:
+        body = item[2]
+        if MIN_EXACT_DUP_CHARS <= len(body) < MIN_DUP_CHARS:
+            exact.setdefault(body, []).append((item[0], item[1]))
+    for body, group in exact.items():
+        if len(group) < 2:
+            continue
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                id_i, rel_i = group[i]
+                id_j, rel_j = group[j]
+                if id_i and id_j and frozenset((id_i, id_j)) in exempt:
+                    continue
+                emit("warning", f"{rel_i} ↔ {rel_j}",
+                     f"正文完全重复（{len(body)} 字，低于常规查重长度 {MIN_DUP_CHARS}）"
+                     "——精确重复不设长度豁免，疑似重复")
     items = [item for item in items if len(item[2]) >= MIN_DUP_CHARS]
     for i in range(len(items)):
         for j in range(i + 1, len(items)):
