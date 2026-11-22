@@ -1,6 +1,6 @@
 """CA 协议词表与阈值：唯一定义点。
 
-canonlint.py 的 legacy 后端与 judges/ca 的 registry 后端都从这里转发
+canonlint.py 与 judges/ca 都从这里转发（唯一一份字面量，禁止在别处再绑定）
 （评审 docs/代码评审报告-架构.md §4.2：原先这些常量字面量双抄，只靠输出级
 双跑贴住，夹具没踩到的漂移抓不住）。改动这里的任何值 = 协议变更，须按
 AGENTS.md 升 PROTOCOL_VERSION 并同步 PROTOCOL.md §6.3 规则表；

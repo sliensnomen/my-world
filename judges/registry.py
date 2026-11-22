@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import importlib
-import os
 from types import MappingProxyType
 from typing import Mapping
 
@@ -127,16 +126,6 @@ def _validate_rule(rule: Rule) -> None:
             f"规则 {rule.id} 的 default_level={rule.default_level!r} 不在 levels 中")
     if not callable(rule.check):
         raise RegistryError(f"规则 {rule.id} 的 check 不可调用")
-
-
-def load_backend(env=None) -> str:
-    """读取判定后端；缺省使用 registry，非法值在任何审计前失败。"""
-    env = os.environ if env is None else env
-    backend = env.get("WGP_JUDGE_BACKEND", "registry")
-    if backend not in ("legacy", "registry"):
-        raise RegistryError(
-            f"WGP_JUDGE_BACKEND={backend!r} 非法，只接受 legacy 或 registry")
-    return backend
 
 
 def select_packs(engine: str, names) -> Registry:

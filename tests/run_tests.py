@@ -29,7 +29,6 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
-from judges.compare import assert_cli_equal, normalized_cli_result
 SNAPS = HERE / "snapshots"
 TOOL = ROOT / "canonlint.py"
 PY = sys.executable
@@ -269,15 +268,6 @@ def _temp_world(prefix: str, entries: dict[str, str]) -> tuple[str, Path]:
 def _judge(world: Path, *args: str) -> tuple[int, str, str]:
     p = subprocess.run([PY, str(TOOL), str(world), *args], cwd=ROOT,
                        capture_output=True, text=True)
-    return p.returncode, p.stdout, p.stderr
-
-
-def _judge_env(world: Path, env: dict[str, str],
-               *args: str) -> tuple[int, str, str]:
-    merged = dict(os.environ)
-    merged.update(env)
-    p = subprocess.run([PY, str(TOOL), str(world), *args], cwd=ROOT,
-                       capture_output=True, text=True, env=merged)
     return p.returncode, p.stdout, p.stderr
 
 
@@ -2007,45 +1997,6 @@ def check_ledger_command_is_readonly_report() -> list[str]:
              for p in sorted(world.rglob("*")) if p.is_file()}
     if before != after:
         problems.append("ledger 子命令改动了世界目录（只读纪律被破坏）")
-
-    import contextlib
-    import io
-    from unittest import mock
-    import canonlint
-
-    results = {}
-    for backend in ("legacy", "registry"):
-        out, err = io.StringIO(), io.StringIO()
-        try:
-            with contextlib.ExitStack() as stack:
-                stack.enter_context(mock.patch.dict(
-                    os.environ, {"WGP_JUDGE_BACKEND": backend}))
-                stack.enter_context(mock.patch.object(
-                    sys, "argv", ["canonlint", "ledger", str(world)]))
-                if backend == "registry":
-                    stack.enter_context(mock.patch.object(
-                        canonlint, "check_ledger",
-                        side_effect=AssertionError("Registry ledger 不得调用 legacy check_ledger")))
-                stack.enter_context(contextlib.redirect_stdout(out))
-                stack.enter_context(contextlib.redirect_stderr(err))
-                code = canonlint.main()
-        except Exception as exc:
-            problems.append(f"ledger/{backend} 双跑异常：{type(exc).__name__}: {exc}")
-            continue
-        results[backend] = normalized_cli_result(code, out.getvalue(), err.getvalue(), world)
-    if len(results) == 2:
-        try:
-            assert_cli_equal(results["legacy"], results["registry"])
-        except AssertionError as e:
-            problems.append(f"ledger 子命令双后端报告不同：{e}")
-
-    p = subprocess.run([PY, str(TOOL), "ledger", "tests/world-ledger"],
-                       cwd=ROOT, capture_output=True, text=True,
-                       env=dict(os.environ, WGP_JUDGE_BACKEND="future"))
-    if (p.returncode != 2 or p.stdout or "WGP_JUDGE_BACKEND" not in p.stderr
-            or "Traceback" in p.stderr):
-        problems.append("ledger 非法后端应在报告前 exit 2 且无 stdout："
-                        f"exit={p.returncode}, stdout={p.stdout!r}, stderr={p.stderr!r}")
     return problems
 
 
@@ -2643,23 +2594,13 @@ def check_null_relation_fields_are_shape_errors() -> list[str]:
     for label, text in cases.items():
         tmp, world = _temp_world("canonlint-null-rel-", {"a": text})
         with tmp:
-            for backend, env in (("registry", None),
-                                 ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
-                if env is None:
-                    code, out, err = _judge(world, "--strict")
-                else:
-                    code, env2 = None, env
-                    merged = dict(os.environ); merged.update(env)
-                    p = subprocess.run([PY, str(TOOL), str(world), "--strict"],
-                                       cwd=ROOT, capture_output=True, text=True,
-                                       env=merged)
-                    code, out, err = p.returncode, p.stdout, p.stderr
-                if err:
-                    problems.append(f"null 关系字段（{label}/{backend}）traceback：\n{err}")
-                if code != 1:
-                    problems.append(f"null 关系字段（{label}/{backend}）应 --strict exit 1，实际 {code}：\n{out}")
-                if not any("[CA109]" in ln and "a.md" in ln for ln in out.splitlines()):
-                    problems.append(f"null 关系字段（{label}/{backend}）应报 CA109：\n{out}")
+            code, out, err = _judge(world, "--strict")
+            if err:
+                problems.append(f"null 关系字段（{label}）traceback：\n{err}")
+            if code != 1:
+                problems.append(f"null 关系字段（{label}）应 --strict exit 1，实际 {code}：\n{out}")
+            if not any("[CA109]" in ln and "a.md" in ln for ln in out.splitlines()):
+                problems.append(f"null 关系字段（{label}）应报 CA109：\n{out}")
     return problems
 
 
@@ -2674,17 +2615,13 @@ def check_ca111_recognizes_contract_alias_spellings() -> list[str]:
     }
     tmp, world = _temp_world("canonlint-ca111-alias-", cards)
     with tmp:
-        for backend, env in (("registry", None), ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
-            merged = dict(os.environ)
-            if env:
-                merged.update(env)
-            p = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
-                               capture_output=True, text=True, env=merged)
-            out, err = p.stdout, p.stderr
-            if err:
-                problems.append(f"depends-on 别名（{backend}）traceback：\n{err}")
-            if not any("[CA111]" in ln and "a.md" in ln for ln in out.splitlines()):
-                problems.append(f"depends-on 别名的迁移提示缺失（{backend}）：\n{out}")
+        p = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                           capture_output=True, text=True)
+        out, err = p.stdout, p.stderr
+        if err:
+            problems.append(f"depends-on 别名 traceback：\n{err}")
+        if not any("[CA111]" in ln and "a.md" in ln for ln in out.splitlines()):
+            problems.append(f"depends-on 别名的迁移提示缺失：\n{out}")
     return problems
 
 
@@ -2777,19 +2714,15 @@ def check_ca103_rejects_datetime() -> list[str]:
                                          "date: 2026-01-01T08:00:00")
     tmp, world = _temp_world("canonlint-datetime-", {"a": text})
     with tmp:
-        for backend, env in (("registry", None), ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
-            merged = dict(os.environ)
-            if env:
-                merged.update(env)
-            p = subprocess.run([PY, str(TOOL), str(world), "--strict"], cwd=ROOT,
-                               capture_output=True, text=True, env=merged)
-            out, err = p.stdout, p.stderr
-            if err:
-                problems.append(f"datetime date（{backend}）traceback：\n{err}")
-            if p.returncode != 1:
-                problems.append(f"datetime date（{backend}）应 --strict exit 1，实际 {p.returncode}：\n{out}")
-            if not any("[CA103]" in ln for ln in out.splitlines()):
-                problems.append(f"datetime date（{backend}）应报 CA103：\n{out}")
+        p = subprocess.run([PY, str(TOOL), str(world), "--strict"], cwd=ROOT,
+                           capture_output=True, text=True)
+        out, err = p.stdout, p.stderr
+        if err:
+            problems.append(f"datetime date traceback：\n{err}")
+        if p.returncode != 1:
+            problems.append(f"datetime date 应 --strict exit 1，实际 {p.returncode}：\n{out}")
+        if not any("[CA103]" in ln for ln in out.splitlines()):
+            problems.append(f"datetime date 应报 CA103：\n{out}")
     return problems
 
 
@@ -2976,14 +2909,10 @@ def check_layer_shape_does_not_crash() -> list[str]:
     with tmp:
         checks = [
             ("registry", None, ()),
-            ("legacy", {"WGP_JUDGE_BACKEND": "legacy"}, ()),
             ("registry --impact", None, ("--impact", "src")),
         ]
         for label, env, args in checks:
-            if env is None:
-                code, out, err = _judge(world, *args)
-            else:
-                code, out, err = _judge_env(world, env, *args)
+            code, out, err = _judge(world, *args)
             if err:
                 problems.append(f"layer 坏形状（{label}）把 traceback 写到 stderr：\n{err}")
             if code != 1:
@@ -3023,19 +2952,14 @@ def check_x_kind_cycles_are_reported() -> list[str]:
     }
     tmp, world = _temp_world("canonlint-x-kind-cycle-", cards)
     with tmp:
-        for label, env in (("registry", None),
-                           ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
-            if env is None:
-                code, out, err = _judge(world)
-            else:
-                code, out, err = _judge_env(world, env)
-            if "Traceback" in err:
-                problems.append(f"x- 成环（{label}）写出了 traceback：\n{err}")
-            if code != 1:
-                problems.append(f"x- 成环（{label}）应因 CA502 exit 1，实际 {code}")
-            if out.count("[CA502]") != 2:
-                problems.append(
-                    f"x- 成环（{label}）应报 2 个环（a↔b、c 自环）且不把 d→e 误报，实际：\n{out}")
+        code, out, err = _judge(world)
+        if "Traceback" in err:
+            problems.append(f"x- 成环写出了 traceback：\n{err}")
+        if code != 1:
+            problems.append(f"x- 成环应因 CA502 exit 1，实际 {code}")
+        if out.count("[CA502]") != 2:
+            problems.append(
+                f"x- 成环应报 2 个环（a↔b、c 自环）且不把 d→e 误报，实际：\n{out}")
     return problems
 
 
@@ -3049,14 +2973,9 @@ def check_ca201_catches_short_exact_duplicates() -> list[str]:
     }
     tmp, world = _temp_world("canonlint-ca201-short-", cards)
     with tmp:
-        for label, env in (("registry", None),
-                           ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
-            if env is None:
-                _, out, _ = _judge(world)
-            else:
-                _, out, _ = _judge_env(world, env)
-            if "[CA201]" not in out:
-                problems.append(f"短正文精确重复（{label}）漏报 CA201：\n{out}")
+        _, out, _ = _judge(world)
+        if "[CA201]" not in out:
+            problems.append(f"短正文精确重复漏报 CA201：\n{out}")
     # 反面：不同的短正文不报
     tmp2, world2 = _temp_world("canonlint-ca201-short-ok-", {
         "a-dup": _card("a-dup", status="canon", body=body),
@@ -3145,17 +3064,13 @@ def check_event_leg_types_are_checked() -> list[str]:
         }
         tmp, world = _temp_world("canonlint-ca717-", cards)
         with tmp:
-            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
-                            {"WGP_JUDGE_BACKEND": "legacy"}):
-                merged = dict(os.environ)
-                merged.update(backend)
-                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
-                                    capture_output=True, text=True, env=merged)
-                hit = f"[{rule}]" in p1.stdout
-                if want and not hit:
-                    problems.append(f"{label}（{backend}）漏报 {rule}：\n{p1.stdout}")
-                if not want and hit:
-                    problems.append(f"{label}（{backend}）误报 {rule}：\n{p1.stdout}")
+            p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                capture_output=True, text=True)
+            hit = f"[{rule}]" in p1.stdout
+            if want and not hit:
+                problems.append(f"{label} 漏报 {rule}：\n{p1.stdout}")
+            if not want and hit:
+                problems.append(f"{label} 误报 {rule}：\n{p1.stdout}")
     return problems
 
 
@@ -3182,17 +3097,13 @@ def check_when_and_when_sort_must_agree() -> list[str]:
     for label, when_a, when_b, want in cases:
         tmp, world = world_for(when_a, when_b)
         with tmp:
-            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
-                            {"WGP_JUDGE_BACKEND": "legacy"}):
-                merged = dict(os.environ)
-                merged.update(backend)
-                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
-                                    capture_output=True, text=True, env=merged)
-                hit = "[CA716]" in p1.stdout
-                if want and not hit:
-                    problems.append(f"{label}（{backend}）漏报 CA716：\n{p1.stdout}")
-                if not want and hit:
-                    problems.append(f"{label}（{backend}）误报 CA716：\n{p1.stdout}")
+            p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                capture_output=True, text=True)
+            hit = "[CA716]" in p1.stdout
+            if want and not hit:
+                problems.append(f"{label} 漏报 CA716：\n{p1.stdout}")
+            if not want and hit:
+                problems.append(f"{label} 误报 CA716：\n{p1.stdout}")
     return problems
 
 
@@ -3224,22 +3135,17 @@ def check_ca703_creation_exemption_is_first_transfer_only() -> list[str]:
     }
     tmp, world = _temp_world("canonlint-ca703-first-", cards)
     with tmp:
-        for label, env in (("registry", None),
-                           ("legacy", {"WGP_JUDGE_BACKEND": "legacy"})):
-            if env is None:
-                code, out, err = _judge(world, "--strict")
-            else:
-                code, out, err = _judge_env(world, env, "--strict")
-            if err:
-                problems.append(f"CA703 首笔豁免（{label}）把 traceback 写到了 stderr：\n{err}")
-            if code != 1:
-                problems.append(f"CA703 第二笔非持有人交出应 --strict exit 1，实际 {code}：\n{out}")
-            if not any("[CA703]" in ln and "ev-t2.md" in ln
-                       and "交出者不是持有人" in ln and "alice" in ln
-                       for ln in out.splitlines()):
-                problems.append(f"第二笔由 alice 交出应在 ev-t2 报 CA703（{label}）：\n{out}")
-            if any("[CA703]" in ln and "ev-t1.md" in ln for ln in out.splitlines()):
-                problems.append(f"create 后的第一笔转手应豁免 CA703（{label}）：\n{out}")
+        code, out, err = _judge(world, "--strict")
+        if err:
+            problems.append(f"CA703 首笔豁免把 traceback 写到了 stderr：\n{err}")
+        if code != 1:
+            problems.append(f"CA703 第二笔非持有人交出应 --strict exit 1，实际 {code}：\n{out}")
+        if not any("[CA703]" in ln and "ev-t2.md" in ln
+                   and "交出者不是持有人" in ln and "alice" in ln
+                   for ln in out.splitlines()):
+            problems.append(f"第二笔由 alice 交出应在 ev-t2 报 CA703：\n{out}")
+        if any("[CA703]" in ln and "ev-t1.md" in ln for ln in out.splitlines()):
+            problems.append(f"create 后的第一笔转手应豁免 CA703：\n{out}")
     return problems
 
 
@@ -3256,17 +3162,13 @@ def check_canon_card_referencing_non_canon() -> list[str]:
             target_card = target_card.replace("status: draft", "status: canon")
         tmp, world = _temp_world(f"world-ca715-{label}-", {"lord": canon, "relic": target_card})
         try:
-            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
-                            {"WGP_JUDGE_BACKEND": "legacy"}):
-                merged = dict(os.environ)
-                merged.update(backend)
-                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
-                                    capture_output=True, text=True, env=merged)
-                hit = "[CA715]" in p1.stdout
-                if want and not hit:
-                    problems.append(f"{label}（{backend}）漏报 CA715：\n{p1.stdout}")
-                if not want and hit:
-                    problems.append(f"{label}（{backend}）误报 CA715：\n{p1.stdout}")
+            p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                capture_output=True, text=True)
+            hit = "[CA715]" in p1.stdout
+            if want and not hit:
+                problems.append(f"{label} 漏报 CA715：\n{p1.stdout}")
+            if not want and hit:
+                problems.append(f"{label} 误报 CA715：\n{p1.stdout}")
         finally:
             tmp.cleanup()
     return problems
@@ -3284,16 +3186,11 @@ def check_issue38_misc_shape_and_selfref() -> list[str]:
     for label, (card, rule, needle) in cases.items():
         tmp, world = _temp_world(f"world-misc-{label}-", {"card": card})
         try:
-            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
-                            {"WGP_JUDGE_BACKEND": "legacy"}):
-                merged = dict(os.environ)
-                merged.update(backend)
-                p1 = subprocess.run([PY, str(TOOL), str(world), "--strict"],
-                                    cwd=ROOT, capture_output=True, text=True,
-                                    env=merged)
-                lines = [ln for ln in p1.stdout.splitlines() if f"[{rule}]" in ln]
-                if not lines or not any(needle in ln for ln in lines):
-                    problems.append(f"{label}（{backend}）漏报 {rule} {needle}：\n{p1.stdout}")
+            p1 = subprocess.run([PY, str(TOOL), str(world), "--strict"],
+                                cwd=ROOT, capture_output=True, text=True)
+            lines = [ln for ln in p1.stdout.splitlines() if f"[{rule}]" in ln]
+            if not lines or not any(needle in ln for ln in lines):
+                problems.append(f"{label} 漏报 {rule} {needle}：\n{p1.stdout}")
         finally:
             tmp.cleanup()
     return problems
@@ -3309,15 +3206,9 @@ def check_ca505_ignores_event_layer() -> list[str]:
     def run(entries: dict[str, str], label: str) -> str:
         tmp, world = _temp_world(f"world-ca505-{label}-", entries)
         try:
-            out = []
-            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
-                            {"WGP_JUDGE_BACKEND": "legacy"}):
-                merged = dict(os.environ)
-                merged.update(backend)
-                p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
-                                    capture_output=True, text=True, env=merged)
-                out.append(p1.stdout)
-            return "\n".join(out)
+            p1 = subprocess.run([PY, str(TOOL), str(world)], cwd=ROOT,
+                                capture_output=True, text=True)
+            return p1.stdout
         finally:
             tmp.cleanup()
 
@@ -3345,18 +3236,13 @@ def check_endpoint_events_are_unique() -> list[str]:
     def check(label: str, entries: dict[str, str], want: bool) -> None:
         tmp, world = _temp_world(f"world-endpoint-{label}-", entries)
         try:
-            for backend in ({"WGP_JUDGE_BACKEND": "registry"},
-                            {"WGP_JUDGE_BACKEND": "legacy"}):
-                merged = dict(os.environ)
-                merged.update(backend)
-                p1 = subprocess.run([PY, str(TOOL), str(world), "--strict"],
-                                    cwd=ROOT, capture_output=True, text=True,
-                                    env=merged)
-                hit = "[CA714]" in p1.stdout
-                if want and not hit:
-                    problems.append(f"{label}（{backend}）漏报 CA714：\n{p1.stdout}")
-                if not want and hit:
-                    problems.append(f"{label}（{backend}）误报 CA714：\n{p1.stdout}")
+            p1 = subprocess.run([PY, str(TOOL), str(world), "--strict"],
+                                cwd=ROOT, capture_output=True, text=True)
+            hit = "[CA714]" in p1.stdout
+            if want and not hit:
+                problems.append(f"{label} 漏报 CA714：\n{p1.stdout}")
+            if not want and hit:
+                problems.append(f"{label} 误报 CA714：\n{p1.stdout}")
         finally:
             tmp.cleanup()
 
@@ -3441,16 +3327,11 @@ def check_impact_sees_shadowed_cards() -> list[str]:
     }
     tmp, world = _temp_world("world-shadow-impact-", entries)
     try:
-        for backend in (None, {"WGP_JUDGE_BACKEND": "legacy"}):
-            merged = dict(os.environ)
-            if backend:
-                merged.update(backend)
-            p1 = subprocess.run([PY, str(TOOL), str(world), "--impact", "subject"],
-                                cwd=ROOT, capture_output=True, text=True, env=merged)
-            out = p1.stdout
-            tag = "legacy" if backend else "registry"
-            if "[CA504]" not in out or "dup" not in out:
-                problems.append(f"CA504 下游闭包漏了被遮蔽卡（{tag}）：\n{out}")
+        p1 = subprocess.run([PY, str(TOOL), str(world), "--impact", "subject"],
+                            cwd=ROOT, capture_output=True, text=True)
+        out = p1.stdout
+        if "[CA504]" not in out or "dup" not in out:
+            problems.append(f"CA504 下游闭包漏了被遮蔽卡：\n{out}")
     finally:
         tmp.cleanup()
     return problems
@@ -3638,49 +3519,13 @@ def check_auto_id_when_slug_is_empty() -> list[str]:
     return problems
 
 
-def check_cli_normalization_and_root_masking() -> list[str]:
-    """CLI 双跑：临时根路径统一为 <WORLD>，其他字节不变；不同判定能被抓住。"""
-    problems = []
-    tmp, world = _temp_world("canonlint-compare-",
-                             {"a": _card("a", "canon_refs: [ghost-x]\n")})
-    with tmp:
-        code, out, err = _judge(world)
-        norm = normalized_cli_result(code, out, err, world)
-        code2, out2, err2 = _judge(world)
-        norm2 = normalized_cli_result(code2, out2, err2, world)
-        try:
-            assert_cli_equal(norm, norm2)
-        except AssertionError as e:
-            problems.append(f"同一世界两次 CLI 结果应相等：{e}")
-        tmp2, world2 = _temp_world("canonlint-compare2-",
-                                   {"a": _card("a", "canon_refs: [ghost-x]\n")})
-        with tmp2:
-            code3, out3, err3 = _judge(world2)
-            norm3 = normalized_cli_result(code3, out3, err3, world2)
-            try:
-                assert_cli_equal(norm, norm3)
-            except AssertionError as e:
-                problems.append(f"不同临时根路径规范化后应相等：{e}")
-        tmp3, world3 = _temp_world("canonlint-compare3-",
-                                   {"a": _card("a", "canon_refs: [ghost-y]\n")})
-        with tmp3:
-            code4, out4, err4 = _judge(world3)
-            norm4 = normalized_cli_result(code4, out4, err4, world3)
-            try:
-                assert_cli_equal(norm, norm4)
-                problems.append("不同判定结果应被比较器抓住")
-            except AssertionError:
-                pass
-    return problems
-
-
 def check_registry_loading_matrix() -> list[str]:
     """Registry 元数据与后端配置必须在任何规则执行前 fail-fast。"""
     problems = []
     try:
         from dataclasses import FrozenInstanceError
         from judges.model import Pack, Rule
-        from judges.registry import Registry, RegistryError, load_backend, select_packs
+        from judges.registry import Registry, RegistryError, select_packs
     except ImportError as e:
         return [f"Registry 类型应可导入：{e}"]
 
@@ -3741,14 +3586,6 @@ def check_registry_loading_matrix() -> list[str]:
         expect_error(label, lambda pack=pack: Registry({pack.name: pack}, (pack,)))
 
     expect_error("未知 Pack", lambda: select_packs("canonlint", ["missing"]))
-    expect_error("非法 WGP_JUDGE_BACKEND",
-                 lambda: load_backend({"WGP_JUDGE_BACKEND": "future"}))
-    if load_backend({}) != "registry":
-        problems.append("缺省 WGP_JUDGE_BACKEND 必须选择 registry")
-    if load_backend({"WGP_JUDGE_BACKEND": "legacy"}) != "legacy":
-        problems.append("显式 WGP_JUDGE_BACKEND=legacy 应选择 legacy 回退")
-    if load_backend({"WGP_JUDGE_BACKEND": "registry"}) != "registry":
-        problems.append("显式 WGP_JUDGE_BACKEND=registry 应选择 registry")
 
     rule = make_rule()
     pack = make_pack()
@@ -3780,36 +3617,19 @@ def check_registry_loading_matrix() -> list[str]:
         if actual != levels:
             problems.append(f"{rule_id} 的 levels 应保留 {{error, info}}，实际 {actual}")
 
-    p = subprocess.run([PY, str(TOOL), "tests/world-econ"], cwd=ROOT,
-                       capture_output=True, text=True,
-                       env=dict(os.environ, WGP_JUDGE_BACKEND="future"))
-    if p.returncode != 2 or p.stdout or "WGP_JUDGE_BACKEND" not in p.stderr:
-        problems.append("非法后端应在审计前 exit 2 且指明环境变量："
-                        f"exit={p.returncode}, stdout={p.stdout!r}, stderr={p.stderr!r}")
-
     with tempfile.TemporaryDirectory(prefix="canonlint-broken-econ-") as tmp:
         broken_tool = Path(tmp) / "canonlint.py"
         broken_tool.write_bytes(TOOL.read_bytes())
         (Path(tmp) / "econ.py").write_text(
             'raise ImportError("simulated: econ 不可用")\n', encoding="utf-8")
-        results = {}
-        for backend in ("legacy", "registry"):
-            p = subprocess.run(
-                [PY, str(broken_tool), "tests/world-econ", "--pack", "econ"],
-                cwd=ROOT, capture_output=True, text=True,
-                env=dict(os.environ, PYTHONPATH=os.pathsep.join((tmp, str(ROOT))),
-                         WGP_JUDGE_BACKEND=backend))
-            results[backend] = normalized_cli_result(
-                p.returncode, p.stdout, p.stderr, HERE / "world-econ")
-        try:
-            assert_cli_equal(results["legacy"], results["registry"])
-        except AssertionError as e:
-            problems.append(f"econ 不可用时双后端错误合同不同：{e}")
+        p = subprocess.run(
+            [PY, str(broken_tool), "tests/world-econ", "--pack", "econ"],
+            cwd=ROOT, capture_output=True, text=True,
+            env=dict(os.environ, PYTHONPATH=os.pathsep.join((tmp, str(ROOT)))))
         expected = "error: 扩展包 econ 不可用（econ.py 应与 canonlint.py 同目录）\n"
-        for backend, (code, stdout, stderr) in results.items():
-            if code != 2 or stdout or stderr != expected:
-                problems.append(f"{backend}/econ 不可用应保留既有错误："
-                                f"exit={code}, stdout={stdout!r}, stderr={stderr!r}")
+        if p.returncode != 2 or p.stdout or p.stderr != expected:
+            problems.append(f"econ 不可用应保留既有错误："
+                            f"exit={p.returncode}, stdout={p.stdout!r}, stderr={p.stderr!r}")
     return problems
 
 
@@ -3835,291 +3655,14 @@ def check_registry_caches_econ_module_but_keeps_duplicate_selection() -> list[st
     return problems
 
 
-def _registry_ca_raw_run(world, backend, names=(), impact=()):
-    from unittest import mock
-    import canonlint
-    from judges.registry import load_backend
-
-    with mock.patch.dict(os.environ, {"WGP_JUDGE_BACKEND": backend}):
-        if load_backend() != backend:
-            raise AssertionError(f"后端选择错误：{backend}")
-        packs, extra_known = canonlint._load_packs(list(names))
-        if backend == "registry":
-            # 新旧两边若偷偷共用 legacy 判定，这里会立即丢失对应 Finding/report。
-            with mock.patch.object(canonlint, "check_structure", return_value=None), \
-                 mock.patch.object(canonlint, "check_content", return_value=None), \
-                 mock.patch.object(canonlint, "check_refs", return_value=None), \
-                 mock.patch.object(canonlint, "check_chain", return_value=None), \
-                 mock.patch.object(canonlint, "check_events", return_value=None), \
-                 mock.patch.object(canonlint, "check_ledger", return_value=None), \
-                 mock.patch.object(canonlint, "check_duplicates", return_value=None), \
-                 mock.patch.object(canonlint, "impact_report", return_value=None):
-                return canonlint.run(world, 0.85, list(impact), extra_known=extra_known,
-                                     packs=packs)
-        return canonlint.run(world, 0.85, list(impact), extra_known=extra_known, packs=packs)
-
-
-def _registry_ca_family_dual_run(family: str) -> list[str]:
-    """按族比较原始/排序子序列；每族都有真实阳性与阴性，而非只查注册表。"""
-    import canonlint
-    from judges.compare import finding_tuple
-
-    problems = []
-
-    def compare(label, world, rules, expected=(), forbidden=()):
-        legacy = _registry_ca_raw_run(world, "legacy")[2]
-        registry = _registry_ca_raw_run(world, "registry")[2]
-        old = [finding_tuple(f) for f in legacy if f.rule in rules]
-        new = [finding_tuple(f) for f in registry if f.rule in rules]
-        if old != new:
-            problems.append(f"{label}：族内原始 Finding 双跑不同\n旧 {old!r}\n新 {new!r}")
-        order = lambda f: (canonlint.LEVEL_ORDER.get(f.level, 3), f.rule, f.entry)
-        old_final = [finding_tuple(f) for f in sorted(legacy, key=order) if f.rule in rules]
-        new_final = [finding_tuple(f) for f in sorted(registry, key=order) if f.rule in rules]
-        if old_final != new_final:
-            problems.append(f"{label}：族内出口排序 Finding 双跑不同")
-        for backend, findings in (("legacy", legacy), ("registry", registry)):
-            got = {f.rule for f in findings if f.rule in rules}
-            missing = set(expected) - got
-            extra = got & set(forbidden)
-            if missing:
-                problems.append(f"{label}/{backend} 缺真实阳性 Finding：{sorted(missing)}")
-            if extra:
-                problems.append(f"{label}/{backend} 出现阴性禁报 Finding：{sorted(extra)}")
-        return legacy, registry
-
-    if family == "refs":
-        rules = {"CA401", "CA402", "CA403", "CA404", "CA405"}
-        compare("refs/world-bad", HERE / "world-bad", rules, expected=rules)
-        compare("refs/world-clean", HERE / "world-clean", rules, forbidden=rules)
-        cards = {
-            "old-with-successor": _card("old-with-successor", "superseded_by: new-canon\n",
-                                        status="archived"),
-            "old-without-successor": _card("old-without-successor", "superseded_by: null\n",
-                                           status="archived"),
-            "new-canon": _card("new-canon"),
-            "draft-target": _card("draft-target", status="draft"),
-            "trial-target": _card("trial-target", status="trial"),
-            "source": _card("source", (
-                "canon_refs:\n  - old-with-successor\n  - old-without-successor\n"
-                "  - draft-target\n  - trial-target\n  - ghost-ref\n"
-                "conflicts_with: []\n"
-                "depends_on:\n  - {id: draft-target, kind: resource, critical: true}\n"
-            ), template_relations=False),
-        }
-        tmp, world = _temp_world("canonlint-registry-refs-status-", cards)
-        with tmp:
-            _legacy, registry = compare(
-                "refs/archived-draft-trial", world, rules,
-                expected={"CA401", "CA402", "CA404", "CA405"})
-            if any(f.rule == "CA402" and "old-without-successor" in f.message
-                   for f in registry):
-                problems.append("refs：无承接者的 archived 目标应由 CA405 单报，不再叠 CA402")
-    elif family == "chain":
-        rules = {"CA501", "CA502", "CA503", "CA505"}
-        compare("chain/world-bad", HERE / "world-bad", rules,
-                expected={"CA501", "CA502", "CA503"})
-        compare("chain/critical-source-and-fiscal", HERE / "world-middle-earth", rules,
-                expected={"CA503", "CA505"})
-        compare("chain/world-clean", HERE / "world-clean", rules, forbidden=rules)
-    elif family == "events":
-        rules = {"CA102", "CA109", "CA702", "CA706"}
-        compare("events/world-ledger-bad", HERE / "world-ledger-bad", rules,
-                expected={"CA102", "CA702", "CA706"})
-        compare("events/world-ledger", HERE / "world-ledger", rules, forbidden=rules)
-        cards = {
-            "thing-x": _card("thing-x"),
-            "keep-y": _card("keep-y"),
-            "ev-bad-shape": _card("ev-bad-shape", (
-                "when: 某年\nevent_kind: move\nwhen_sort: 1\n"
-                "by: notalist\nobject:\n  - thing-x\nto:\n  - keep-y\n"
-            )).replace("type: location", "type: event"),
-            "ev-bad-items": _card("ev-bad-items", (
-                "when: 某年\nevent_kind: transfer\nwhen_sort: 2\n"
-                "by:\n  - 42\nto:\n  - keep-y\nobject:\n  - thing-x\n"
-            )).replace("type: location", "type: event"),
-        }
-        tmp, world = _temp_world("canonlint-registry-event-shapes-", cards)
-        with tmp:
-            compare("events/bad-legs-not-double-reported", world, rules,
-                    expected={"CA109"}, forbidden={"CA702"})
-    elif family == "ledger":
-        rules = {"CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
-                 "CA709", "CA710", "CA711", "CA712"}
-        compare("ledger/world-ledger-bad", HERE / "world-ledger-bad", rules,
-                expected={"CA701", "CA703", "CA704", "CA705", "CA708",
-                          "CA709", "CA710", "CA712"})
-        compare("ledger/world-ledger", HERE / "world-ledger", rules, forbidden=rules)
-        tmp, world = _temp_world("canonlint-registry-ca707-", {
-            "h1": _card("h1", "owns:\n  - gem-x\n"),
-            "h2": _card("h2", "owns:\n  - gem-x\n"),
-            "gem-x": _card("gem-x"),
-        })
-        with tmp:
-            compare("ledger/conflicting-owns", world, rules, expected={"CA707"})
-        tmp, world = _temp_world("canonlint-registry-ca711-", {
-            "wagon": _card("wagon"),
-            "pa": _card("pa"), "pb": _card("pb"), "pc": _card("pc"),
-            "ev-1": _card("ev-1", (
-                "when: 一年\nevent_kind: move\nwhen_sort: 1\n"
-                "object:\n  - wagon\nfrom:\n  - pa\nto:\n  - pb\n"
-            )).replace("type: location", "type: event"),
-            "ev-2": _card("ev-2", (
-                "when: 二年\nevent_kind: move\nwhen_sort: 2\n"
-                "object:\n  - wagon\nfrom:\n  - pc\nto:\n  - pa\n"
-            )).replace("type: location", "type: event"),
-        })
-        with tmp:
-            compare("ledger/trajectory-break", world, rules, expected={"CA711"})
-        tmp, world = _temp_world("canonlint-registry-time-ties-", {
-            "person": _card("person", "member_of:\n  - org\n").replace(
-                "type: location", "type: character"),
-            "org": _card("org").replace("type: location", "type: faction"),
-            "ev-death": _card("ev-death", (
-                "when: 同年\nevent_kind: death\nwhen_sort: 5\nobject:\n  - person\n"
-            )).replace("type: location", "type: event"),
-            "ev-join": _card("ev-join", (
-                "when: 同年\nevent_kind: join\nwhen_sort: 5\nby:\n  - person\nto:\n  - org\n"
-                "depends_on:\n  - {id: ev-death, kind: resource, critical: false}\n"
-            )).replace("type: location", "type: event"),
-            "ev-leave": _card("ev-leave", (
-                "when: 同年\nevent_kind: leave\nwhen_sort: 5\nby:\n  - person\nfrom:\n  - org\n"
-            )).replace("type: location", "type: event"),
-        })
-        with tmp:
-            compare("ledger/equal-time-is-not-history", world, rules, forbidden=rules)
-        tmp, world = _temp_world("canonlint-registry-tie-warnings-", {
-            "a": _card("a"), "b": _card("b"), "d": _card("d"),
-            "c": _card("c", "owns:\n  - relic\ncustody_of:\n  - relic\n"),
-            "relic": _card("relic"),
-            "ev-a": _card("ev-a", (
-                "when: 同年\nevent_kind: transfer\nwhen_sort: 5\n"
-                "by:\n  - a\nobject:\n  - relic\nto:\n  - d\n"
-            )).replace("type: location", "type: event"),
-            "ev-b": _card("ev-b", (
-                "when: 同年\nevent_kind: transfer\nwhen_sort: 5\n"
-                "by:\n  - b\nobject:\n  - relic\nto:\n  - c\n"
-            )).replace("type: location", "type: event"),
-            "ev-c": _card("ev-c", (
-                "when: 同年\nevent_kind: custody\nwhen_sort: 5\n"
-                "by:\n  - a\nobject:\n  - relic\nto:\n  - d\n"
-            )).replace("type: location", "type: event"),
-            "ev-d": _card("ev-d", (
-                "when: 同年\nevent_kind: custody\nwhen_sort: 5\n"
-                "by:\n  - b\nobject:\n  - relic\nto:\n  - b\n"
-            )).replace("type: location", "type: event"),
-        })
-        with tmp:
-            _legacy, registry = compare("ledger/tied-final-acts", world, rules,
-                                        expected={"CA704", "CA709"})
-            for rule_id in ("CA704", "CA709"):
-                levels = {f.level for f in registry if f.rule == rule_id}
-                if levels != {"warning", "error"}:
-                    problems.append(
-                        f"ledger：同刻受方不同时应是「未定序 warning + 断言不在交集 error」，"
-                        f"{rule_id} 实际 {levels}")
-                error_subjects = {f.entry for f in registry
-                                  if f.rule == rule_id and f.level == "error"}
-                if not any("c.md" in subj for subj in error_subjects):
-                    problems.append(
-                        f"ledger：{rule_id} 的 error 应落在 c.md（断言不在候选交集），实际 {error_subjects}")
-    elif family == "duplicates":
-        rules = {"CA201"}
-        compare("duplicates/world-bad", HERE / "world-bad", rules, expected=rules)
-        compare("duplicates/world-clean", HERE / "world-clean", rules, forbidden=rules)
-        body = "承接正文" * 80
-        tmp, world = _temp_world("canonlint-registry-supersede-duplicates-", {
-            "old": _card("old", "superseded_by: new\n", status="archived", body=body),
-            "new": _card("new", body=body),
-        })
-        with tmp:
-            compare("duplicates/supersede-pair-exempt", world, rules, forbidden=rules)
-    else:
-        raise ValueError(f"未知 CA 双跑族：{family}")
-    return problems
-
-
-def _registry_serve_write_dual_run() -> list[str]:
-    """真实 HTTP 写后审计：独立世界、响应字节、回滚与审计日志均双跑。"""
-    problems = []
-    try:
-        from unittest import mock
-        import threading
-        import urllib.error
-        import urllib.request
-        import canonlint
-        import serve
-        from judges.compare import (assert_http_equal, assert_log_equal,
-                                    normalized_http_result)
-    except ImportError as e:
-        return [f"serve 双跑依赖应可导入：{e}"]
-
-    results = {}
-    for backend in ("legacy", "registry"):
-        with mock.patch.dict(os.environ, {"WGP_JUDGE_BACKEND": backend}):
-            packs, extra_known = canonlint._load_packs([])
-        cards = {
-            "old-lore": _card("old-lore"),
-            "ref-1": _card("ref-1", "canon_refs:\n  - old-lore\nconflicts_with: []\n",
-                           template_relations=False),
-        }
-        tmp, world = _temp_world(f"canonlint-registry-serve-{backend}-", cards)
-        with tmp:
-            target = world / "entries/old-lore.md"
-            before = target.read_bytes()
-            log = world / "writes.jsonl"
-            httpd = serve.make_server(
-                world, "127.0.0.1", 0, packs=packs, extra_known=extra_known,
-                quiet=True, writable=True, write_log=log)
-            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-            thread.start()
-            try:
-                payload = json.dumps({"id": "old-lore", "status": "archived"}).encode()
-                request = urllib.request.Request(
-                    f"http://127.0.0.1:{httpd.server_address[1]}/api/status",
-                    data=payload, headers={"Content-Type": "application/json"}, method="POST")
-                try:
-                    with urllib.request.urlopen(request, timeout=20) as response:
-                        status, body, headers = response.status, response.read(), dict(response.headers)
-                except urllib.error.HTTPError as response:
-                    status, body, headers = response.code, response.read(), dict(response.headers)
-                results[backend] = {
-                    "http": normalized_http_result(status, body, headers),
-                    "log": log.read_text(encoding="utf-8").strip(),
-                    "rolled_back": target.read_bytes() == before,
-                    "status": status,
-                    "body": body,
-                }
-            finally:
-                httpd.shutdown()
-                httpd.server_close()
-                thread.join(timeout=2)
-
-    try:
-        assert_http_equal(results["legacy"]["http"], results["registry"]["http"])
-    except AssertionError as e:
-        problems.append(f"serve 写后审计 HTTP 双跑不同：{e}")
-    try:
-        assert_log_equal(results["legacy"]["log"], results["registry"]["log"], "fixed-ts")
-    except AssertionError as e:
-        problems.append(f"serve 写后审计日志双跑不同：{e}")
-    for backend, result in results.items():
-        if result["status"] != 422 or b"CA405" not in result["body"]:
-            problems.append(f"serve/{backend} 应由 CA405 拒绝降级并返回 422：{result['body']!r}")
-        if not result["rolled_back"]:
-            problems.append(f"serve/{backend} 的 CA405 写后审计没有回滚")
-    return problems
-
-
-def check_registry_ca_dual_run() -> list[str]:
-    """core-ca/econ 双跑：逐规则、原始与出口顺序、文本和 JSON 都必须等价。"""
+def check_registry_core_ca_pack() -> list[str]:
+    """core-ca 的注册面：44 条规则逐条登记、遍历域与级别齐全；CA504 只进 report。"""
     problems = []
     try:
         import canonlint
-        from judges.compare import finding_tuple
         from judges.registry import RegistryError, select_packs
     except ImportError as e:
-        return [f"Registry 双跑依赖应可导入：{e}"]
+        return [f"Registry 依赖应可导入：{e}"]
 
     structure_rules = {
         "CA100", "CA101", "CA102", "CA103", "CA104", "CA105", "CA106", "CA107",
@@ -4143,156 +3686,57 @@ def check_registry_ca_dual_run() -> list[str]:
         core = select_packs("canonlint", ["core-ca"]).selected[0]
     except RegistryError as e:
         problems.append(f"core-ca 应能显式加载：{e}")
-    else:
-        actual = {rule.id: rule for rule in core.rules}
-        if set(actual) != expected_rules:
-            problems.append(f"core-ca 逐规则注册不完整：缺 {sorted(expected_rules - set(actual))}，"
-                            f"多 {sorted(set(actual) - expected_rules)}")
-        for rule_id in sorted(expected_rules & set(actual)):
-            rule = actual[rule_id]
-            want_scope = "world" if rule_id in world_rules else "entry"
-            if rule.scope != want_scope:
-                problems.append(f"{rule_id} 的 scope 应为 {want_scope}，实际 {rule.scope}")
-            want_domain = "index_parseable" if rule_id in index_rules else "all_entries"
-            if want_scope == "entry" and rule.entry_domain != want_domain:
-                problems.append(f"{rule_id} 必须遍历 {want_domain}，实际 {rule.entry_domain}")
-        for rule_id in ("CA102", "CA108"):
-            if rule_id in actual and actual[rule_id].levels != frozenset({"error", "info"}):
-                problems.append(f"{rule_id} 必须登记 error/info 两种实际级别")
-        for rule_id in ("CA704", "CA709"):
-            if rule_id in actual and actual[rule_id].levels != frozenset({"error", "warning"}):
-                problems.append(f"{rule_id} 必须登记 error/warning 两种实际级别")
+        return problems
+    actual = {rule.id: rule for rule in core.rules}
+    if set(actual) != expected_rules:
+        problems.append(f"core-ca 逐规则注册不完整：缺 {sorted(expected_rules - set(actual))}，"
+                        f"多 {sorted(set(actual) - expected_rules)}")
+    for rule_id in sorted(expected_rules & set(actual)):
+        rule = actual[rule_id]
+        want_scope = "world" if rule_id in world_rules else "entry"
+        if rule.scope != want_scope:
+            problems.append(f"{rule_id} 的 scope 应为 {want_scope}，实际 {rule.scope}")
+        want_domain = "index_parseable" if rule_id in index_rules else "all_entries"
+        if want_scope == "entry" and rule.entry_domain != want_domain:
+            problems.append(f"{rule_id} 必须遍历 {want_domain}，实际 {rule.entry_domain}")
+    for rule_id in ("CA102", "CA108"):
+        if rule_id in actual and actual[rule_id].levels != frozenset({"error", "info"}):
+            problems.append(f"{rule_id} 必须登记 error/info 两种实际级别")
+    for rule_id in ("CA704", "CA709"):
+        if rule_id in actual and actual[rule_id].levels != frozenset({"error", "warning"}):
+            problems.append(f"{rule_id} 必须登记 error/warning 两种实际级别")
 
-    def raw_findings(world, backend, names=()):
-        return _registry_ca_raw_run(world, backend, names)[2]
-
-    def compare_findings(label, world, names=()):
-        legacy = raw_findings(world, "legacy", names)
-        registry = raw_findings(world, "registry", names)
-        legacy_raw = [finding_tuple(f) for f in legacy]
-        registry_raw = [finding_tuple(f) for f in registry]
-        if legacy_raw != registry_raw:
-            first = next((i for i, pair in enumerate(zip(legacy_raw, registry_raw))
-                          if pair[0] != pair[1]), min(len(legacy_raw), len(registry_raw)))
-            problems.append(
-                f"{label}：原始 Finding 双跑不同（首个差异 #{first}，"
-                f"旧 {len(legacy_raw)} 条 / 新 {len(registry_raw)} 条）\n"
-                f"旧片段 {legacy_raw[max(0, first - 1):first + 2]!r}\n"
-                f"新片段 {registry_raw[max(0, first - 1):first + 2]!r}")
-        order = lambda f: (canonlint.LEVEL_ORDER.get(f.level, 3), f.rule, f.entry)
-        legacy_final = [finding_tuple(f) for f in sorted(legacy, key=order)]
-        registry_final = [finding_tuple(f) for f in sorted(registry, key=order)]
-        if legacy_final != registry_final:
-            problems.append(f"{label}：出口排序 Finding 双跑不同")
-        if tuple(names) == ("econ", "econ"):
-            single = [finding_tuple(f) for f in raw_findings(world, "registry", ("econ",))
-                      if f.rule in ("CA601", "CA602")]
-            doubled = [finding_tuple(f) for f in registry if f.rule in ("CA601", "CA602")]
-            if doubled != single * 2:
-                problems.append("重复 --pack econ 的 CA601/602 应原样执行两次")
-        return legacy, registry
-
-    def compare_cli(label, world, names=(), impact=()):
-        pack_args = sum((["--pack", name] for name in names), [])
-        impact_args = sum((["--impact", entry_id] for entry_id in impact), [])
-        for mode in ((), ("--json",)):
-            results = []
-            for backend in ("legacy", "registry"):
-                p = subprocess.run(
-                    [PY, str(TOOL), str(world), *pack_args, *impact_args, *mode], cwd=ROOT,
-                    capture_output=True, text=True,
-                    env=dict(os.environ, WGP_JUDGE_BACKEND=backend))
-                results.append(normalized_cli_result(p.returncode, p.stdout, p.stderr, world))
-            try:
-                assert_cli_equal(results[0], results[1])
-            except AssertionError as e:
-                problems.append(f"{label} {mode or '文本'}：{e}")
-
-    worlds = sorted(path for path in HERE.glob("world-*") if path.is_dir())
-    for world in worlds:
-        configs = [()]
-        if world.name == "world-econ":
-            configs += [("econ",), ("econ", "econ")]
-        for names in configs:
-            label = f"{world.name}/{'+'.join(names) or 'default'}"
-            compare_findings(label, world, names)
-            compare_cli(label, world, names)
-
-    for family in ("refs", "chain", "events", "ledger", "duplicates"):
-        problems.extend(_registry_ca_family_dual_run(family))
-
-    impact_world = HERE / "world-arrakis"
-    legacy_run = _registry_ca_raw_run(impact_world, "legacy", impact=("sandworm-cycle",))
-    registry_run = _registry_ca_raw_run(impact_world, "registry", impact=("sandworm-cycle",))
-    if legacy_run[3] != registry_run[3]:
-        problems.append(f"CA504 report 双跑不同：旧 {legacy_run[3]!r} / 新 {registry_run[3]!r}")
-    if any(f.rule == "CA504" for f in registry_run[2]):
+    # CA504 是 report 级：进入 reports，绝不混进 Finding（快照另钉 CLI 形状）
+    packs, extra_known = canonlint._load_packs([])
+    assert packs is not None
+    _e, _i, findings, reports = canonlint.run(
+        HERE / "world-arrakis", 0.85, ["sandworm-cycle"],
+        extra_known=extra_known, packs=packs)
+    if any(f.rule == "CA504" for f in findings):
         problems.append("CA504 只能进入 report，不得混入 Finding")
-    compare_cli("CA504 report", impact_world, impact=("sandworm-cycle",))
-    problems.extend(_registry_serve_write_dual_run())
+    if len(reports) != 1 or not reports[0]["downstream"]:
+        problems.append(f"CA504 应给出 sandworm-cycle 的下游闭包：{reports!r}")
 
-    multi = _card("Bad_ID", (
-        "secret_level: 7\n"
-        "layer: invalid\n"
-        "canon_refs:\n  - id: target\n"
-        "conflicts_with:\n  - 7\n  - id: target\n    stance: rebellious\n"
-        "depends_on:\n"
-        "  - target\n"
-        "  - {id: target, kind: fiscal, critical: 'yes'}\n"
-        "  - {id: target, critical: true}\n"
-        "  - {id: target, kind: x-mine-kind, critical: true}\n"
-        "  - {id: target, kind: mystery, critical: true}\n"
-        "relations:\n"
-        "  - {type: depend_on, target: target, kind: fiscal, critical: true}\n"
-        "  - {type: legitimacy, target: target}\n"
-        "title: duplicate\n"
-    ), status="bogus", template_relations=False)
-    multi = multi.replace("type: location", "type: x-mine-weather")
-    multi = multi.replace("date: 2026-01-01", "date: '昨天'")
-    multi = multi.replace("load_bearing: false", "load_bearing: 'true'")
-    cards = {
-        "a-interleave": _card("a-interleave", "unknown_a: 1\n", body="政治"),
-        "b-interleave": _card("b-interleave", "unknown_b: 1\n", body="政治"),
-        "broken": "没有 frontmatter\n",
-        "load-bearing": _card("load-bearing", load_bearing=True),
-        "missing": "---\nid: missing\n---\n\n正文\n",
-        "multi": multi,
-        "target": _card("target"),
-        "z-dup-a": _card("dup-id"),
-        "z-dup-b": _card("dup-id", "shadow_field: true\n"),
-    }
-    tmp, world = _temp_world("canonlint-core-ca-dual-", cards)
-    with tmp:
-        legacy, registry = compare_findings("core-ca 复合世界", world)
-        compare_cli("core-ca 复合世界", world)
-        registry_rules = {f.rule for f in registry}
-        missing = structure_rules - registry_rules
-        if missing:
-            problems.append(f"core-ca 复合世界在 Registry 后端缺真实 Finding：{sorted(missing)}")
-        expected_interleave = ["CA106", "CA104", "CA301"] * 2
-        entries = {"entries/a-interleave.md", "entries/b-interleave.md"}
-        for backend, findings in (("legacy", legacy), ("registry", registry)):
-            actual = [f.rule for f in findings if f.entry in entries]
-            if actual != expected_interleave:
-                problems.append(f"{backend} 必须逐卡 structure→content 交错："
-                                f"期望 {expected_interleave}，实际 {actual}")
-        if not registry or registry[0].rule != "CA114":
-            problems.append("store 的初始 CA114 必须排在所有条目结构/内容 Finding 之前")
-        if any(f.rule == "CA103" and f.entry == "entries/target.md" for f in registry):
-            problems.append("YAML 原生日期不应被 Registry 的 CA103 误报")
-        for rule_id in ("CA102", "CA108"):
-            levels = {f.level for f in registry if f.rule == rule_id}
-            if levels != {"error", "info"}:
-                problems.append(f"{rule_id} 复合世界应实际发出 error/info，实际 {sorted(levels)}")
+    # 重复显式 --pack econ：同一 Pack 执行两次，CA601/602 原样翻倍
+    def econ_findings(names):
+        packs, extra_known = canonlint._load_packs(names)
+        assert packs is not None, "econ Pack 应可用"
+        return [(f.rule, f.level, f.entry, f.message)
+                for f in canonlint.run(HERE / "world-econ", 0.85, [],
+                                       extra_known=extra_known, packs=packs)[2]
+                if f.rule in ("CA601", "CA602")]
+
+    single = econ_findings(["econ"])
+    doubled = econ_findings(["econ", "econ"])
+    if not single:
+        problems.append("world-econ 在 --pack econ 下应发出 CA601/602")
+    elif doubled != single * 2:
+        problems.append("重复 --pack econ 的 CA601/602 应原样执行两次")
     return problems
 
 
 def check_registry_econ_skips_shadowed_entries() -> list[str]:
     """econ 只查 index_parseable：首条入索引，重复 id 的后者不得发 CA601。"""
-    try:
-        from judges.registry import load_backend
-    except ImportError as e:
-        return [f"Registry 后端选择应可导入：{e}"]
     first_figures = (
         "figures:\n"
         "  population: {value: 1000, unit: 人}\n"
@@ -4304,22 +3748,12 @@ def check_registry_econ_skips_shadowed_entries() -> list[str]:
     })
     problems = []
     with tmp:
-        results = {}
-        for backend in ("legacy", "registry"):
-            if load_backend({"WGP_JUDGE_BACKEND": backend}) != backend:
-                problems.append(f"后端选择错误：{backend}")
-            p = subprocess.run([PY, str(TOOL), str(world), "--pack", "econ"], cwd=ROOT,
-                               capture_output=True, text=True,
-                               env=dict(os.environ, WGP_JUDGE_BACKEND=backend))
-            results[backend] = normalized_cli_result(p.returncode, p.stdout, p.stderr, world)
-            if "[CA601]" in p.stdout or "entries/second.md: figures" in p.stdout:
-                problems.append(f"{backend}：被遮蔽条目不应发 CA601/602：\n{p.stdout}")
-            if "[CA602]" not in p.stdout or "entries/first.md" not in p.stdout:
-                problems.append(f"{backend}：入索引条目仍应执行 econ：\n{p.stdout}")
-        try:
-            assert_cli_equal(results["legacy"], results["registry"])
-        except AssertionError as e:
-            problems.append(str(e))
+        p = subprocess.run([PY, str(TOOL), str(world), "--pack", "econ"], cwd=ROOT,
+                           capture_output=True, text=True)
+        if "[CA601]" in p.stdout or "entries/second.md: figures" in p.stdout:
+            problems.append(f"被遮蔽条目不应发 CA601/602：\n{p.stdout}")
+        if "[CA602]" not in p.stdout or "entries/first.md" not in p.stdout:
+            problems.append(f"入索引条目仍应执行 econ：\n{p.stdout}")
     return problems
 
 
@@ -4492,13 +3926,11 @@ def main() -> int:
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),
         ("id 省略 + 中文标题自动起名 <type>-<序号>", check_auto_id_when_slug_is_empty),
-        ("CLI 双跑：临时根路径归一化且不同判定能被抓住",
-         check_cli_normalization_and_root_masking),
-        ("Registry 加载失败矩阵、不可变元数据与后端选择", check_registry_loading_matrix),
+        ("Registry 加载失败矩阵与不可变元数据", check_registry_loading_matrix),
         ("econ 模块只加载一次且重复选择保留两次",
          check_registry_caches_econ_module_but_keeps_duplicate_selection),
-        ("core-ca/econ 双跑：逐规则、原始/出口 Finding 与完整 CLI 一致",
-         check_registry_ca_dual_run),
+        ("core-ca 注册面：44 条规则登记齐全、CA504 只进 report、econ 重复执行两次",
+         check_registry_core_ca_pack),
         ("econ 只遍历 index_parseable（不审被遮蔽条目）",
          check_registry_econ_skips_shadowed_entries),
     ]

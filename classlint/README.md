@@ -34,9 +34,9 @@ python3 classlint/classlint.py view ~/worlds/econ                 # 关系图 + 
 python3 classlint/classlint.py fork ~/worlds/econ alt-history     # 反事实推演：把当前世界开成一条 Git 分支
 ```
 
-退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误（含指错目录与非法 `WGP_JUDGE_BACKEND`）；`3` 判定通过，但有 PE 规则被 `rules: off` 关掉——「通过」只覆盖仍开着的规则，确认是有意关闭的加 `--accept-disabled-rules` 才回到 0（见 [PROTOCOL.md](PROTOCOL.md) §4）。
+退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误（含指错目录与配置错误）；`3` 判定通过，但有 PE 规则被 `rules: off` 关掉——「通过」只覆盖仍开着的规则，确认是有意关闭的加 `--accept-disabled-rules` 才回到 0（见 [PROTOCOL.md](PROTOCOL.md) §4）。
 
-判定默认由 Registry 的 `core-cl` 与 `pe` 两个 Pack 执行：CL100–CL109 逐规则注册，扫描/建索引与判定分离，PE 保持编号顺序和 `rules: off` 语义。紧急回退使用 `WGP_JUDGE_BACKEND=legacy python3 classlint/classlint.py check <仓库>`；legacy 仍保留，尚未到发布周期后的删除签核阶段。
+判定由 Registry 的 `core-cl` 与 `pe` 两个 Pack 执行：CL100–CL109 逐规则注册，扫描/建索引与判定分离，PE 保持编号顺序和 `rules: off` 语义。Registry 是唯一后端——旧判定后端（legacy）已于 2026-11-22 按判定器注册表计划 Task 7 签核删除（判定语义不变）。
 
 ### 视图与反事实推演（Sprint 9）
 

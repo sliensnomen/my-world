@@ -39,9 +39,12 @@ DOCS = (
 )
 
 CORE_SRC = (ROOT / "canonlint.py", ROOT / "serve.py",
-            *sorted((ROOT / "store").glob("*.py")))
-ECON_SRC = (ROOT / "econ.py",)
-CL_SRC = (ROOT / "classlint/classlint.py",)
+            *sorted((ROOT / "store").glob("*.py")),
+            *sorted((ROOT / "judges" / "ca").glob("*.py")))
+ECON_SRC = (ROOT / "econ.py", ROOT / "judges" / "econ_pack.py")
+CL_SRC = (ROOT / "classlint/classlint.py",
+          *sorted((ROOT / "judges" / "cl").glob("*.py")),
+          *sorted((ROOT / "judges" / "pe").glob("*.py")))
 WORKFLOW = ROOT / ".github/workflows/canonlint.yml"
 
 DOCUMENT_CATEGORIES = {"权威契约", "使用参考", "设计路线", "评审过程", "案例与对外", "授权与治理"}

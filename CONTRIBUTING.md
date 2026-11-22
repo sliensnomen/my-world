@@ -33,8 +33,8 @@
 |---|---|---|---|
 | **存储** | `store/`（parse / model / layout / write） | 只要懂文件格式 | `tests/test_store.py`（AST 检查，越线即红） |
 | **格式契约** | `world.schema.json` | 只要懂 JSON Schema | `tests/test_schema.py` |
-| **结构判定** | `judges/ca/`、`judges/econ_pack.py`（默认 Registry）；`canonlint.py` 的 `check_*`（legacy 回退） | 要懂规则语义与执行日程（`PROTOCOL.md` §6.3） | `tests/run_tests.py`（快照 + 双跑）+ `tests/test_docs.py` |
-| **政治经济学判定** | `judges/cl/`、`judges/pe/`（默认 Registry）；`classlint/classlint.py` 的 CL + PE001–PE016（legacy 回退） | 要读 `classlint/PROTOCOL.md` | `classlint/tests/run_tests.py`（31 个夹具）+ 逐规则双跑 |
+| **结构判定** | `judges/ca/`、`judges/econ_pack.py`（Registry 唯一后端）；`canonlint.py` 是引擎驱动（CLI/导出/写后审计） | 要懂规则语义与执行日程（`PROTOCOL.md` §6.3） | `tests/run_tests.py`（快照）+ 意图断言 + `tests/test_docs.py` |
+| **政治经济学判定** | `judges/cl/`、`judges/pe/`（Registry 唯一后端，PE001–PE016）；`classlint/classlint.py` 是引擎驱动（扫描入口/World 模型/CLI） | 要读 `classlint/PROTOCOL.md` | `classlint/tests/run_tests.py`（31 个夹具）+ 意图断言 |
 | **回归网** | `tests/`、`classlint/tests/` | —— | CI（四个检查） |
 | **文档** | `README.md`、`CONTRIBUTING.md`、`PROTOCOL.md`、`docs/` | —— | `tests/test_docs.py`（数字必须与代码一致） |
 
@@ -76,9 +76,9 @@ python3 classlint/tests/run_tests.py
 
 ### 菜谱 C：改一条规则（加规则 / 改判定 / 改文案）
 
-1. 默认实现改 `judges/ca/`、`judges/cl/`、`judges/pe/` 或 `judges/econ_pack.py` 中对应的 Rule；
-   legacy 只作紧急回退，不为新功能扩张。若必须同步旧路径，先用双跑证明行为没有意外分叉；
-2. **同步 `PROTOCOL.md` §6.3 的规则表**（那是 45 条规则的清单，`tests/test_docs.py` 要求两边条数与编号一致）；
+1. 默认实现改 `judges/ca/`、`judges/cl/`、`judges/pe/` 或 `judges/econ_pack.py` 中对应的 Rule
+   （Registry 是唯一后端，没有第二份实现要同步）；
+2. **同步 `PROTOCOL.md` §6.3 的规则表**（那是 44 条规则的清单，`tests/test_docs.py` 要求两边条数与编号一致）；
 3. **加一个夹具**：在 `tests/world-*` 里造出会/不会触发它的条目，跑 `python3 tests/run_tests.py --update`
    更新快照，然后 **`git diff tests/snapshots/` 逐行看**——快照的 diff 就是这次行为变更的说明书；
 4. 如果是新规则编号，记得在 `PROTOCOL.md` §6.1 的编号段里给它一个位置。
@@ -87,7 +87,7 @@ python3 classlint/tests/run_tests.py
 
 ### 菜谱 D：加一个判定 Pack
 
-1. 先写会红的真实 Finding 正反例和 legacy/Registry 双跑，不只断言 Pack 能导入；逐条核对
+1. 先写会红的真实 Finding 正反例，不只断言 Pack 能导入；逐条核对
    `(rule, level, entry, message)` 的原始序列与出口排序。
 2. 每条 Rule 填齐 `id / pack / scope / entry_domain / check / default_level / levels / order`。
    `entry_domain` 只能按真实遍历需求选择 `all_entries / all_parseable / index_parseable`；
@@ -95,7 +95,7 @@ python3 classlint/tests/run_tests.py
 3. 在 `judges/registry.py` 登记内置模块并继续经统一 `select_packs` 加载；实验 Pack 必须显式选择，
    本期不加入口点发现或热重载。重复规则 id、重复 order、非法 scope/级别和当前选择集的
    `ca106_fields` 冲突都要在审计前失败；classlint Pack 不得占用 canonlint 的 CA106 字段命名空间。
-4. 跑 §4 的六套并再以 `WGP_JUDGE_BACKEND=legacy` 全跑一遍。新规则或判语文案属于协议变更，
+4. 跑 §4 的六套。新规则或判语文案属于协议变更，
    不得混进「等价迁移」提交；版本、规则表、快照和文档按实际变化单独说明。
 
 ---
@@ -116,7 +116,7 @@ python3 classlint/tests/run_tests.py
 ## 4. 验证命令（改完必须跑）
 
 ```bash
-python3 tests/run_tests.py            # 15 个世界夹具 + 103 项检查，逐字节比对快照（9 个 tests/world-* 目录、15 种跑法）
+python3 tests/run_tests.py            # 15 个世界夹具 + 101 项检查，逐字节比对快照（9 个 tests/world-* 目录、15 种跑法）
 python3 tests/test_schema.py          # 契约 ↔ 代码常量
 python3 tests/test_store.py           # 存储层边界与写入路径
 python3 tests/test_serve.py           # 接口（serve.py）与解析器（wgp-client.js），含后端 fail-fast
@@ -124,9 +124,8 @@ python3 tests/test_docs.py            # 文档里的数字 ↔ 代码
 python3 classlint/tests/run_tests.py  # 31 个 classlint 夹具
 ```
 
-以上命令默认走 Registry。改判定加载、执行日程或回退路径时，必须再对六条命令逐一以
-`WGP_JUDGE_BACKEND=legacy` 运行；CLI 与 serve 的比较必须覆盖原始/排序 Finding、stdout/stderr、
-退出码和 HTTP 语义包络，不能只确认「注册成功」。紧急回退不删除 legacy，也不改写快照。
+以上命令直接走 Registry（唯一判定后端）。改判定加载或执行日程时，六条命令就是
+回归网本身；快照逐字节钉死输出，意图断言钉死守卫生效。
 
 两个 Python 版本都要过（CI 跑 3.12 与 3.14；本机可用
 `~/.pyenv/versions/3.12.10/bin/python3` 交叉验证）。
@@ -136,8 +135,7 @@ python3 classlint/tests/run_tests.py  # 31 个 classlint 夹具
 ## 5. CI 会跑什么
 
 `.github/workflows/canonlint.yml`：`pull_request` 与 `push: main` 触发，两个 job × 两个 Python 版本。
-每一步都在同一检查内依次运行 `registry` 与 `legacy`，所以六套测试在两个后端都执行；不增加
-matrix 维度，分支保护依赖的四个检查名保持不变：
+分支保护依赖的四个检查名保持不变：
 
 | 检查名（分支保护依赖） | 跑什么 |
 |---|---|

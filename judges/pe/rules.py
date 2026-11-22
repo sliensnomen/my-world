@@ -202,7 +202,7 @@ def check_pe009(world, emit) -> None:
 
 
 def _flow_entries(world, line: str) -> list:
-    """与 legacy `_flow_entries` 同口径：只收完整、形状合法的流量条目。"""
+    """只收完整、形状合法的流量条目（形状坏掉的归 CL108，不拿它做守恒计算）。"""
     out = []
     for entry in world.entries:
         if entry.meta.get("type") != "flow" or entry.meta.get("line") != line:
