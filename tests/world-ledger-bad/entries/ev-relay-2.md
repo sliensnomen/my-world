@@ -19,7 +19,7 @@ by:
 from:
   - house-a
 to:
-  - house-a
+  - house-b
 object:
   - relay-item
 ---

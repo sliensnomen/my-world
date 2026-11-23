@@ -7,9 +7,9 @@
 >
 > 1. `world.schema.json` —— 条目格式的唯一契约；
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
-> 3. 本文档 —— 规则表（§6.3，**43 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
+> 3. 本文档 —— 规则表（§6.3，**44 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.31"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.32"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -103,6 +103,10 @@
 **v1.14 修订记录（2026-11-12，漏洞审计 §2.1：同刻未定序不再吞掉断言对账）：**
 
 37. **CA704/CA709 的「归属未定序」不再是对账的一键降级器**。漏洞审计 §2.1：作者只要补一笔同刻（`when_sort` 相同）、受方不同的 transfer，CA704 就会从 error 降成 warning——因为旧实现把 ambiguous 客体的**全部** `owns` 对账一起跳过。修法：未定序仍然不挑赢家，但断言照样对账——断言者必须同时落在全部候选受方的交集里（也就是对任何同刻结局都成立），否则照报 error「未定序时断言必须同时落在全部候选里（交集：…）」。CA709 的 `custody_of` 同口径。**多值受方（单笔 `to` 列表）不受影响**：单笔的受方列表仍按各受方逐个放行，只有「同刻多笔、集合不同」才走交集。§9.1 升 minor，规则编号不变，契约不动。
+
+**v1.32 修订记录（2026-11-23，#38：转让不能自己转给自己）：**
+
+55. **新增 CA720（error）**：`transfer` 的 `from` 与 `to` 出现同一实体时报「自己转给自己」——转让必须换持有者；只是想更新位置请用 `move`。只查完整事件，同刻不排序；`grant` 不在此列（授予自己也可能是有意的仪式）。回归 `check_self_transfer_is_reported`。按 §9.1 升 minor，契约不动。
 
 **v1.31 修订记录（2026-11-23，#38：名分依据也过状态门）：**
 
@@ -593,6 +597,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA713 | warning | 转让起点断裂：`transfer`/`grant` 的 `from` 对不上链上上一笔的受方（上一笔 `to`）。口径同 CA711：上一笔 `to` 多值则起点「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时落点在列表里即放行；缺 `from`/`when_sort` 不查；同刻转让不排序、不互为「上一笔」 |
 | CA715 | warning | canon 条目通过 `canon_refs`/`depends_on` 之外的关系（`owns`、`conflicts_with`、`exchanges_with`、`derives_legitimacy_from` 等）引用了非 canon 目标——要么把目标升格，要么把这条关系写成 x- |
 | CA719 | error | 成员链断了：`leave` 之前没有 `join`，卡上也没有 `member_of` 断言——退会必须有入会（同刻 join/leave 不排序，fail-open） |
+| CA720 | error | 自己转给自己：`transfer` 的 `from` 与 `to` 是同一实体——转让必须换持有者（同刻不排序；`grant` 不在此列） |
 | CA718 | error | 承接链不成立：承接者未定档（draft/archived）、类型与原条目不同、或 `superseded_by` 互相承接成环——降级处置没有终点 |
 | CA717 | error | 事件腿指向的实体类型与事件语义不符（`by` 只收 character/faction；`join` 的 to 只收 faction；`move` 的 to/from 只收 location；`birth` 的 object 只收 character；`destroy` 的 object 只收 item/location 等）——不是所有 id 都能当所有腿 |
 | CA716 | warning | `when` 是数字且与 `when_sort` 方向相反：同一客体的两个事件，编号小的 when 更大——故事时间与排序号对不上 |
@@ -627,7 +632,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.31",
+  "protocol_version": "1.32",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",
