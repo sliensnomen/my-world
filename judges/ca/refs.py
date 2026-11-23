@@ -42,9 +42,10 @@ def check_ca402(e: Entry, rel: str, add, index, ref_id: str, target: Entry) -> N
         add("error", f"canon_refs 目标 `{ref_id}` 状态为 {target.status}，须为 canon")
 
 
-def check_ca404(e: Entry, rel: str, add, ref_id: str, target: Entry) -> None:
+def check_ca404(e: Entry, rel: str, add, ref_id: str, target: Entry,
+                via: str = "depends_on") -> None:
     if e.status == "canon" and target.status != "canon":
-        add("error", f"canon 条目的 depends_on 目标 `{ref_id}` 状态为 {target.status}，须为 canon")
+        add("error", f"canon 条目的 {via} 目标 `{ref_id}` 状态为 {target.status}，须为 canon")
 
 
 def check_ca109_superseded(e: Entry, rel: str, add, value) -> bool:
@@ -74,7 +75,7 @@ def check_ca715(world: dict, emit) -> None:
         if e.parse_error or e.status != "canon":
             continue
         for edge in e.relations:
-            if edge.type in ("canon_refs", "depends_on") or edge.type.startswith("x-"):
+            if edge.type in ("canon_refs", "depends_on", "derives_legitimacy_from") or edge.type.startswith("x-"):
                 continue
             target = index.get(edge.target)
             if target is None or target.parse_error:
@@ -197,6 +198,16 @@ def apply(entries, index, run_entry, run_world) -> None:
                                broken_ids=broken_ids)
             if target is not None:
                 run_entry("CA404", e, ref_id=dep.target, target=target)
+        # #38「CA111→CA404」：拆分前的 depends_on + kind: legitimacy 与规范形
+        # derives_legitimacy_from 都是名分依据——canon 条目的依据目标也必须已定档。
+        for edge in e.relations:
+            if edge.type == "derives_legitimacy_from" or (
+                    edge.type == "depends_on" and edge.kind == "legitimacy"):
+                target = run_entry("CA401", e, index=index, ref_id=edge.target,
+                                   via="derives_legitimacy_from", broken_ids=broken_ids)
+                if target is not None:
+                    run_entry("CA404", e, ref_id=edge.target, target=target,
+                              via="derives_legitimacy_from")
         for relation in ("conflicts_with", "exchanges_with", "derives_legitimacy_from"):
             for ref in e.edges_of(relation):
                 run_entry("CA401", e, index=index, ref_id=ref.target, via=relation,

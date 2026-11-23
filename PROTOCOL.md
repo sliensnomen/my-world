@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**43 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.30"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.31"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -103,6 +103,10 @@
 **v1.14 修订记录（2026-11-12，漏洞审计 §2.1：同刻未定序不再吞掉断言对账）：**
 
 37. **CA704/CA709 的「归属未定序」不再是对账的一键降级器**。漏洞审计 §2.1：作者只要补一笔同刻（`when_sort` 相同）、受方不同的 transfer，CA704 就会从 error 降成 warning——因为旧实现把 ambiguous 客体的**全部** `owns` 对账一起跳过。修法：未定序仍然不挑赢家，但断言照样对账——断言者必须同时落在全部候选受方的交集里（也就是对任何同刻结局都成立），否则照报 error「未定序时断言必须同时落在全部候选里（交集：…）」。CA709 的 `custody_of` 同口径。**多值受方（单笔 `to` 列表）不受影响**：单笔的受方列表仍按各受方逐个放行，只有「同刻多笔、集合不同」才走交集。§9.1 升 minor，规则编号不变，契约不动。
+
+**v1.31 修订记录（2026-11-23，#38：名分依据也过状态门）：**
+
+54. **CA404 覆盖名分依据**：`canon` 条目的 `derives_legitimacy_from` 目标（以及拆分前写法 `depends_on + kind: legitimacy`）状态非 `canon` 时也报 error，文案指明 `derives_legitimacy_from`；`CA715` 不再对这类边重复发 warning。回归 `check_ca404_covers_legitimacy_relations`。
 
 **v1.30 修订记录（2026-11-22，#40 F4：规范形与旧字段二选一）：**
 
@@ -567,7 +571,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA401 | error | 引用指向不存在的 `id`（坏 YAML 的卡若原文还能认出 `id:`，不报本条——由那张卡的 CA100 负责，协议 1.18，issue #40 F3）；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`，和协议 1.2/1.4/1.7 的事件腿 `by`/`to`/`object`/`from`/`result` 与保管断言 `custody_of`、归属断言 `member_of`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
 | CA402 | error | `canon_refs` 目标状态为 `draft`/`trial`；或目标为 `archived` 且已填**有效**的 `superseded_by`（提示迁移至承接条目）。目标为 `archived` 且没有有效承接者（未填、`null`、坏值、指向不存在、指向自己）时**不报本条**，由 CA405 在 archived 条目侧单独报告，避免双报；迁移指引里印出的承接条目一定是真存在的那一个 |
 | CA403 | warning | `conflicts_with` 双方均简式且缺回指（对象式标注豁免，见 §4.2） |
-| CA404 | error | `canon` 条目的 `depends_on` 目标状态非 `canon`（链条依赖只能建立在已定档上） |
+| CA404 | error | `canon` 条目的 `depends_on` 或名分依据（`derives_legitimacy_from`，含拆分前的 `depends_on + kind: legitimacy`）目标状态非 `canon`（链条依赖与名分依据只能建立在已定档上） |
 | CA405 | error | `archived` 条目仍被 `canon_refs` 引用，且**没有有效承接者**：`superseded_by` 未填、为 `null`、不是 id 字符串、指向不存在的条目、或指向自己（前两者见 v1.0.1 澄清）——降级处置不完整。判据是「承接者真的存在」，不是「字段非空」：一个坏值曾经能把这条 error 静默消音 |
 | CA501 | error | **物质族** `depends_on` 目标的链条序号 > 本条目的链条序号（规范族边豁免）；目标没有 `layer` 时报「没有可比较的 layer」——物质族承重依赖的锚点必须有 layer（issue #38，协议 1.15） |
 | CA502 | error | **物质族或 x- 实验类别**的依赖子图存在环（x- 是泄压阀，但成环不是） |
@@ -623,7 +627,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.30",
+  "protocol_version": "1.31",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

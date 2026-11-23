@@ -3241,6 +3241,42 @@ def check_issue38_misc_shape_and_selfref() -> list[str]:
     return problems
 
 
+def check_ca404_covers_legitimacy_relations() -> int:
+    """#38：名分依据（depends_on+kind=legitimacy 与 derives_legitimacy_from）也要过状态门。"""
+    failures = 0
+    body = _card("king")
+    for extra, label in (
+        ("depends_on:\n  - id: pope\n    critical: true\n    kind: legitimacy\n",
+         "拆分前写法"),
+        ("derives_legitimacy_from:\n  - id: pope\n", "规范形"),
+    ):
+        king = _card("king").replace("ai_assisted: false", extra + "ai_assisted: false")
+        pope = _card("pope", status="draft")
+        tmp, world = _temp_world("ca404-legit-", {"king": king, "pope": pope})
+        try:
+            code, out, _err = _judge(world, "--strict")
+            if code == 0 or "[CA404]" not in out or "derives_legitimacy_from" not in out:
+                failures += 1
+                print(f"FAIL {label}的名分依据指向 draft 应报 CA404：rc={code} {out[-300:]}")
+        finally:
+            tmp.cleanup()
+    tmp, world = _temp_world("ca404-legit-ok-",
+                             {"king": _card("king").replace(
+                                 "ai_assisted: false",
+                                 "derives_legitimacy_from:\n  - id: pope\nai_assisted: false"),
+                              "pope": _card("pope", body="教宗" * 150)})
+    try:
+        code, out, _err = _judge(world, "--strict")
+        if code != 0 or "[CA404]" in out:
+            failures += 1
+            print(f"FAIL 名分依据目标已定档不该报 CA404：rc={code} {out[-300:]}")
+    finally:
+        tmp.cleanup()
+    if not failures:
+        print("PASS #38：名分依据也过 CA404 状态门")
+    return failures
+
+
 def check_ca505_ignores_event_layer() -> list[str]:
     """#38 泄压阀：`layer: fiscal` 的 event 卡不算「全库有财政」，非事件卡才算。"""
     problems = []
@@ -4001,6 +4037,7 @@ def main() -> int:
         ("issue #38 成员链 join/leave 必须配对（CA719）", check_member_chain_is_paired),
         ("issue #40 F4：规范形 relations 与旧字段二选一（协议 1.30）", check_canonical_relations_satisfy_required_fields),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
+        ("issue #38 名分依据也过状态门（CA404 看 derives_legitimacy_from）", check_ca404_covers_legitimacy_relations),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),
