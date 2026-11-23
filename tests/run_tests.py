@@ -3564,6 +3564,37 @@ def check_auto_id_when_slug_is_empty() -> list[str]:
     return problems
 
 
+def check_canonical_relations_satisfy_required_fields() -> list[str]:
+    """#40 F4：规范形 relations 与旧字段二选一（协议 1.30）。"""
+    problems = []
+
+    def card(eid: str, extra: str = "") -> str:
+        return _card(eid, extra)
+
+    cases = [
+        ("只写 relations 的规范形卡", {
+            "a": _card("a", template_relations=False).replace(
+                "ai_assisted: false",
+                "relations:\n  - type: depends_on\n    target: b\n    kind: resource\n"
+                "ai_assisted: false"),
+            "b": card("b"),
+        }, False),
+        ("旧写法缺 canon_refs", {
+            "a": card("a").replace("canon_refs: []\n", ""),
+        }, True),
+    ]
+    for label, cards, want_error in cases:
+        tmp, world = _temp_world("canonlint-f4-", cards)
+        with tmp:
+            _code, out, _err = _judge(world, "--strict")
+            hit = "[CA101]" in out and "缺少必填字段 `canon_refs`" in out
+            if want_error and not hit:
+                problems.append(f"{label}：应报 CA101 canon_refs，实际：\n{out}")
+            if not want_error and hit:
+                problems.append(f"{label}：不应报 CA101 canon_refs，实际：\n{out}")
+    return problems
+
+
 def check_registry_loading_matrix() -> list[str]:
     """Registry 元数据与后端配置必须在任何规则执行前 fail-fast。"""
     problems = []
@@ -3968,6 +3999,7 @@ def main() -> int:
         ("issue #38 事件腿类型与事件语义对不上报 CA717", check_event_leg_types_are_checked),
         ("issue #38 承接链要落在定档且同类的条目上（CA718）", check_supersede_chain_is_checked),
         ("issue #38 成员链 join/leave 必须配对（CA719）", check_member_chain_is_paired),
+        ("issue #40 F4：规范形 relations 与旧字段二选一（协议 1.30）", check_canonical_relations_satisfy_required_fields),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),

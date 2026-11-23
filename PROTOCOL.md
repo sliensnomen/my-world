@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**43 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.29"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.30"`（即 JSON 输出里的 `protocol_version`）。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
@@ -103,6 +103,10 @@
 **v1.14 修订记录（2026-11-12，漏洞审计 §2.1：同刻未定序不再吞掉断言对账）：**
 
 37. **CA704/CA709 的「归属未定序」不再是对账的一键降级器**。漏洞审计 §2.1：作者只要补一笔同刻（`when_sort` 相同）、受方不同的 transfer，CA704 就会从 error 降成 warning——因为旧实现把 ambiguous 客体的**全部** `owns` 对账一起跳过。修法：未定序仍然不挑赢家，但断言照样对账——断言者必须同时落在全部候选受方的交集里（也就是对任何同刻结局都成立），否则照报 error「未定序时断言必须同时落在全部候选里（交集：…）」。CA709 的 `custody_of` 同口径。**多值受方（单笔 `to` 列表）不受影响**：单笔的受方列表仍按各受方逐个放行，只有「同刻多笔、集合不同」才走交集。§9.1 升 minor，规则编号不变，契约不动。
+
+**v1.30 修订记录（2026-11-22，#40 F4：规范形与旧字段二选一）：**
+
+53. **CA101 必填表放宽**：`canon_refs` 与 `conflicts_with` 不再无条件必填——卡上写了规范形 `relations`（含空数组）时，用规范形表达边即可，不必再抄两个空数组；旧写法卡仍按原表检查。契约 `x-strict-required` 同步去掉这两个字段（契约 0.8→0.9）。回归 `check_canonical_relations_satisfy_required_fields`。
 
 **v1.29 修订记录（2026-11-22，issue #38 的成员链）：**
 
@@ -544,7 +548,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | 编号 | 级别 | 定义 |
 |---|---|---|
 | CA100 | error | 文件无法解析（无 frontmatter / YAML 错误 / 非映射） |
-| CA101 | error | 缺少必填字段（按 §2.2，含条件必填） |
+| CA101 | error | 必填字段（§2.2）：`canon_refs`/`conflicts_with` 与规范形 `relations` 二选一——写了 `relations` 的卡不必再抄两个空数组（协议 1.30）；其余必填按 §2.2，含条件必填 |
 | CA102 | error | 枚举字段非法（`type`/`status`/`layer`/`stance`/`event_kind`）；`type` 或 `event_kind` 是 `x-` 实验值时降为 info（协议 1.1 / 1.2） |
 | CA103 | error | `date` 非法。只收**日期**：YAML 原生日期对象（`date: 2026-10-15` 没加引号时会被 YAML 解成 `datetime.date`）与契约要求的 ISO 字符串（`"2026-10-15"`）；带时间的 `datetime`（`2026-01-01T08:00:00`）是「时间点」，不收（协议 1.17，issue #46）。字符串必须**逐字符**匹配 `^\d{4}-\d{2}-\d{2}$`——`"20261015"`（ISO 基本格式）与 `"2026-W42-6"`（周历）曾被 `date.fromisoformat` 静默收下，与本条文案和契约 pattern 都矛盾；形状对了还要验真日（`"2026-02-30"` 报错）。工具自己写出的卡是字符串形态 |
 | CA104 | warning | `trial`/`canon` 条目正文少于 200 字（计数算法见 §6.6） |
@@ -619,7 +623,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.29",
+  "protocol_version": "1.30",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",
