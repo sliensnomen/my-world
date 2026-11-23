@@ -43,6 +43,8 @@ _LAZY = {
     # 写入
     "CONSTITUTION_SKELETON": "write", "cmd_init": "write", "cmd_link": "write",
     "cmd_new": "write", "restore_bytes": "write", "set_fields": "write",
+    "world_transaction": "write", "restore_if_unchanged": "write",
+    "unlink_if_unchanged": "write",
     "slugify": "write",
     # 判定口径（#14）
     "JudgmentPolicy": "policy", "CANONLINT_POLICY": "policy", "CLASSLINT_POLICY": "policy",

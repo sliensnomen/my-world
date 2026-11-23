@@ -264,8 +264,11 @@ def check_vocabulary_matches_code(problems):
          canonlint.KIND_INITIAL_SET, True),
         ("x-strict-vocabulary.event_kind", sv["event_kind"],
          ledger.EVENT_KINDS, True),
+        # 协议 1.30：canon_refs/conflicts_with 与规范形 relations 二选一，
+        # 所以严格档也不再无条件要求这两个旧字段（CA101 里按条件判）。
         ("x-strict-required", SCHEMA["x-strict-required"],
-         canonlint.REQUIRED_FIELDS, False),
+         [f for f in canonlint.REQUIRED_FIELDS
+          if f not in ("canon_refs", "conflicts_with")], False),
         ("x-packs.econ.fields", sorted(SCHEMA["x-packs"]["econ"]["fields"]),
          econ.KNOWN_FIELDS, True),
         # 契约的核心必填 = classlint 的 REQUIRED_FIELDS（canonlint 的十项是严格档，

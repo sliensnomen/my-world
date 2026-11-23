@@ -18,6 +18,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -817,6 +819,71 @@ def check_write_path_verifies_before_trusting_itself():
     return
 
 
+def check_world_transaction_is_reentrant_and_guarded():
+    """#11：世界事务锁可重入；回滚/删除前校验文件仍是自己写下的内容。"""
+    import store
+    from store import write as store_write
+    failures = 0
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "w"
+        root.mkdir()
+        # 可重入：外层事务里再开一层不能自己锁死
+        with store.world_transaction(root):
+            with store.world_transaction(root):
+                pass
+        # 串行化：A 持有事务时，B 线程进不来
+        released = threading.Event()
+        entered = threading.Event()
+
+        def holder():
+            with store.world_transaction(root):
+                entered.set()
+                released.wait(timeout=2)
+
+        def waiter():
+            if not entered.wait(timeout=2):
+                return
+            with store.world_transaction(root):
+                order.append("b")
+
+        order: list[str] = []
+        th1 = threading.Thread(target=holder)
+        th2 = threading.Thread(target=waiter)
+        th1.start(); th2.start()
+        time.sleep(0.15)
+        if order:
+            failures += 1
+            print("FAIL 事务锁没有串行化：B 在 A 释放前就进来了")
+        released.set()
+        th1.join(timeout=3); th2.join(timeout=3)
+        if order != ["b"]:
+            failures += 1
+            print(f"FAIL 事务锁释放后 B 没进来：{order}")
+        # 回滚守卫：内容被第三方改过 → 不覆盖
+        path = root / "entries" / "a.md"
+        path.parent.mkdir()
+        path.write_text("v2", encoding="utf-8")
+        if store_write.restore_if_unchanged(path, b"v2", b"v1"):
+            if path.read_text(encoding="utf-8") != "v1":
+                failures += 1
+                print("FAIL restore_if_unchanged 没恢复旧字节")
+        path.write_text("v3", encoding="utf-8")
+        if store_write.restore_if_unchanged(path, b"v2", b"v1"):
+            failures += 1
+            print("FAIL 第三方改过的文件被 restore_if_unchanged 覆盖了")
+        # 删除守卫
+        path.write_text("v2", encoding="utf-8")
+        if store_write.unlink_if_unchanged(path, b"v3"):
+            failures += 1
+            print("FAIL 内容不符时 unlink_if_unchanged 仍删了文件")
+        if not store_write.unlink_if_unchanged(path, b"v2"):
+            failures += 1
+            print("FAIL 内容相符时 unlink_if_unchanged 没删")
+    if not failures:
+        print("PASS 世界事务锁可重入/串行化，回滚删除前校验内容（#11）")
+    return failures
+
+
 def check_status_transitions_are_guarded():
     """#51：§3.2 迁移在写路径有门——跳级/降格/未声明快速通道都拒绝且磁盘不变。"""
     with tempfile.TemporaryDirectory() as td:
@@ -1530,6 +1597,7 @@ CHECKS = (
     ("判定口径显式声明：引擎策略在 store/policy.py，默认行为不变（#14）",
      check_judgment_policies_are_explicit),
     ("§3.2 状态迁移在写路径有门（#51）", check_status_transitions_are_guarded),
+    ("世界事务锁可重入/串行化，回滚删除前校验内容（#11）", check_world_transaction_is_reentrant_and_guarded),
 )
 
 

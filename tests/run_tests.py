@@ -2988,6 +2988,27 @@ def check_ca201_catches_short_exact_duplicates() -> list[str]:
     return problems
 
 
+def check_self_transfer_is_reported() -> list[str]:
+    """issue #38：transfer/grant 的起点与终点是同一个实体 → CA720。"""
+    problems = []
+    entries = {
+        "alice": _card("alice", extra="type: character\n"),
+        "bob": _card("bob", extra="type: character\n"),
+        "sword": _card("sword", extra="type: item\n"),
+        "ev-self": _card("ev-self", extra=(
+            "type: event\nevent_kind: transfer\nwhen: 元年\nwhen_sort: 10\n"
+            "by:\n  - alice\nfrom:\n  - bob\nto:\n  - bob\nobject:\n  - sword\n")),
+    }
+    tmp, world = _temp_world("canonlint-self-transfer-", entries)
+    with tmp:
+        code, out, err = _judge(world, "--strict")
+        if "CA720" not in out:
+            problems.append(f"自己转给自己没报 CA720：\n{out.strip()}\n{err.strip()}")
+        if code != 1:
+            problems.append(f"--strict 下自己转给自己应当 exit 1，实际 {code}")
+    return problems
+
+
 def check_member_chain_is_paired() -> list[str]:
     """#38 成员链：leave 之前必须有过 join，或用 member_of 说明初始成员。"""
     problems = []
@@ -3239,6 +3260,42 @@ def check_issue38_misc_shape_and_selfref() -> list[str]:
         finally:
             tmp.cleanup()
     return problems
+
+
+def check_ca404_covers_legitimacy_relations() -> int:
+    """#38：名分依据（depends_on+kind=legitimacy 与 derives_legitimacy_from）也要过状态门。"""
+    failures = 0
+    body = _card("king")
+    for extra, label in (
+        ("depends_on:\n  - id: pope\n    critical: true\n    kind: legitimacy\n",
+         "拆分前写法"),
+        ("derives_legitimacy_from:\n  - id: pope\n", "规范形"),
+    ):
+        king = _card("king").replace("ai_assisted: false", extra + "ai_assisted: false")
+        pope = _card("pope", status="draft")
+        tmp, world = _temp_world("ca404-legit-", {"king": king, "pope": pope})
+        try:
+            code, out, _err = _judge(world, "--strict")
+            if code == 0 or "[CA404]" not in out or "derives_legitimacy_from" not in out:
+                failures += 1
+                print(f"FAIL {label}的名分依据指向 draft 应报 CA404：rc={code} {out[-300:]}")
+        finally:
+            tmp.cleanup()
+    tmp, world = _temp_world("ca404-legit-ok-",
+                             {"king": _card("king").replace(
+                                 "ai_assisted: false",
+                                 "derives_legitimacy_from:\n  - id: pope\nai_assisted: false"),
+                              "pope": _card("pope", body="教宗" * 150)})
+    try:
+        code, out, _err = _judge(world, "--strict")
+        if code != 0 or "[CA404]" in out:
+            failures += 1
+            print(f"FAIL 名分依据目标已定档不该报 CA404：rc={code} {out[-300:]}")
+    finally:
+        tmp.cleanup()
+    if not failures:
+        print("PASS #38：名分依据也过 CA404 状态门")
+    return failures
 
 
 def check_ca505_ignores_event_layer() -> list[str]:
@@ -3564,6 +3621,37 @@ def check_auto_id_when_slug_is_empty() -> list[str]:
     return problems
 
 
+def check_canonical_relations_satisfy_required_fields() -> list[str]:
+    """#40 F4：规范形 relations 与旧字段二选一（协议 1.30）。"""
+    problems = []
+
+    def card(eid: str, extra: str = "") -> str:
+        return _card(eid, extra)
+
+    cases = [
+        ("只写 relations 的规范形卡", {
+            "a": _card("a", template_relations=False).replace(
+                "ai_assisted: false",
+                "relations:\n  - type: depends_on\n    target: b\n    kind: resource\n"
+                "ai_assisted: false"),
+            "b": card("b"),
+        }, False),
+        ("旧写法缺 canon_refs", {
+            "a": card("a").replace("canon_refs: []\n", ""),
+        }, True),
+    ]
+    for label, cards, want_error in cases:
+        tmp, world = _temp_world("canonlint-f4-", cards)
+        with tmp:
+            _code, out, _err = _judge(world, "--strict")
+            hit = "[CA101]" in out and "缺少必填字段 `canon_refs`" in out
+            if want_error and not hit:
+                problems.append(f"{label}：应报 CA101 canon_refs，实际：\n{out}")
+            if not want_error and hit:
+                problems.append(f"{label}：不应报 CA101 canon_refs，实际：\n{out}")
+    return problems
+
+
 def check_registry_loading_matrix() -> list[str]:
     """Registry 元数据与后端配置必须在任何规则执行前 fail-fast。"""
     problems = []
@@ -3718,13 +3806,13 @@ def check_registry_core_ca_pack() -> list[str]:
         "CA501", "CA502", "CA503", "CA504", "CA505",
         "CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
         "CA707", "CA708", "CA709", "CA710", "CA711", "CA712", "CA713",
-        "CA714", "CA715", "CA716", "CA717", "CA718", "CA719",
+        "CA714", "CA715", "CA716", "CA717", "CA718", "CA719", "CA720",
     }
     world_rules = {
         "CA114", "CA201", "CA403", "CA405", "CA502", "CA504", "CA505",
         "CA701", "CA703", "CA704", "CA705", "CA707", "CA708", "CA709",
         "CA710", "CA711", "CA712", "CA713", "CA714", "CA715", "CA716", "CA717",
-        "CA718", "CA719",
+        "CA718", "CA719", "CA720",
         "CA718",
     }
     index_rules = {"CA501", "CA503"}
@@ -3968,7 +4056,10 @@ def main() -> int:
         ("issue #38 事件腿类型与事件语义对不上报 CA717", check_event_leg_types_are_checked),
         ("issue #38 承接链要落在定档且同类的条目上（CA718）", check_supersede_chain_is_checked),
         ("issue #38 成员链 join/leave 必须配对（CA719）", check_member_chain_is_paired),
+        ("issue #38 自己转给自己报 CA720", check_self_transfer_is_reported),
+        ("issue #40 F4：规范形 relations 与旧字段二选一（协议 1.30）", check_canonical_relations_satisfy_required_fields),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
+        ("issue #38 名分依据也过状态门（CA404 看 derives_legitimacy_from）", check_ca404_covers_legitimacy_relations),
         ("CA201 豁免只认 archived 声明方（审计 §1.2）", check_supersede_exemption_requires_archived),
         ("事件字段只许在 type: event（CA109 + 不进流水）", check_event_fields_need_event_type),
         ("CLI 的 event 子命令接受 x- 实验 kind", check_experimental_event_kind_via_cli),

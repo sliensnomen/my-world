@@ -7,6 +7,11 @@ from store import parse as shared
 
 REQUIRED_FIELDS = ["id", "title", "type"]
 
+# #43（classlint 半边，协议 v0.10）：断言/关系字段显式写 `null` 不是「没写」。
+# 存储层把 null 与缺省都解析成空列表，判定层若不单独查，`custody_of: null` /
+# `member_of: null` 就完全静默——形状错误从这一层报出来（canonlint 侧由 CA109 管）。
+NULL_ASSERTION_FIELDS = frozenset({"relations", "custody_of", "member_of"}) | frozenset(shared.ALL_RELATION_NAMES)
+
 # 流量层数据模型（协议 v0.2；core-cl Pack 的实现，词表只有这一份）。
 # classlint 引擎的 CL103 字段政策由本文件与 classlint/tests 的夹具期望钉死。
 FLOW_LINES = ("logistics", "violence", "information", "people")
@@ -226,6 +231,16 @@ def check_cl101(entry, rel, add) -> None:
     for field in REQUIRED_FIELDS:
         if field not in entry.meta:
             add("error", f"缺少必填字段 `{field}`")
+
+
+def check_cl110(entry, rel, add) -> None:
+    """#43：关系/断言字段写了显式 null——契约要求数组，null 不等于「没写」。"""
+    if entry.parse_error:
+        return
+    for field in sorted(NULL_ASSERTION_FIELDS):
+        if field in entry.meta and entry.meta[field] is None:
+            add("error", f"字段 `{field}` 写了显式 null；契约要求数组，null 不等于"
+                         f"「没写」——请删掉该字段或写成 []")
 
 
 def check_cl102(entry, rel, add, index) -> None:

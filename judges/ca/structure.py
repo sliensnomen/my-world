@@ -37,6 +37,11 @@ def check_ca101(e: Entry, rel: str, add) -> None:
     if e.parse_error:
         return
     for field in REQUIRED_FIELDS:
+        # #40 F4：规范形 relations 与旧字段二选一（协议 1.30）。
+        # 写了 relations 的卡用规范形表达边，canon_refs/conflicts_with 不必再抄一份空数组；
+        # 旧写法卡仍按原表检查。
+        if field in ("canon_refs", "conflicts_with") and "relations" in e.meta:
+            continue
         if field not in e.meta:
             add("error", f"缺少必填字段 `{field}`")
     if e.meta.get("status") == "archived" and "superseded_by" not in e.meta:

@@ -129,6 +129,22 @@ def check_单个条目接口() -> None:
     assert d["relations"] == want, "单条接口漏了边（进边或出边）"
 
 
+def check_缓存随文件改动失效() -> None:
+    """#15：导出缓存按内容指纹失效——改一张卡后，热接口必须给新数据。"""
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        shutil.copytree(WORLD, world)
+        base = server_for(world)
+        d = json.loads(get(base + "/api/world")[1])
+        path = world / "entries" / "bene-gesserit.md"
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace("title: ", "title: 改过的", 1), encoding="utf-8")
+        d2 = json.loads(get(base + "/api/world")[1])
+        entry = next(e for e in d2["entries"] if e["id"] == "bene-gesserit")
+        assert entry["title"].startswith("改过的"), "缓存没随文件改动失效"
+        assert entry != next(e for e in d["entries"] if e["id"] == "bene-gesserit")
+
+
 def check_没这个条目给_404_且说明清楚() -> None:
     status, body, _ = get(server_for(WORLD) + "/api/entry/没有这个条目")
     assert status == 404, f"应该 404，实际 {status}"
@@ -593,6 +609,31 @@ def check_可写模式的写入与审计回滚():
             f"自动起名后响应里的 id 不对：{got!r}"
 
 
+def check_已有错误不阻塞无关写入():
+    """#11：回滚只拒绝本次写入新增的 error——世界已有坏卡时，好的写入照样落盘。"""
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "entries").mkdir(parents=True)
+        (world / "entries" / "bad.md").write_text(
+            "---\nid: bad\ntitle: bad\ntype: location\nauthor: t\n"
+            "date: 2026-01-01\nstatus: canon\nload_bearing: false\n"
+            "canon_refs: [ghost]\nconflicts_with: []\nai_assisted: false\n"
+            "---\n\n" + "正文" * 120 + "\n", encoding="utf-8")
+        base = server_for(world, writable=True)
+        # 基线里已有 CA401（坏卡的悬空引用）；写一张好卡应 201 而不是被旧错误连坐
+        code, body, _ = post(f"{base}/api/entry",
+                             {"type": "location", "title": "好卡", "id": "good-one"})
+        assert code == 201, f"已有错误不该阻塞无关写入：{code} {body[:300]}"
+        assert list(world.glob("entries/*/good-one.md")), "好的写入没有落盘"
+        # 本条写入自己引入的新 error 仍然回滚
+        code, body, _ = post(f"{base}/api/event", {
+            "event_kind": "transfer", "id": "ev-new-bad",
+            "by": ["ghost-by"], "to": ["ghost-to"], "object": ["ghost-obj"],
+            "when": "元年", "when_sort": 1})
+        assert code == 422, f"新增悬空腿应 422，实际 {code}：{body[:300]}"
+        assert not (world / "entries/events/ev-new-bad.md").exists()
+
+
 def check_治理端点的升格降级与回滚():
     """POST /api/status（人机交互 Phase 3）：升格/降级走行级写入 + 写完即审。
 
@@ -940,6 +981,7 @@ CHECKS = [
     ("接口给的数据 = CLI 导出的数据", check_world_同_CLI_导出),
     ("两次请求一致，且不漏绝对路径", check_两次请求一致_且没有绝对路径),
     ("单个条目接口（含进边和出边）", check_单个条目接口),
+    ("导出缓存随文件改动失效（#15）", check_缓存随文件改动失效),
     ("查不到的条目给 404 并说明", check_没这个条目给_404_且说明清楚),
     ("有坏文件的世界接口不崩", check_坏文件的世界不崩),
     ("悬空边照原样报出来（不隐藏）", check_悬空边照原样报出来),
@@ -961,6 +1003,7 @@ CHECKS = [
     ("只读界面被伺候且指向数据源（Phase 1）", check_只读界面被伺候且指向数据源),
     ("可写模式的写入与审计回滚（Phase 2）", check_可写模式的写入与审计回滚),
     ("治理端点的升格降级与回滚（Phase 3）", check_治理端点的升格降级与回滚),
+    ("回滚只拒绝本次新增错误（#11）", check_已有错误不阻塞无关写入),
     ("--pack econ 的读/写同一口径（Phase 2）", check_写路径与读路径同口径),
     ("跨源写被挡、同源放行、预检列 POST", check_跨源写被挡_同源放行),
     ("坏请求给 4xx 而不是断连", check_坏请求不制造断连),

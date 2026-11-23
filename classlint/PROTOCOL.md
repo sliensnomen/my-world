@@ -1,4 +1,4 @@
-# classlint 协议 · 生产关系层 + 流量层 + 个人关系层 + 时间线层 v0.8
+# classlint 协议 · 生产关系层 + 流量层 + 个人关系层 + 时间线层 v0.10
 
 **状态：草案 ｜ 日期：2026-09-24 ｜ 读者：协议实现者**
 **条款用词"必须/应当/可以"为规范性词汇，含义同 RFC 2119 的 MUST/SHOULD/MAY。**
@@ -243,7 +243,7 @@ after: 商行抽成
 
 | 段 | 类别 |
 |---|---|
-| CL1xx | 结构（解析/frontmatter/schema/引用存在性；含流量层 CL108、时间线 CL109） |
+| CL1xx | 结构（解析/frontmatter/schema/引用存在性；含流量层 CL108、时间线 CL109、断言字段显式 null CL110） |
 | PE0xx | 政治经济学规则（规划八条：PE001–PE008 是核心，PE009 是生产关系层新增（占空号不改已规划编号），PE010–PE012 是流量层守恒律；本版已全部实现 PE001–PE016） |
 
 ### 3.2 结构规则（确定性）
@@ -260,6 +260,7 @@ after: 商行抽成
 | CL107 | warning | 关系名拼写近失：`relations[].type` 与某个规范名只差一个字符（去掉连字符/下划线后算，如 `extractss`、`depend_on`）。边**已按规范名建好**（所以 PE 族判得到它），本条只提示疑似拼写错误；距离 ≥2 的自定义关系名原样保留、不提示（同 canonlint 的 CA110） |
 | CL108 | error | 流量层格式非法：`flow` 条目违反 §2.3（`line` 缺失/非法、`from`/`to` 缺失或非字符串、本线必填字段不全或类型不对、写了别的线的字段、`trend` 不在词表、`note` 非字符串）；或实体卡的需求/剩余声明违反 §2.4（`demand`/`surplus` 不是映射、物资名为空、`amount` 不是 >0 的有限数字、`unit` 非空字符串、多余键、`population` 不是 >0 的数字），或 violence 的 `needs` 形状非法 |
 | CL109 | error | 时间线条目格式非法：`moment` 的 `at` 不是数字、`text` 不是非空字符串、`affects` 不是非空 id 列表；`shift` 的 `begin`/`end` 不是数字或倒置（`begin > end`）、`change`/`before`/`after` 不是非空字符串；写了另一类型的字段（`moment` 写 `begin`、`shift` 写 `at`）；`source`/`note` 类型不对。`source`/`affects` 悬空由 CL105 报 |
+| CL110 | error | **断言/关系字段写了显式 null**（v0.10）：`relations`、`custody_of`、`member_of` 或任一契约关系字段的值是 `null`——契约要求数组，null 不等于「没写」，存储层不会替你吞掉它 |
 
 ### 3.3 政治经济学规则
 

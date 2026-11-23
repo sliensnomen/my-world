@@ -139,7 +139,7 @@ BAD = {
         "by:\n  - house-a\nto:\n  - house-b\nobject:\n  - relay-item\n"),
     "ev-relay-2": event(
         "ev-relay-2", "transfer", 13,
-        "by:\n  - house-b\nfrom:\n  - house-a\nto:\n  - house-a\nobject:\n  - relay-item\n"),
+        "by:\n  - house-b\nfrom:\n  - house-a\nto:\n  - house-b\nobject:\n  - relay-item\n"),
 }
 
 

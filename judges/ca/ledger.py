@@ -451,6 +451,19 @@ def check_ca719(world: dict, emit) -> None:
 
 
 
+def check_ca720(world: dict, emit) -> None:
+    """#38：转让/授予的起点与终点是同一个实体——账面上自己转给自己。"""
+    index = world["index"]
+    for e, view in event_ledger.ordered_events(index):
+        if view.kind != "transfer":
+            continue
+        both = sorted(set(view.legs.get("from", [])) & set(view.legs.get("to", [])))
+        if both:
+            emit("error", e.rel,
+                 f"自己转给自己：transfer 的起点与终点都是 {both}——"
+                 "转让必须换持有者；只是想更新位置请用 move")
+
+
 def check_ca711(world: dict, emit) -> None:
     index = world["index"]
     windows = event_ledger.existence_windows(index)
@@ -555,7 +568,7 @@ def check_ca714(world: dict, emit) -> None:
 
 SCHEDULE = ("CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
             "CA709", "CA710", "CA712", "CA711", "CA713", "CA714", "CA716", "CA717",
-            "CA719")
+            "CA719", "CA720")
 
 
 def apply(run_world) -> None:
