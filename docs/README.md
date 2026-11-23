@@ -18,6 +18,7 @@
 | 文档 | 分类 | 状态 | 摘要 | 权威与更新触发 |
 |---|---|---|---|---|
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | 使用参考 | 现行 | 新贡献者的改动路径与验证要求 | 测试、CI、协作流程变化时同步 |
+| [CHARTER.md](../CHARTER.md) | 设计路线 | 现行 | 文字世界模型转型宪章（2.0 地基文档，v1.0） | 转型裁决变化时同步；2.0 分支上以 `spine/event.schema.json` 为上位契约 |
 | [LICENSE](../LICENSE) | 授权与治理 | 授权 | 代码 MIT 授权 | 授权政策变化时才改 |
 | [LICENSE-PROTOCOL.md](../LICENSE-PROTOCOL.md) | 授权与治理 | 授权 | 协议文本 CC BY 4.0 授权 | 授权政策变化时才改 |
 | [PROTOCOL-ECON.md](../PROTOCOL-ECON.md) | 权威契约 | 草案 | econ 数值扩展的字段与两条规则草案 | 以 `econ.py` 实测为限，不夸大为完整数值系统 |

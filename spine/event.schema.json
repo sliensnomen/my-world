@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "event.schema.json",
+  "x-contract-version": "0.1",
+  "title": "L0 事件账本条目契约",
+  "description": "文字世界模型 L0（事件脊柱）的单笔事件条目：一笔账 = 一个 Markdown 文件的 YAML frontmatter。字段分两列——世界列描述世界内发生的事（进投影与判定），审计列描述账本的治理动作（永不进投影，审计中立性）。权威顺序：本契约 > 代码+测试 > CHARTER.md。",
+  "type": "object",
+  "required": ["id", "type"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "全账本唯一；一旦入账永不更改、永不复用"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "事件类型，自由词汇 + x- 实验值。初始建议集：transfer/move/create/destroy/birth/death/join/leave/grant/custody/transform/modify；必填腿的形状约束归 L1 规则包，本层不定"
+    },
+    "by": { "$ref": "#/$defs/idList", "description": "参与者腿（施动方）" },
+    "from": { "$ref": "#/$defs/idList", "description": "参与者腿（起点/交出方）" },
+    "to": { "$ref": "#/$defs/idList", "description": "参与者腿（终点/受方）" },
+    "object": { "$ref": "#/$defs/idList", "description": "参与者腿（客体）" },
+    "result": { "$ref": "#/$defs/idList", "description": "参与者腿（产物）" },
+    "when": {
+      "type": "string",
+      "description": "世界内时间（故事时间，自由文本）。与 when_sort 是两列不是一列；数字或纯数字字符串时可对账，反向 = 结构错误"
+    },
+    "when_sort": {
+      "type": "number",
+      "description": "时序排序键。缺省 = 不进时序投影（fail-open，但须报缺：计数上报审计面）；相等 = 同刻，同刻不排序"
+    },
+    "source": {
+      "type": "string",
+      "description": "来源锚点（作品 · 章/段/句）。抽取器产出必须带；作者手记可省"
+    },
+    "evidence": {
+      "enum": ["attested", "inferred", "hearsay"],
+      "default": "attested",
+      "description": "世界内证据强度：attested 明写（默认）/ inferred 推断 / hearsay 传闻·不可靠叙述。多源冲突不写成值——冲突是两笔账之间的关系，裁决前并存；合法/非法归 L1 规则包，真值裁决只归人"
+    },
+    "confirmed_by": {
+      "type": "string",
+      "description": "审计列：抽取候选 → 入账的确认人（手记可省）。永不进投影"
+    },
+    "confirmed_at": {
+      "type": "string",
+      "description": "审计列：确认时间（手记可省）。永不进投影"
+    },
+    "x-extract-confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "审计列：抽取置信度（抽取器必填），确认界面按低置信优先排序。与 evidence 是两维：那是世界内证据强度，这是机器把握。永不进投影"
+    }
+  },
+  "patternProperties": {
+    "^x-": {
+      "description": "扩展字段一律 x- 前缀，审计器放行"
+    }
+  },
+  "$defs": {
+    "idList": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+      "description": "参与者腿：实体 id 列表。实体由首次提及建档；悬空引用是结构错误（账本规则）；世界内存在窗口由 birth/death/destroy 事件界定，归投影层"
+    }
+  }
+}
