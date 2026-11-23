@@ -15,7 +15,7 @@
 | | 负责 | 现在有什么 |
 |---|---|---|
 | **存** | 条目格式、id、目录布局、关系、写入命令 | `store/` · `world.schema.json`（格式契约） |
-| **判** | 结构规则 + 政治经济学规则 | 46 条 CA 规则（`judges/` 的 `core-ca` 包，`canonlint.py` 驱动）· 10 条 CL + 16 条 PE 规则（`judges/` 的 `core-cl`/`pe` 包，`classlint/` 驱动；CL100–CL109，PE001–PE016） |
+| **判** | 结构规则 + 政治经济学规则 | 46 条 CA 规则（`judges/` 的 `core-ca` 包，`canonlint.py` 驱动）· 11 条 CL + 16 条 PE 规则（`judges/` 的 `core-cl`/`pe` 包，`classlint/` 驱动；CL100–CL110，PE001–PE016） |
 
 **两者之间有一条线**：`store/` 里不许出现政治经济学词汇。改存储的人不该被迫先学会八层链和 PE003——
 政治经济学只住在规则、`classlint/` 和文档里。这条线由 `tests/test_store.py` 用 AST 检查守着（越线即红）。
@@ -81,7 +81,7 @@ python3 serve.py ~/worlds/grey-harbor --port 8000 --writable        # 默认只�
    其余叙述是当时的意图。与代码不一致时**以代码为准**。
 4. **`项目文书.md` / `classlint/项目文书.md`** —— 定位与路线图，属于「想法」，不是契约。
 
-`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与检查项数（46 条 CA、10 条 CL、16 条 PE、五套检查的 104 + 12 + 32 + 31 + 15），`README.md` / `CONTRIBUTING.md` / `classlint/README.md` 里的 31 个 classlint 夹具，以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
+`tests/test_docs.py` 把**一部分**文档数字钉在代码上：`README.md` / `CONTRIBUTING.md` 里的规则条数与检查项数（46 条 CA、11 条 CL、16 条 PE、五套检查的 104 + 12 + 32 + 31 + 15），`README.md` / `CONTRIBUTING.md` / `classlint/README.md` 里的 31 个 classlint 夹具，以及 `PROTOCOL.md` §6.3 规则表的编号与条数。
 它**不**是全文校验：层数、字段数、示例世界的条目数、退出码说明这些没被钉住，改代码时请顺手 `grep` 一遍文档。
 
 ## 现状（不吹）

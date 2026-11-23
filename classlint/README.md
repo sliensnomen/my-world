@@ -18,7 +18,7 @@ id 语法、frontmatter 切分、契约词表、关系名归一化都在 [`store
 `CLASSLINT_POLICY`：canonlint 开 depends_on 注解、classlint 关；近失换名建边两边都开），不是两份
 建边代码——所以政策改的时候只有一个地方要改。
 
-**状态：生产关系层已完成（PE001–PE008 + `graph` + `--impact`）；流量层的四线数据模型（CL108）、守恒律（PE010–PE012 + `demand`/`population`）、交叉规则（PE006–PE008）与个人关系层（PE013/PE014 + 五种个人关系）已就绪；时间线（`moment`/`shift`，CL109）与视图（`view`/`fork`）已就绪；信息时延律 PE015 与 PE004/PE005/PE011 的定量回填已就位（v0.9，`surplus` + violence `needs`），本版 PE 共 PE001–PE016。**
+**状态：生产关系层已完成（PE001–PE008 + `graph` + `--impact`）；流量层的四线数据模型（CL108）、守恒律（PE010–PE012 + `demand`/`population`）、交叉规则（PE006–PE008）与个人关系层（PE013/PE014 + 五种个人关系）已就绪；时间线（`moment`/`shift`，CL109）与视图（`view`/`fork`）已就绪；信息时延律 PE015 与 PE004/PE005/PE011 的定量回填已就位（v0.9，`surplus` + violence `needs`）；v0.10 新增 CL110（关系/断言字段显式 null），本版 PE 共 PE001–PE016。**
 
 ## 用法
 
@@ -36,7 +36,7 @@ python3 classlint/classlint.py fork ~/worlds/econ alt-history     # 反事实推
 
 退出码：`0` 正常；`1` 条目存在错误；`2` 用法/环境错误（含指错目录与配置错误）；`3` 判定通过，但有 PE 规则被 `rules: off` 关掉——「通过」只覆盖仍开着的规则，确认是有意关闭的加 `--accept-disabled-rules` 才回到 0（见 [PROTOCOL.md](PROTOCOL.md) §4）。
 
-判定由 Registry 的 `core-cl` 与 `pe` 两个 Pack 执行：CL100–CL109 逐规则注册，扫描/建索引与判定分离，PE 保持编号顺序和 `rules: off` 语义。Registry 是唯一后端——旧判定后端（legacy）已于 2026-11-22 按判定器注册表计划 Task 7 签核删除（判定语义不变）。
+判定由 Registry 的 `core-cl` 与 `pe` 两个 Pack 执行：CL100–CL110 逐规则注册，扫描/建索引与判定分离，PE 保持编号顺序和 `rules: off` 语义。Registry 是唯一后端——旧判定后端（legacy）已于 2026-11-22 按判定器注册表计划 Task 7 签核删除（判定语义不变）。
 
 ### 视图与反事实推演（Sprint 9）
 
@@ -57,7 +57,7 @@ git -C ~/worlds/econ diff main..alt-history                     # 看两条世�
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
-| `classlint_version` | string | 本工具版本（当前 `"0.8"`）。与 WGP 的 `protocol_version` 不是一回事 |
+| `classlint_version` | string | 本工具版本（当前 `"0.10"`）。与 WGP 的 `protocol_version` 不是一回事 |
 | `entries` | 对象列表 | 每个**可解析**条目：`id`（frontmatter 缺失或不是字符串时为 `null`）、`path`（相对世界根的路径）、`meta`（frontmatter 原样）、`body_chars`（正文字数）、`mentions`（正文别名报告）。解析失败的文件不进此列表，由 `findings` 中的 CL100 报告 |
 | `findings` | 对象列表 | 每条发现：`rule`（`CL1xx` / `PE0xx`）、`level`（`error` / `warning`）、`entry`（条目文件路径；仓库级为 `null`）、`message` |
 | `reports` | 对象列表 | 报告级输出，**永不进退出码**；目前是 `--impact` 的 `{subject, downstream}` 受影响队列 |
@@ -68,9 +68,9 @@ git -C ~/worlds/econ diff main..alt-history                     # 看两条世�
 
 `--impact ID...` 只改 `reports`：不改 `findings`，也不改退出码。
 
-## 审计规则（协议 v0.9，见 [PROTOCOL.md](PROTOCOL.md)）
+## 审计规则（协议 v0.10，见 [PROTOCOL.md](PROTOCOL.md)）
 
-- **CL1xx 结构规则**（不可关）：解析失败、缺必填字段、id 非法/重复、未定义字段、关系 schema 违规、关系目标不存在、流量条目格式（CL108）。
+- **CL1xx 结构规则**（不可关）：解析失败、缺必填字段、id 非法/重复、未定义字段、关系 schema 违规、关系目标不存在、流量条目格式（CL108）、时间线格式（CL109）、关系/断言字段显式 null（CL110）。
 - **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）；**PE004** 剩余必须收敛（extracts 子图无环；有 `surplus` 时按量判抽取是否超过剩余）；**PE005** 劳动者必须被覆盖（被抽取者须有来源侧边；有 `surplus` 时须有该物资流入）；**PE009** 债务必须收得回来（`owes` 要有收账通道：债主能支配/强制/抽取/撤回正当性，或债务人对债主持有 `critical: true` 或带物质类别 `kind` 的 `depends_on`，warning）；**PE010** 物流守恒（同单位流入 ≥ 需求，缺数据报 warning 不静默）；**PE011** 补给律（暴力线驻军地必须有物流线到达；有 `needs` 时按量判断粮）；**PE012** 人口律（流失要有可对账的端点）；**PE006** 危机积累（剩余刚好够活 + `tax`/`tribute` 外流上升）；**PE007** 结构性压力（人口上升 + 占有关系未变）；**PE008** 镇压自己的基础（`coerces` 的对象同时用物流供养自己）；**PE013** 亲情与镇压矛盾（镇压供养者 + `kin`/`allegiance`）；**PE014** 庇护关系缓冲危机（抽取上升 + 被抽取方余量不足 + `allegiance`）；**PE015** 时延倒挂（信息线 `when` + `delay` 抵达前，目的地已发生变故）。
 
 PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以关，不能改定义。

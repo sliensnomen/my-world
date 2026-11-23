@@ -41,7 +41,7 @@ except ContractError as exc:
     print(f"error: {exc}", file=sys.stderr)
     sys.exit(2)
 
-VERSION = "0.9"
+VERSION = "0.10"
 
 # ---- 协议常量（改动 = 协议变更，须升版本号）----------------------------------
 

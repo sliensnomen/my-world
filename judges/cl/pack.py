@@ -43,6 +43,9 @@ PACK = Pack(
         Rule(id="CL109", pack="core-cl", scope="entry", entry_domain="all_entries",
              check=structure.check_cl109, default_level="error",
              levels=frozenset({"error"}), order=109),
+        Rule(id="CL110", pack="core-cl", scope="entry", entry_domain="all_entries",
+             check=structure.check_cl110, default_level="error",
+             levels=frozenset({"error"}), order=110),
     ),
 )
 
@@ -87,6 +90,7 @@ def apply_core_cl(pack: Pack, entries, index, model, known_fields, emit) -> None
         run_entry("CL107", entry)
         run_entry("CL108", entry)
         run_entry("CL109", entry)
+        run_entry("CL110", entry)
         run_entry("CL102", entry, index=index)
         run_entry("CL104", entry)
     for entry in entries:

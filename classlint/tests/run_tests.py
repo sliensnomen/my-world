@@ -768,6 +768,35 @@ def check_issue47_flow_guards() -> int:
     return failures
 
 
+def check_issue43_null_assertions() -> int:
+    """#43：custody_of/member_of/relations 写显式 null 要报 CL110，不能等同缺省。"""
+    failures = 0
+    with tempfile.TemporaryDirectory() as td:
+        world = Path(td) / "w"
+        (world / "codex").mkdir(parents=True)
+        (world / "classlint.yaml").write_text(
+            'name: null-shape\nclasslint: "0.1"\n', encoding="utf-8")
+        (world / "codex" / "a.md").write_text(
+            "---\nid: a\ntitle: a\ntype: character\n"
+            "custody_of: null\nmember_of: null\n---\n正文。\n", encoding="utf-8")
+        _, _, fs, _ = classlint.run_checks(world)
+        got = [(f.rule, f.message) for f in fs if f.rule == "CL110"]
+        if len(got) != 2 or not all("显式 null" in m for _r, m in got):
+            failures += 1
+            print(f"FAIL 显式 null 应各报一条 CL110：{got}")
+        (world / "codex" / "a.md").write_text(
+            "---\nid: a\ntitle: a\ntype: character\n"
+            "custody_of: []\nmember_of: []\n---\n正文。\n", encoding="utf-8")
+        _, _, fs, _ = classlint.run_checks(world)
+        got = [f for f in fs if f.rule == "CL110"]
+        if got:
+            failures += 1
+            print(f"FAIL 空数组不该报 CL110：{got}")
+    if not failures:
+        print("PASS #43：关系断言字段显式 null 报 CL110")
+    return failures
+
+
 def check_view_html_generation() -> int:
     """视图：`view` 生成自包含 HTML（关系图 + 时间线两页签，不外链）。"""
     failures = 0
@@ -885,8 +914,8 @@ def check_registry_cl_pe_registration_and_behavior() -> int:
     try:
         registry = select_packs("classlint", ["core-cl", "pe"])
         core, pe = registry.selected
-        expect([r.id for r in core.rules] == [f"CL{n}" for n in range(100, 110)],
-               f"core-cl 必须逐规则登记 CL100–CL109：{[r.id for r in core.rules]}")
+        expect([r.id for r in core.rules] == [f"CL{n}" for n in range(100, 111)],
+               f"core-cl 必须逐规则登记 CL100–CL110：{[r.id for r in core.rules]}")
         expect([r.id for r in pe.rules] == ["PE001", "PE002", "PE003", "PE004", "PE005",
                                             "PE006", "PE007", "PE008",
                                             "PE009", "PE010", "PE011", "PE012",
@@ -1009,6 +1038,7 @@ def main() -> int:
     failures += check_registry_cl_pe_registration_and_behavior()
     failures += check_pe004_pe011_levels_are_registered()
     failures += check_issue47_flow_guards()
+    failures += check_issue43_null_assertions()
     failures += check_view_html_generation()
     failures += check_fork_branch()
     extra = set(EXPECTED) - set(worlds)
