@@ -81,6 +81,23 @@ _CTYPES = {
 }
 
 
+def _world_signature(root: Path) -> tuple:
+    """世界目录的内容指纹：每个文件 (相对路径, size, mtime_ns)。O(文件数) 的 stat。
+
+    只 stat 不读——写入端（CLI 或本进程写接口）都会改 mtime/size，缓存随即失效。
+    """
+    rows = []
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or ".git" in p.parts:
+            continue
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        rows.append((str(p.relative_to(root)), st.st_size, st.st_mtime_ns))
+    return tuple(rows)
+
+
 def _inside(target: Path, base: Path) -> bool:
     """target 是不是就在 base 里面（防 ../ 穿越）。"""
     return target == base or base in target.parents
@@ -135,8 +152,22 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, body, "application/json; charset=utf-8", extra)
 
     def _export(self) -> dict:
-        return canonlint.export_world(self.server.wgp_root, self.server.wgp_packs,
+        """整份导出；按键（全目录 stat 指纹）缓存，任何文件改动都会让它失效。
+
+        #15：完整审计是 O(条目数 + 查重候选)，1000 条目级要数秒。接口的多条路由都
+        要同一份数据（/api/world、/api/health、/api/entry），冷启动付一次，
+        热路径只花一次目录 stat 的钱。
+        """
+        root = self.server.wgp_root
+        sig = _world_signature(root)
+        cached = getattr(self.server, "wgp_export_cache", None)
+        if cached and cached[0] == sig:
+            return cached[1]
+        data = canonlint.export_world(root, self.server.wgp_packs,
                                       (), self.server.wgp_extra_known)
+        with self.server.wgp_cache_lock:
+            self.server.wgp_export_cache = (sig, data)
+        return data
 
     # ---- 路由 -----------------------------------------------------------
 
@@ -267,7 +298,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             # 写锁只包「写卡 + 全库审 + 回滚」这一段：审计回滚是差集删除，
             # 不串行化的话 A 的回滚会删掉 B 刚建好的卡。
-            with self.server.wgp_write_lock:
+            # #11：写锁（进程内）+ 世界事务锁（跨进程）必须覆盖完整的
+            # 「读—改—写—审—回滚」，否则外部 CLI 能在审计窗口里插进来。
+            with self.server.wgp_write_lock, canonlint.store.world_transaction(
+                    self.server.wgp_root):
                 if path == "/api/entry":
                     return self._post_card(False, data, action)
                 if path == "/api/event":
@@ -328,6 +362,12 @@ class Handler(BaseHTTPRequestHandler):
             return None, True
         return data, None
 
+    def _error_signatures(self) -> set[tuple]:
+        """#11：审计基线（写前）——回滚只拒绝本次写入新增的 error。"""
+        _all, _idx, findings, _reports = self._audit()
+        return {(f.rule, f.level, f.entry, f.message)
+                for f in findings if f.level == "error"}
+
     def _post_status(self, data, action: str):
         """治理动作（人机交互 Phase 3）：升格（draft→trial→canon）/ 降级（archived）。
 
@@ -352,6 +392,7 @@ class Handler(BaseHTTPRequestHandler):
             updates["superseded_by"] = sup
         if not updates:
             return self._finish(action, 400, {"error": "必须给至少一个字段（status/superseded_by）"})
+        baseline = self._error_signatures()
         _all, index, _issues = canonlint.store.collect(root)
         target = index.get(entry_id)
         if target is None:
@@ -360,16 +401,15 @@ class Handler(BaseHTTPRequestHandler):
         rc, msg = canonlint.store.set_fields(root, entry_id, updates)
         if rc != 0:
             return self._finish(action, 400, {"error": msg})
+        written = target.path.read_bytes()
         _all, _idx, findings, _reports = self._audit()
-        errors = [f for f in findings if f.level == "error"]
+        errors = [f for f in findings if f.level == "error"
+                  and (f.rule, f.level, f.entry, f.message) not in baseline]
         if errors:
-            try:
-                # 原子恢复：回滚本身不能留下半张卡（以前是 write_bytes，断电就剩一半）
-                canonlint.store.restore_bytes(target.path, old_bytes)
-            except OSError as e:
-                return self._finish(action, 500, {
-                    "error": f"审计不通过，但回滚失败：{e}",
-                    "hint": f"请手工恢复 {target.path}"})
+            if not canonlint.store.restore_if_unchanged(target.path, written, old_bytes):
+                return self._finish(action, 409, {
+                    "error": "审计不通过，但文件已被外部修改——未覆盖第三方更新",
+                    "hint": f"请手工检查 {target.path}"})
             return self._finish(action, 422, {
                 "error": "审计不通过，已回滚",
                 "findings": [{"rule": f.rule, "level": f.level,
@@ -407,6 +447,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(type_, str) or not isinstance(title, str) or not type_ or not title:
                 return self._finish(action, 400, {"error": "写卡必须给字符串 type 与 title"})
             fields = {k: data[k] for k in legs + ("event_kind",) if k in data}
+        baseline = self._error_signatures()
         out: dict = {}
         # cmd_new 会往 stdout 打「已建卡: …」；HTTP 客户端看不到服务器屏幕，
         # 别让它混进 serve 的日志（那是给终端用户看的）。
@@ -423,16 +464,18 @@ class Handler(BaseHTTPRequestHandler):
         if rc != 0:
             return self._finish(action, 400, {"error": "参数非法（type/id 缺失或不合法）"})
         created = [out["path"]] if out.get("path") else []
+        written = {p: p.read_bytes() for p in created}
         _all, _idx, findings, _reports = self._audit()
-        errors = [f for f in findings if f.level == "error"]
+        errors = [f for f in findings if f.level == "error"
+                  and (f.rule, f.level, f.entry, f.message) not in baseline]
         if errors:
             # 只删这一次请求自己建的文件（写锁保证没有别人的新文件混进来），
-            # unlink 失败也只影响这一张，不能让整个响应变成断连。
+            # #11：只删仍是本事务写下的卡；外部改过就不删，回 409 让人工看。
             for p in created:
-                try:
-                    p.unlink()
-                except OSError:
-                    pass
+                if not canonlint.store.unlink_if_unchanged(p, written.get(p, b"")):
+                    return self._finish(action, 409, {
+                        "error": "审计不通过，但文件已被外部修改——未删除第三方更新",
+                        "hint": f"请手工检查 {p}"})
             return self._finish(action, 422, {
                 "error": "审计不通过，已回滚",
                 "findings": [{"rule": f.rule, "level": f.level,
@@ -576,6 +619,8 @@ def make_server(root: Path, host: str, port: int, packs=(), extra_known=frozense
     httpd.wgp_writable = writable              # type: ignore[attr-defined]
     # 写请求串行化：审计回滚是「写卡 → 全库审 → 红就删」，两个请求交错会互删新卡。
     httpd.wgp_write_lock = threading.Lock()    # type: ignore[attr-defined]
+    httpd.wgp_cache_lock = threading.Lock()    # type: ignore[attr-defined]
+    httpd.wgp_export_cache = None              # type: ignore[attr-defined]
     httpd.wgp_log_lock = threading.Lock()      # type: ignore[attr-defined]
     httpd.wgp_token = token                    # type: ignore[attr-defined]
     httpd.wgp_write_log = Path(write_log) if write_log else None  # type: ignore[attr-defined]

@@ -27,6 +27,7 @@ import re
 import stat
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Container, Sequence
 from datetime import date
@@ -128,13 +129,47 @@ def _sweep_stale_tmp(directory: Path) -> None:
             continue
 
 
+_LOCK_GUARD = threading.Lock()
+_LOCK_LOCAL = threading.local()
+
+
+def _root_lock(root: Path) -> threading.RLock:
+    key = str(root.resolve())
+    with _LOCK_GUARD:
+        locks = getattr(_LOCK_LOCAL, "locks", None)
+        if locks is None:
+            locks = _LOCK_LOCAL.locks = {}
+        lock = locks.get(key)
+        if lock is None:
+            lock = locks[key] = threading.RLock()
+        return lock
+
+
 @contextlib.contextmanager
 def _world_lock(root: Path):
-    """给「读—改—写」上把进程间锁：两个 `link` 同时跑会各读旧内容、各写一遍，丢掉一条边。
+    """给「读—改—写—审—回滚」上把进程间锁，且同线程内可重入（#11）。
 
     锁文件放系统临时目录（不往世界仓库里扔东西），用世界根路径的散列命名。
     拿不到 fcntl（非 Unix）就退化成不锁——并行写入不是默认用法，退化比报错好。
+    重入时直接复用外层锁：`set_fields` 内部也走这里，外层事务不能再开第二个 flock
+    （同一进程两个 fd 抢同一把 flock 会自己把自己锁死）。
     """
+    rlock = _root_lock(root)
+    with rlock:
+        depth = getattr(_LOCK_LOCAL, "depth", 0)
+        _LOCK_LOCAL.depth = depth + 1
+        try:
+            if depth > 0:
+                yield
+                return
+            with _open_world_lock(root):
+                yield
+        finally:
+            _LOCK_LOCAL.depth = depth
+
+
+@contextlib.contextmanager
+def _open_world_lock(root: Path):
     key = hashlib.sha1(str(root.resolve()).encode("utf-8")).hexdigest()[:16]
     lock_path = Path(tempfile.gettempdir()) / f"canonlint-{key}.lock"
     try:
@@ -667,3 +702,31 @@ def set_fields(root: Path, entry_id: str, updates: dict) -> tuple[int, str]:
         except OSError as err:
             return 2, f"写入失败：{err}"
     return 0, f"已更新 {entry_id}：{updates}"
+
+
+world_transaction = _world_lock  # 公开名（#11）：完整写入事务的外层锁
+
+
+def restore_if_unchanged(path: Path, written: bytes, old: bytes) -> bool:
+    """回滚前先确认文件仍是本事务写下的内容（#11）。
+
+    第三方（外部 CLI）在审计窗口里改过文件时返回 False——不能拿旧字节覆盖别人的更新。
+    """
+    try:
+        if path.read_bytes() != written:
+            return False
+        restore_bytes(path, old)
+        return True
+    except OSError:
+        return False
+
+
+def unlink_if_unchanged(path: Path, written: bytes) -> bool:
+    """删除新建卡前确认内容仍是本事务写下的（#11）；被第三方改过就不删。"""
+    try:
+        if path.read_bytes() != written:
+            return False
+        path.unlink()
+        return True
+    except OSError:
+        return False
