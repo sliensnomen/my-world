@@ -19,6 +19,7 @@
 |---|---|---|---|---|
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | 使用参考 | 现行 | 新贡献者的改动路径与验证要求 | 测试、CI、协作流程变化时同步 |
 | [CHARTER.md](../CHARTER.md) | 设计路线 | 现行 | 文字世界模型转型宪章（2.0 地基文档，v1.0） | 转型裁决变化时同步；2.0 分支上以 `spine/event.schema.json` 为上位契约 |
+| [docs/2.0-release-plan.md](2.0-release-plan.md) | 设计路线 | 现行 | 第一个发行版计划（2027-01-20）：底线/头条、周计划、熔断线 | 周计划执行偏差与验收口径变化时同步 |
 | [spine/README.md](../spine/README.md) | 设计路线 | 现行 | 事件脊柱的目录纪律、文件清单与双轨里程碑（2.0） | 目录纪律、文件清单或 2.0 状态变化时同步 |
 | [LICENSE](../LICENSE) | 授权与治理 | 授权 | 代码 MIT 授权 | 授权政策变化时才改 |
 | [LICENSE-PROTOCOL.md](../LICENSE-PROTOCOL.md) | 授权与治理 | 授权 | 协议文本 CC BY 4.0 授权 | 授权政策变化时才改 |
