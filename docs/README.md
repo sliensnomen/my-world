@@ -6,7 +6,7 @@
 
 1. `world.schema.json` 是条目格式的唯一契约；代码与测试是行为真相。
 2. `PROTOCOL.md` 与 `classlint/PROTOCOL.md` 的规则表和代码互证；散文与代码不一致时以代码为准。
-3. 新读者从 `README.md`、`CONTRIBUTING.md` 和 `store/README.md` 进入实现；转型方向与 2.0 路线先读 `CHARTER.md`（2.0 分支上以 `spine/event.schema.json` 为唯一契约）。
+3. 新读者想先跑起来，从 `docs/使用参考/第一次读.md` 进入；想理解实现从 `README.md`、`CONTRIBUTING.md` 和 `store/README.md` 进入；转型方向与 2.0 路线先读 `CHARTER.md`（2.0 分支上以 `spine/event.schema.json` 为唯一契约）。
 4. “草案”尚未落地，“历史”只保留当时证据，“模板”是可复用流程，“案例”是特定场景材料。不要把它们当成现行契约。
 
 新增、删除或改变项目文档状态时，必须同步本页。`tests/test_docs.py` 会发现漏登记、重复登记、失效链接和非法分类。仓库内的 `docs/<分类>/` 目录与下表分类一一对应；当前只有存在文档的分类目录。`spine/` 目录由 `spine/README.md` 自管文件清单，不在自动发现范围内。
@@ -36,6 +36,8 @@
 | [classlint/tests/world-arrakis/README.md](../classlint/tests/world-arrakis/README.md) | 案例与对外 | 案例 | 沙丘 PE003 真阳性的 dogfood 证据 | 保留当时转写与判定，夹具预期变化时补注 |
 | [classlint/tests/world-westeros/README.md](../classlint/tests/world-westeros/README.md) | 案例与对外 | 案例 | 冰火真阴性与建模判断记录 | 保留当时 16 条转写背景，不套用主世界新条数 |
 | [docs/README.md](README.md) | 使用参考 | 现行 | 全部项目文档的分类索引与更新入口 | 新增、删除或改变文档状态时同步 |
+| [docs/使用参考/第一次读.md](使用参考/第一次读.md) | 使用参考 | 现行 | 五分钟建世界、加卡、连线并看到第一条 finding 的上手路径 | 命令、预期输出或上手路径变化时同步 |
+| [docs/使用参考/术语表.md](使用参考/术语表.md) | 使用参考 | 现行 | 数据模型、判定与版本术语的一句话定义 | 新增术语、改名或版本口径变化时同步 |
 | [docs/使用参考/接口说明.md](使用参考/接口说明.md) | 使用参考 | 现行 | HTTP 路由、写入口、安全与错误合同 | `serve.py` 路由、字段或写策略变化时同步 |
 | [docs/使用参考/给前端的说明.md](使用参考/给前端的说明.md) | 使用参考 | 现行 | 导出 JSON 字段、样例与前端使用规矩 | 导出字段、真实样例和界面状态变化时同步 |
 | [docs/使用参考/前端开工清单.md](使用参考/前端开工清单.md) | 使用参考 | 现行 | 前后端分工、已完成界面与剩余工作 | 界面交付状态变化时同步 |

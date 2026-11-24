@@ -25,6 +25,8 @@ DOCS = (
     "README.md",
     "CONTRIBUTING.md",
     "docs/使用参考/协作流程.md",
+    "docs/使用参考/第一次读.md",
+    "docs/使用参考/术语表.md",
     "docs/README.md",
     "PROTOCOL.md",
     "PROTOCOL-ECON.md",
