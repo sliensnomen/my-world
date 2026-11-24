@@ -5,6 +5,11 @@
 > [DeepWiki](https://deepwiki.com/sliensnomen/my-world) 那份英文导读是**建站时刻的快照**，不会随提交自动更新；
 > 与代码不一致时一律以本仓库为准，信的顺序见下文「这个仓库里什么说了算」。
 
+> **项目正在转型**：本仓库正从「卡面世界 lint」（1.x）转向**文字世界模型**——以事件为唯一
+> 事实源的叙事世界模型（协议 2.0 长分支，宪章见 [CHARTER.md](CHARTER.md)，L0 契约见
+> `spine/event.schema.json`）。以下文档描述 1.x 卡面工具：已进入维护态（收 bug 修复与
+> 协议小版本，不再长新规则），全文继续有效；转型方向、里程碑与迁移纪律以宪章为准。
+
 给写小说、剧本、跑团设定的人用的本地优先工具：**把世界存成 Git 里的 Markdown，再用确定性规则检测它在结构上讲不讲得通。**
 
 同类工具里，SillyTavern 的世界书能**存**、World Anvil 能**展示**，但都不能**判定**——没有哪件工具会告诉你
@@ -94,7 +99,8 @@ python3 serve.py ~/worlds/grey-harbor --port 8000 --writable        # 默认只�
 - ✅ **判定器注册表**：`judges/` 用统一 Rule/Pack 元数据装载 CA/CL/PE/econ，Registry 是唯一判定后端（legacy 已于 2026-11-22 签核删除）；CLI 与 serve 共用同一 Pack 加载入口
 - ✅ **界面 v0.2**：`web/index.html`（台账 / 审计 / 流水三视图 + 记账表单 + 升格/降级工单，零依赖零构建，`serve.py` 同源伺候）；默认只读，`--writable` 时界面才显示写入口
 - ✅ **可写 HTTP 入口（Phase 2/3）**：`POST /api/entry`（写卡）、`POST /api/event`（记账）、`POST /api/status`（升格/降级）；写完即审、红则回滚，写请求串行化，只收同源 `application/json`；可选 `--token`  bearer 凭据与 `--write-log` 审计日志（见 `docs/接口说明.md`）
-- ⬜ **酒馆互操作没做** —— SillyTavern 世界书 / 角色卡的导入导出，是设计好的第一条真实入口（不用先写界面就有用户）
+- ⬜ **~~酒馆互操作~~** —— SillyTavern 世界书导入导出的旧规划，随转型冻结：「第一条真实入口」
+  已改定为事件抽取基准（见 [CHARTER.md](CHARTER.md) §5），酒馆适配器是否以新形态复活由宪章修订记录决定
 - ✅ **classlint 的判定包已拆出** —— `core-cl` 与 `pe` 经 Registry 执行，扫描/建索引与逐规则判定分离。读卡也只有 `store/parse.py` 一份（`tests/test_store.py` 的结构锁 + 行为锁守着）。classlint 仍是仓库内独立可执行文件，**必须和仓库一起用、从仓库根调用**，不能单独拷走 `classlint/classlint.py`；它自己的字段政策与 canonlint 有一处真实分歧（`depends_on` 收裸字符串，canonlint 要求 `{id, kind, critical}`）
 - ⚠️ 三个真实世界（魔戒 / 冰火 / 沙丘）是**演示**不是证据：它们的 warning 几乎全是 CA104（正文不到
   200 字）这类篇幅噪声，不是工具 bug，也不是世界观有毛病；拿它们当「全绿基准」是误会
@@ -102,15 +108,13 @@ python3 serve.py ~/worlds/grey-harbor --port 8000 --writable        # 默认只�
   两种模式下都是 `0 错误 | 0 警告`、`exit 0`，退出码逐字节钉在 `tests/snapshots/` 里
   （`world-clean`、`world-clean+strict`、`world-ledger`、`world-ledger+strict`）
 
-## 下一步（方向已定，未实现）
+## 下一步
 
-1. **链与判定**：`chain --from <id> --to <id>` 选头选尾取一条链，`--judge ca|pe|ai` 选判定器
-   （AI 判定器**永不进退出码、永不自动写入**）
-2. **作品层**：世界 = 事实（只存一次），作品（小说 / 剧本 / 跑团）= 视图（带时间段与视角）
-3. **酒馆适配器**：`adapters/st/` 读写世界书与角色卡 V2/V3，我们的关系图住 `x-` 命名空间
-4. **事件流水后续**：携带推导等待容器卡触发；`modify` 已在协议 1.9 转正
-   ——触发条件与「动它之前要回答什么」都在 [docs/事件流水设计.md](docs/事件流水设计.md) §4 的 backlog 里
-5. **~~legacy 退役~~**（已完成 2026-11-22）：Registry 默认运行满一个发布周期且无应急回退，旧判定后端已按判定器注册表计划 Task 7 签核删除
+1.x 进入维护态后，以下旧规划（链与判定 `chain --judge`、作品层、酒馆适配器、事件流水
+后续 backlog）**不再展开**——它们曾是「卡面模型的下一步」，而项目的下一步已经换了：
+向**文字世界模型**转型，路线与里程碑以 [CHARTER.md](CHARTER.md) 为准（当前第一个里程碑
+是「抽取基准跑通」，见宪章 §5；这些旧规划里会以新形态复活的，由宪章的修订记录说了算）。
+legacy 退役已完成（2026-11-22，见「现状」）。
 
 ## 参与贡献
 
