@@ -6,7 +6,7 @@
 
 1. `world.schema.json` 是条目格式的唯一契约；代码与测试是行为真相。
 2. `PROTOCOL.md` 与 `classlint/PROTOCOL.md` 的规则表和代码互证；散文与代码不一致时以代码为准。
-3. 新读者想先跑起来，从 `docs/使用参考/第一次读.md` 进入；想理解实现从 `README.md`、`CONTRIBUTING.md` 和 `store/README.md` 进入；转型方向与 2.0 路线先读 `CHARTER.md`（2.0 分支上以 `spine/event.schema.json` 为唯一契约）。
+3. 新读者想先跑起来，从 `docs/使用参考/第一次读.md` 进入；想理解实现从 `README.md`、`CONTRIBUTING.md` 和 `store/README.md` 进入；现行方向先读 `docs/1.4-事件优先卡模型.md`。`CHARTER.md` 与 `spine/` 是已冻结的 2.0「事件唯一、实体卡消亡」路线，只作历史，不再作为当前契约。
 4. “草案”尚未落地，“历史”只保留当时证据，“模板”是可复用流程，“案例”是特定场景材料。不要把它们当成现行契约。
 
 新增、删除或改变项目文档状态时，必须同步本页。`tests/test_docs.py` 会发现漏登记、重复登记、失效链接和非法分类。仓库内的 `docs/<分类>/` 目录与下表分类一一对应；当前只有存在文档的分类目录。`spine/` 目录由 `spine/README.md` 自管文件清单，不在自动发现范围内。
@@ -18,9 +18,10 @@
 | 文档 | 分类 | 状态 | 摘要 | 权威与更新触发 |
 |---|---|---|---|---|
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | 使用参考 | 现行 | 新贡献者的改动路径与验证要求 | 测试、CI、协作流程变化时同步 |
-| [CHARTER.md](../CHARTER.md) | 设计路线 | 现行 | 文字世界模型转型宪章（2.0 地基文档，v1.0） | 转型裁决变化时同步；2.0 分支上以 `spine/event.schema.json` 为上位契约 |
-| [docs/2.0-release-plan.md](2.0-release-plan.md) | 设计路线 | 现行 | 第一个发行版计划（2027-01-20）：底线/头条、周计划、熔断线 | 周计划执行偏差与验收口径变化时同步 |
-| [spine/README.md](../spine/README.md) | 设计路线 | 现行 | 事件脊柱的目录纪律、文件清单与双轨里程碑（2.0） | 目录纪律、文件清单或 2.0 状态变化时同步 |
+| [CHARTER.md](../CHARTER.md) | 设计路线 | 历史 | 已冻结的 2.0「事件唯一、实体卡消亡」宪章（v1.0） | 2.0 路线 2026-11-24 废弃；不再作为当前契约 |
+| [docs/1.4-事件优先卡模型.md](1.4-事件优先卡模型.md) | 设计路线 | 草案 | 1.4 当前方向：事件卡主写作面、实体卡保留、普通 Web 先行的发行计划 | 拍板项或范围变化时同步 |
+| [docs/2.0-release-plan.md](2.0-release-plan.md) | 设计路线 | 历史 | 已废弃的 2.0 事件唯一路线发行计划（2027-01-20） | 仅作历史评审记录，不再执行 |
+| [spine/README.md](../spine/README.md) | 设计路线 | 历史 | 2.0 事件脊柱冻结区的目录纪律、文件清单与历史证据 | 目录冻结；不再投入 |
 | [LICENSE](../LICENSE) | 授权与治理 | 授权 | 代码 MIT 授权 | 授权政策变化时才改 |
 | [LICENSE-PROTOCOL.md](../LICENSE-PROTOCOL.md) | 授权与治理 | 授权 | 协议文本 CC BY 4.0 授权 | 授权政策变化时才改 |
 | [PROTOCOL-ECON.md](../PROTOCOL-ECON.md) | 权威契约 | 草案 | econ 数值扩展的字段与两条规则草案 | 以 `econ.py` 实测为限，不夸大为完整数值系统 |
