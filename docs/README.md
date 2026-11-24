@@ -6,7 +6,7 @@
 
 1. `world.schema.json` 是条目格式的唯一契约；代码与测试是行为真相。
 2. `PROTOCOL.md` 与 `classlint/PROTOCOL.md` 的规则表和代码互证；散文与代码不一致时以代码为准。
-3. 新读者从 `README.md`、`CONTRIBUTING.md` 和 `store/README.md` 进入实现。
+3. 新读者从 `README.md`、`CONTRIBUTING.md` 和 `store/README.md` 进入实现；转型方向与 2.0 路线先读 `CHARTER.md`（2.0 分支上以 `spine/event.schema.json` 为唯一契约）。
 4. “草案”尚未落地，“历史”只保留当时证据，“模板”是可复用流程，“案例”是特定场景材料。不要把它们当成现行契约。
 
 新增、删除或改变项目文档状态时，必须同步本页。`tests/test_docs.py` 会发现漏登记、重复登记、失效链接和非法分类。

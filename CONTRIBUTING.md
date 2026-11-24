@@ -13,7 +13,9 @@
 > 2. `world.schema.json` —— 条目格式的唯一契约（自定义字段一律 `x-` 前缀，不要另开 `extensions` 键）
 > 3. `store/README.md` —— 存储层边界、常见改动菜谱
 > 4. `docs/README.md` —— 全部项目文档的分类、时效状态与更新触发
-> 5. 你要改的那一层（见 §1 的表）
+> 5. **（2.0 分支）`CHARTER.md` + `spine/README.md`** —— 项目正在向文字世界模型转型；
+>    动 `spine/` 之前必须读分支纪律（依赖方向、权威顺序、双轨）
+> 6. 你要改的那一层（见 §1 的表）
 >
 > **铁律（越线会被测试抓住）**
 >
@@ -122,10 +124,12 @@ python3 tests/test_store.py           # 存储层边界与写入路径
 python3 tests/test_serve.py           # 接口（serve.py）与解析器（wgp-client.js），含后端 fail-fast
 python3 tests/test_docs.py            # 文档里的数字 ↔ 代码
 python3 classlint/tests/run_tests.py  # 31 个 classlint 夹具
+python3 spine/tests/run_tests.py      # （2.0 分支）事件脊柱：契约自检 + 依赖方向锁 + 迁移对账
 ```
 
 以上命令直接走 Registry（唯一判定后端）。改判定加载或执行日程时，六条命令就是
-回归网本身；快照逐字节钉死输出，意图断言钉死守卫生效。
+回归网本身；快照逐字节钉死输出，意图断言钉死守卫生效。2.0 分支上动 `spine/`
+时第七条同样必须绿（CI 对七个脚本一视同仁）。
 
 两个 Python 版本都要过（CI 跑 3.12 与 3.14；本机可用
 `~/.pyenv/versions/3.12.10/bin/python3` 交叉验证）。
@@ -139,7 +143,7 @@ python3 classlint/tests/run_tests.py  # 31 个 classlint 夹具
 
 | 检查名（分支保护依赖） | 跑什么 |
 |---|---|
-| `canonlint (3.12)` / `canonlint (3.14)` | `tests/run_tests.py` → `tests/test_schema.py` → `tests/test_store.py` → `tests/test_serve.py` → `tests/test_docs.py` |
+| `canonlint (3.12)` / `canonlint (3.14)` | `tests/run_tests.py` → `tests/test_schema.py` → `tests/test_store.py` → `tests/test_serve.py` → `tests/test_docs.py` → `spine/tests/run_tests.py`（2.0 分支） |
 | `classlint (3.12)` / `classlint (3.14)` | `classlint/tests/run_tests.py` |
 
 **CI 不审计这个仓库本身**（为什么：本仓库没有 `entries/` 之类的入口目录，`canonlint . --strict`

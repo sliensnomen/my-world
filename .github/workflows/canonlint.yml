@@ -48,6 +48,9 @@ jobs:
         run: python3 tests/test_serve.py
       - name: 文档一致性（规则编号 / 数字 / 路径 / 命令 / 检查名必须与代码一致）
         run: python3 tests/test_docs.py
+      - name: 事件脊柱骨架（2.0 分支：契约自检 + 依赖方向锁 + 迁移对账）
+        run: python3 spine/tests/run_tests.py
+        if: hashFiles('spine/tests/run_tests.py') != ''
 
   classlint:
     runs-on: ubuntu-latest
