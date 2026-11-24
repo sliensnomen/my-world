@@ -666,7 +666,7 @@ def main(argv=None) -> int:
                     help="启用协议扩展包（econ = WGP-econ 数值系统，CA6xx）")
     ap.add_argument("--quiet", action="store_true", help="不打每行请求日志")
     ap.add_argument("--writable", action="store_true",
-                    help="开写端点（POST /api/entry、/api/event；写完即审，红则回滚）")
+                    help="开写端点（POST /api/entry、/api/event、/api/status；写完即审，红则回滚）")
     ap.add_argument("--token", default=os.environ.get("WGP_TOKEN"),
                     help="写请求要 Bearer token（也可用环境变量 WGP_TOKEN；不设 = 不验）")
     ap.add_argument("--write-log", type=Path, default=None,
