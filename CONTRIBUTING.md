@@ -155,7 +155,7 @@ python3 spine/tests/run_tests.py      # （2.0 分支）事件脊柱：契约自
 - **合并方式**：`Merge`（不用 squash/rebase——保留每个提交作为可整体回滚的单元）。
 - **CODEOWNERS** 目前只有仓库所有者 `@sliensnomen`。**「Require review from Code Owners」是刻意关着的**：
   GitHub 不允许自己 approve 自己的 PR，开了等于把自己的 PR 锁死。等有第二位 code owner 再开。
-- 细节（状态机 ↔ git 操作的映射、世界数据仓库该保护什么）见 [docs/协作流程.md](docs/协作流程.md)。
+- 细节（状态机 ↔ git 操作的映射、世界数据仓库该保护什么）见 [docs/使用参考/协作流程.md](docs/使用参考/协作流程.md)。
 
 ## 7. 硬规矩
 

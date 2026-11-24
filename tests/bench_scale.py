@@ -2,7 +2,7 @@
 """规模基准（issue #15）：生成合成世界，量审计 / 导出 / 单条读取的耗时。
 
 跑法：python3 tests/bench_scale.py [--entries 200,1000] [--body 4000]
-结果用来对照 docs/规模预算.md 的预算；不预设机器性能，输出含条目数与耗时。
+结果用来对照 docs/使用参考/规模预算.md 的预算；不预设机器性能，输出含条目数与耗时。
 """
 from __future__ import annotations
 

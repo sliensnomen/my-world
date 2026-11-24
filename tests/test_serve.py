@@ -364,7 +364,8 @@ def check_解析器在_node_下的行为() -> str | None:
     return None
 
 
-DOCS_FRONT = [ROOT / "docs" / "接口说明.md", ROOT / "docs" / "给前端的说明.md"]
+DOCS_FRONT = [ROOT / "docs" / "使用参考" / "接口说明.md",
+              ROOT / "docs" / "使用参考" / "给前端的说明.md"]
 
 
 def check_文档写的路由都是真的():
@@ -466,7 +467,7 @@ def _verify_sample(sample, real, where: str):
 
 def check_文档里的_JSON_样例与真实导出一致():
     """文档里的样例是别人开工的依据：干净版和带注释版都必须与真实导出逐字段对得上。"""
-    doc = ROOT / "docs" / "给前端的说明.md"
+    doc = ROOT / "docs" / "使用参考" / "给前端的说明.md"
     text = doc.read_text(encoding="utf-8")
     real = canonlint.export_world(WORLD)
     # 干净版：优先找 ```json，没有就逐个试（编辑器保存时可能把语言标记抹掉）
@@ -489,7 +490,7 @@ def check_文档里的_JSON_样例与真实导出一致():
 
 def check_字段说明覆盖真实导出的每个字段():
     """第四节的字段表就是对方的字典：真实导出里有的字段，一个都不许漏（漏了只能猜）。"""
-    doc = ROOT / "docs" / "给前端的说明.md"
+    doc = ROOT / "docs" / "使用参考" / "给前端的说明.md"
     text = doc.read_text(encoding="utf-8")
     assert "## 四、字段是什么意思" in text, "给前端的说明里找不到「字段是什么意思」那一节"
     body = text.split("## 四、字段是什么意思", 1)[1].split("\n## ", 1)[0]

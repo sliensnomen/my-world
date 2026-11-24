@@ -24,7 +24,7 @@ import store  # noqa: E402
 DOCS = (
     "README.md",
     "CONTRIBUTING.md",
-    "docs/协作流程.md",
+    "docs/使用参考/协作流程.md",
     "docs/README.md",
     "PROTOCOL.md",
     "PROTOCOL-ECON.md",
@@ -198,7 +198,7 @@ def check_rule_ids_match_code():
         assert not missing, f"{name} 的 {prefix} 规则表少了代码会发射的编号：{missing}"
         assert not extra, f"{name} 的 {prefix} 规则表有代码里不存在的编号：{extra}"
 
-    summary = doc("docs/判定规则总表.md")
+    summary = doc("docs/使用参考/判定规则总表.md")
     for prefix, sources in (("CA", (*CORE_SRC, *ECON_SRC)), ("CL", CL_SRC), ("PE", CL_SRC)):
         rows = rule_table_ids(summary, prefix)
         code = rule_ids_in_code(prefix, sources)
@@ -432,7 +432,7 @@ def ci_scripts(job: str) -> list[str]:
 def check_ci_check_names_match_docs():
     """分支保护按名字要求检查，所以文档写的名字必须就是 CI 产出的名字。"""
     names = ci_check_names()
-    for name in ("CONTRIBUTING.md", "docs/协作流程.md"):
+    for name in ("CONTRIBUTING.md", "docs/使用参考/协作流程.md"):
         found = {f"{job} ({version})"
                  for job, version in re.findall(r"`(canonlint|classlint) \((\d+\.\d+)\)`",
                                                 doc(name))}
@@ -481,8 +481,8 @@ def check_hook_has_no_strict():
     assert hook_lines, "store/write.py 里找不到写钩子正文的那一行"
     for line in hook_lines:
         assert "--strict" not in line, "init 装的钩子带了 --strict，但文档说不带"
-    flow = doc("docs/协作流程.md")
-    assert "不带 `--strict`" in flow, "docs/协作流程.md 应写明 init 装的钩子不带 --strict"
+    flow = doc("docs/使用参考/协作流程.md")
+    assert "不带 `--strict`" in flow, "docs/使用参考/协作流程.md 应写明 init 装的钩子不带 --strict"
 
 
 def check_version_strings_match_code():

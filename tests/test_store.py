@@ -1119,7 +1119,7 @@ def check_both_engines_share_one_parser():
 def check_vocab_defined_once():
     """CA 词表与阈值只有一份定义：`judges/ca/vocab.py`。
 
-    评审 docs/代码评审报告-架构.md §4.2：这些协议常量原先在 canonlint.py（legacy）
+    评审 docs/评审过程/代码评审报告-架构.md §4.2：这些协议常量原先在 canonlint.py（legacy）
     与 judges/ca/*（registry）各抄一份字面量，双跑只在夹具恰好踩到时才抓得住漂移。
     现在两边都从 vocab 转发，这里把「只许 Load、不许再绑定」钉死。名字集合从
     vocab.py 现推，以后往 vocab 里加常量会自动纳入这把锁，不用手动同步清单。

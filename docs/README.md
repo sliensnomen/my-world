@@ -9,7 +9,7 @@
 3. 新读者从 `README.md`、`CONTRIBUTING.md` 和 `store/README.md` 进入实现；转型方向与 2.0 路线先读 `CHARTER.md`（2.0 分支上以 `spine/event.schema.json` 为唯一契约）。
 4. “草案”尚未落地，“历史”只保留当时证据，“模板”是可复用流程，“案例”是特定场景材料。不要把它们当成现行契约。
 
-新增、删除或改变项目文档状态时，必须同步本页。`tests/test_docs.py` 会发现漏登记、重复登记、失效链接和非法分类。
+新增、删除或改变项目文档状态时，必须同步本页。`tests/test_docs.py` 会发现漏登记、重复登记、失效链接和非法分类。仓库内的 `docs/<分类>/` 目录与下表分类一一对应；当前只有存在文档的分类目录。
 
 **例外**：`AGENTS.md` 是仓库主本地的代理规矩，明确不入库（见 `.gitignore`），因此不算项目文档、不列入本表；测试也把它排除在发现范围之外。这样本地工作区与干净克隆的判定一致。
 
@@ -35,37 +35,37 @@
 | [classlint/tests/world-arrakis/README.md](../classlint/tests/world-arrakis/README.md) | 案例与对外 | 案例 | 沙丘 PE003 真阳性的 dogfood 证据 | 保留当时转写与判定，夹具预期变化时补注 |
 | [classlint/tests/world-westeros/README.md](../classlint/tests/world-westeros/README.md) | 案例与对外 | 案例 | 冰火真阴性与建模判断记录 | 保留当时 16 条转写背景，不套用主世界新条数 |
 | [docs/README.md](README.md) | 使用参考 | 现行 | 全部项目文档的分类索引与更新入口 | 新增、删除或改变文档状态时同步 |
-| [docs/接口说明.md](接口说明.md) | 使用参考 | 现行 | HTTP 路由、写入口、安全与错误合同 | `serve.py` 路由、字段或写策略变化时同步 |
-| [docs/给前端的说明.md](给前端的说明.md) | 使用参考 | 现行 | 导出 JSON 字段、样例与前端使用规矩 | 导出字段、真实样例和界面状态变化时同步 |
-| [docs/前端开工清单.md](前端开工清单.md) | 使用参考 | 现行 | 前后端分工、已完成界面与剩余工作 | 界面交付状态变化时同步 |
-| [docs/协作流程.md](协作流程.md) | 使用参考 | 现行 | 世界状态机与 Git/CI 协作映射 | 分支保护、门禁和评审流程变化时同步 |
-| [docs/规模预算.md](规模预算.md) | 使用参考 | 现行 | 世界规模与接口延迟的可复现预算、基准脚本与已知边界 | 规模目标、接口延迟或缓存策略变化时同步 |
-| [docs/判定规则总表.md](判定规则总表.md) | 使用参考 | 现行 | CA/CL/PE 规则与外部标准对照工作表 | 规则、事件词表或退出码变化时同步 |
-| [docs/事件流水设计.md](事件流水设计.md) | 设计路线 | 现行 | 账本模型的设计决定、规则边界与 backlog | 事件语义、导出能力和后续裁决变化时同步 |
-| [docs/世界模型设计.md](世界模型设计.md) | 设计路线 | 历史 | 账本模型的早期讨论稿 | 后续决定见事件流水设计，不改写历史 |
-| [docs/代码评审提示词.md](代码评审提示词.md) | 评审过程 | 模板 | 单份对抗性代码评审任务书 | 方法保留，仓库命令与能力描述变化时同步 |
-| [docs/代码评审提示词-分段.md](代码评审提示词-分段.md) | 评审过程 | 模板 | 按语义、存储、接口、测试、对账分段的评审任务书 | 方法保留，范围与当前接口描述变化时同步 |
-| [docs/代码评审报告-守卫审计.md](代码评审报告-守卫审计.md) | 评审过程 | 历史 | 首轮全量守卫变异与缺口证据 | 以评审锚点为准，不改写 verdict |
-| [docs/代码评审报告-全量守卫审计.md](代码评审报告-全量守卫审计.md) | 评审过程 | 历史 | 93 个变异点的第二轮守卫审计 | 以评审锚点为准，不改写 verdict |
-| [docs/代码评审报告-边层合并.md](代码评审报告-边层合并.md) | 评审过程 | 历史 | 两引擎统一边层的差分与变异证据 | 以评审锚点为准，不改写 verdict |
-| [docs/代码评审报告-语义.md](代码评审报告-语义.md) | 评审过程 | 历史 | 规则语义与误报漏报评审 | 以评审锚点为准，不改写 verdict |
-| [docs/代码评审报告-往返与变形.md](代码评审报告-往返与变形.md) | 评审过程 | 历史 | 存储读写往返和输入变形评审 | 以评审锚点为准，不改写 verdict |
-| [docs/代码评审报告-接口.md](代码评审报告-接口.md) | 评审过程 | 历史 | HTTP 与前端外部视角评审 | 以评审锚点为准，不改写 verdict |
-| [docs/代码评审报告-测试.md](代码评审报告-测试.md) | 评审过程 | 历史 | 测试名实一致性与 CI 评审 | 以评审锚点为准，不改写 verdict |
-| [docs/代码评审报告-对账.md](代码评审报告-对账.md) | 评审过程 | 历史 | 契约、代码、测试、文档四方对账 | 以评审锚点为准，修复记录保留原貌 |
-| [docs/代码评审报告-事件流水与可写接口.md](代码评审报告-事件流水与可写接口.md) | 评审过程 | 历史 | 协议 1.7 时期事件与写接口评审 | 后续修复见提交史，不改写 verdict |
-| [docs/代码评审报告-判定器注册表.md](代码评审报告-判定器注册表.md) | 评审过程 | 历史 | CA/CL/PE/econ 双跑验收、Registry 原子切换、独立评审与 legacy 删除记录（Task 7，2026-11-22 签核） | 历史留档，不改写 verdict 与删除记录 |
-| [docs/代码评审报告-PR20-28.md](代码评审报告-PR20-28.md) | 评审过程 | 历史 | PR#20–#28 的合并状态、规则边界与双后端对拍评审 | 以评审锚点为准，不改写 verdict；修复后另开报告 |
-| [docs/代码评审报告-判定规则漏洞审计.md](代码评审报告-判定规则漏洞审计.md) | 评审过程 | 草案 | 判定层漏洞审计：CA705/CA708 腿盲与 CA201 豁免两处 blocker，附最小复现与处置清单 | 每条口子处置（修复或明确豁免）后更新处置列；全部处置完成后转历史 |
-| [docs/代码评审报告-架构.md](代码评审报告-架构.md) | 评审过程 | 草案 | 架构稳固性与双后端嵌合度的锚点评审（P1/P2 已处置、P3 待拍板；双后端结构已随 legacy 删除消失） | P3 处置或转历史时同步 |
-| [docs/superpowers/plans/2026-10-19-event-ledger.md](superpowers/plans/2026-10-19-event-ledger.md) | 设计路线 | 历史 | 协议 1.2 事件流水的已执行计划 | 历史留档，不批量补勾或改成 1.8 |
-| [docs/superpowers/specs/2026-10-24-works-layer-design.md](superpowers/specs/2026-10-24-works-layer-design.md) | 设计路线 | 草案 | 作品层视图、时间窗与分支设计 | 未实现，待作者拍板后再更新 |
-| [docs/superpowers/specs/2026-10-28-modify-event-design.md](superpowers/specs/2026-10-28-modify-event-design.md) | 设计路线 | 现行 | modify 同身份变化的事件语义与规则复用设计 | 已实施，后续 modify 语义变化时同步 |
-| [docs/superpowers/plans/2026-10-28-modify-event.md](superpowers/plans/2026-10-28-modify-event.md) | 设计路线 | 历史 | modify 事件的红绿实施与全量验收计划 | 已执行，保留红绿验证与验收记录 |
-| [docs/superpowers/specs/2026-10-29-classlint-entity-mentions-design.md](superpowers/specs/2026-10-29-classlint-entity-mentions-design.md) | 设计路线 | 现行 | classlint 正文别名识别、注册表校验与 JSON mentions 设计 | 已实施，后续 mentions 语义变化时同步 |
-| [docs/superpowers/plans/2026-10-29-classlint-entity-mentions.md](superpowers/plans/2026-10-29-classlint-entity-mentions.md) | 设计路线 | 历史 | classlint 正文别名识别的红绿实施与验收计划 | 已执行，保留红绿验证与验收记录 |
-| [docs/superpowers/specs/2026-10-30-judge-registry-design.md](superpowers/specs/2026-10-30-judge-registry-design.md) | 设计路线 | 现行 | CA/CL/PE/econ 判定器注册表、双跑迁移与回退设计 | 设计已确认，实施与验收状态变化时同步 |
-| [docs/superpowers/plans/2026-10-30-judge-registry.md](superpowers/plans/2026-10-30-judge-registry.md) | 设计路线 | 历史 | 判定器注册表的分期迁移、双跑与原子切换计划（含 legacy 删除 Task 7，已完成） | 已执行完毕，保留红绿验证与验收记录 |
-| [docs/superpowers/specs/2026-10-28-documentation-governance-design.md](superpowers/specs/2026-10-28-documentation-governance-design.md) | 设计路线 | 现行 | 本轮文档治理的已确认设计规格 | 已实施，后续文档政策变化时同步 |
-| [docs/superpowers/plans/2026-10-28-documentation-governance.md](superpowers/plans/2026-10-28-documentation-governance.md) | 设计路线 | 历史 | 本轮文档治理的逐步实施计划 | 已执行，保留红绿验证与验收记录 |
-| [docs/superpowers/plans/2026-11-04-conclusion-assertions.md](superpowers/plans/2026-11-04-conclusion-assertions.md) | 设计路线 | 历史 | 结论断言与干净所有权模型（B 方案）的分期实施计划（已完成） | 执行时逐项勾选，完成后转为历史；对应 GitHub issue #10 的后续部分 |
+| [docs/使用参考/接口说明.md](使用参考/接口说明.md) | 使用参考 | 现行 | HTTP 路由、写入口、安全与错误合同 | `serve.py` 路由、字段或写策略变化时同步 |
+| [docs/使用参考/给前端的说明.md](使用参考/给前端的说明.md) | 使用参考 | 现行 | 导出 JSON 字段、样例与前端使用规矩 | 导出字段、真实样例和界面状态变化时同步 |
+| [docs/使用参考/前端开工清单.md](使用参考/前端开工清单.md) | 使用参考 | 现行 | 前后端分工、已完成界面与剩余工作 | 界面交付状态变化时同步 |
+| [docs/使用参考/协作流程.md](使用参考/协作流程.md) | 使用参考 | 现行 | 世界状态机与 Git/CI 协作映射 | 分支保护、门禁和评审流程变化时同步 |
+| [docs/使用参考/规模预算.md](使用参考/规模预算.md) | 使用参考 | 现行 | 世界规模与接口延迟的可复现预算、基准脚本与已知边界 | 规模目标、接口延迟或缓存策略变化时同步 |
+| [docs/使用参考/判定规则总表.md](使用参考/判定规则总表.md) | 使用参考 | 现行 | CA/CL/PE 规则与外部标准对照工作表 | 规则、事件词表或退出码变化时同步 |
+| [docs/设计路线/事件流水设计.md](设计路线/事件流水设计.md) | 设计路线 | 现行 | 账本模型的设计决定、规则边界与 backlog | 事件语义、导出能力和后续裁决变化时同步 |
+| [docs/设计路线/世界模型设计.md](设计路线/世界模型设计.md) | 设计路线 | 历史 | 账本模型的早期讨论稿 | 后续决定见事件流水设计，不改写历史 |
+| [docs/评审过程/代码评审提示词.md](评审过程/代码评审提示词.md) | 评审过程 | 模板 | 单份对抗性代码评审任务书 | 方法保留，仓库命令与能力描述变化时同步 |
+| [docs/评审过程/代码评审提示词-分段.md](评审过程/代码评审提示词-分段.md) | 评审过程 | 模板 | 按语义、存储、接口、测试、对账分段的评审任务书 | 方法保留，范围与当前接口描述变化时同步 |
+| [docs/评审过程/代码评审报告-守卫审计.md](评审过程/代码评审报告-守卫审计.md) | 评审过程 | 历史 | 首轮全量守卫变异与缺口证据 | 以评审锚点为准，不改写 verdict |
+| [docs/评审过程/代码评审报告-全量守卫审计.md](评审过程/代码评审报告-全量守卫审计.md) | 评审过程 | 历史 | 93 个变异点的第二轮守卫审计 | 以评审锚点为准，不改写 verdict |
+| [docs/评审过程/代码评审报告-边层合并.md](评审过程/代码评审报告-边层合并.md) | 评审过程 | 历史 | 两引擎统一边层的差分与变异证据 | 以评审锚点为准，不改写 verdict |
+| [docs/评审过程/代码评审报告-语义.md](评审过程/代码评审报告-语义.md) | 评审过程 | 历史 | 规则语义与误报漏报评审 | 以评审锚点为准，不改写 verdict |
+| [docs/评审过程/代码评审报告-往返与变形.md](评审过程/代码评审报告-往返与变形.md) | 评审过程 | 历史 | 存储读写往返和输入变形评审 | 以评审锚点为准，不改写 verdict |
+| [docs/评审过程/代码评审报告-接口.md](评审过程/代码评审报告-接口.md) | 评审过程 | 历史 | HTTP 与前端外部视角评审 | 以评审锚点为准，不改写 verdict |
+| [docs/评审过程/代码评审报告-测试.md](评审过程/代码评审报告-测试.md) | 评审过程 | 历史 | 测试名实一致性与 CI 评审 | 以评审锚点为准，不改写 verdict |
+| [docs/评审过程/代码评审报告-对账.md](评审过程/代码评审报告-对账.md) | 评审过程 | 历史 | 契约、代码、测试、文档四方对账 | 以评审锚点为准，修复记录保留原貌 |
+| [docs/评审过程/代码评审报告-事件流水与可写接口.md](评审过程/代码评审报告-事件流水与可写接口.md) | 评审过程 | 历史 | 协议 1.7 时期事件与写接口评审 | 后续修复见提交史，不改写 verdict |
+| [docs/评审过程/代码评审报告-判定器注册表.md](评审过程/代码评审报告-判定器注册表.md) | 评审过程 | 历史 | CA/CL/PE/econ 双跑验收、Registry 原子切换、独立评审与 legacy 删除记录（Task 7，2026-11-22 签核） | 历史留档，不改写 verdict 与删除记录 |
+| [docs/评审过程/代码评审报告-PR20-28.md](评审过程/代码评审报告-PR20-28.md) | 评审过程 | 历史 | PR#20–#28 的合并状态、规则边界与双后端对拍评审 | 以评审锚点为准，不改写 verdict；修复后另开报告 |
+| [docs/评审过程/代码评审报告-判定规则漏洞审计.md](评审过程/代码评审报告-判定规则漏洞审计.md) | 评审过程 | 草案 | 判定层漏洞审计：CA705/CA708 腿盲与 CA201 豁免两处 blocker，附最小复现与处置清单 | 每条口子处置（修复或明确豁免）后更新处置列；全部处置完成后转历史 |
+| [docs/评审过程/代码评审报告-架构.md](评审过程/代码评审报告-架构.md) | 评审过程 | 草案 | 架构稳固性与双后端嵌合度的锚点评审（P1/P2 已处置、P3 待拍板；双后端结构已随 legacy 删除消失） | P3 处置或转历史时同步 |
+| [docs/设计路线/superpowers/plans/2026-10-19-event-ledger.md](设计路线/superpowers/plans/2026-10-19-event-ledger.md) | 设计路线 | 历史 | 协议 1.2 事件流水的已执行计划 | 历史留档，不批量补勾或改成 1.8 |
+| [docs/设计路线/superpowers/specs/2026-10-24-works-layer-design.md](设计路线/superpowers/specs/2026-10-24-works-layer-design.md) | 设计路线 | 草案 | 作品层视图、时间窗与分支设计 | 未实现，待作者拍板后再更新 |
+| [docs/设计路线/superpowers/specs/2026-10-28-modify-event-design.md](设计路线/superpowers/specs/2026-10-28-modify-event-design.md) | 设计路线 | 现行 | modify 同身份变化的事件语义与规则复用设计 | 已实施，后续 modify 语义变化时同步 |
+| [docs/设计路线/superpowers/plans/2026-10-28-modify-event.md](设计路线/superpowers/plans/2026-10-28-modify-event.md) | 设计路线 | 历史 | modify 事件的红绿实施与全量验收计划 | 已执行，保留红绿验证与验收记录 |
+| [docs/设计路线/superpowers/specs/2026-10-29-classlint-entity-mentions-design.md](设计路线/superpowers/specs/2026-10-29-classlint-entity-mentions-design.md) | 设计路线 | 现行 | classlint 正文别名识别、注册表校验与 JSON mentions 设计 | 已实施，后续 mentions 语义变化时同步 |
+| [docs/设计路线/superpowers/plans/2026-10-29-classlint-entity-mentions.md](设计路线/superpowers/plans/2026-10-29-classlint-entity-mentions.md) | 设计路线 | 历史 | classlint 正文别名识别的红绿实施与验收计划 | 已执行，保留红绿验证与验收记录 |
+| [docs/设计路线/superpowers/specs/2026-10-30-judge-registry-design.md](设计路线/superpowers/specs/2026-10-30-judge-registry-design.md) | 设计路线 | 现行 | CA/CL/PE/econ 判定器注册表、双跑迁移与回退设计 | 设计已确认，实施与验收状态变化时同步 |
+| [docs/设计路线/superpowers/plans/2026-10-30-judge-registry.md](设计路线/superpowers/plans/2026-10-30-judge-registry.md) | 设计路线 | 历史 | 判定器注册表的分期迁移、双跑与原子切换计划（含 legacy 删除 Task 7，已完成） | 已执行完毕，保留红绿验证与验收记录 |
+| [docs/设计路线/superpowers/specs/2026-10-28-documentation-governance-design.md](设计路线/superpowers/specs/2026-10-28-documentation-governance-design.md) | 设计路线 | 现行 | 本轮文档治理的已确认设计规格 | 已实施，后续文档政策变化时同步 |
+| [docs/设计路线/superpowers/plans/2026-10-28-documentation-governance.md](设计路线/superpowers/plans/2026-10-28-documentation-governance.md) | 设计路线 | 历史 | 本轮文档治理的逐步实施计划 | 已执行，保留红绿验证与验收记录 |
+| [docs/设计路线/superpowers/plans/2026-11-04-conclusion-assertions.md](设计路线/superpowers/plans/2026-11-04-conclusion-assertions.md) | 设计路线 | 历史 | 结论断言与干净所有权模型（B 方案）的分期实施计划（已完成） | 执行时逐项勾选，完成后转为历史；对应 GitHub issue #10 的后续部分 |

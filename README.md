@@ -56,7 +56,7 @@ python3 classlint/classlint.py fork ~/worlds/grey-harbor-econ alt-history       
 
 ```bash
 # ── 出口：把世界数据交给前端（只读，不判定）
-python3 canonlint.py export ~/worlds/grey-harbor --out world.json   # 导出数据集（合同见 docs/接口说明.md）
+python3 canonlint.py export ~/worlds/grey-harbor --out world.json   # 导出数据集（合同见 docs/使用参考/接口说明.md）
 python3 serve.py ~/worlds/grey-harbor --port 8000                   # 起接口：/api/world、/api/entry/<id> …
 python3 serve.py ~/worlds/grey-harbor --port 8000 --writable        # 默认只读；加 --writable 才开三条写路由
 # 前端读 /api/world 或 world.json；wgp-client.js 负责补默认值、给出思维导图要的形状
@@ -98,7 +98,7 @@ python3 serve.py ~/worlds/grey-harbor --port 8000 --writable        # 默认只�
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ✅ **判定器注册表**：`judges/` 用统一 Rule/Pack 元数据装载 CA/CL/PE/econ，Registry 是唯一判定后端（legacy 已于 2026-11-22 签核删除）；CLI 与 serve 共用同一 Pack 加载入口
 - ✅ **界面 v0.2**：`web/index.html`（台账 / 审计 / 流水三视图 + 记账表单 + 升格/降级工单，零依赖零构建，`serve.py` 同源伺候）；默认只读，`--writable` 时界面才显示写入口
-- ✅ **可写 HTTP 入口（Phase 2/3）**：`POST /api/entry`（写卡）、`POST /api/event`（记账）、`POST /api/status`（升格/降级）；写完即审、红则回滚，写请求串行化，只收同源 `application/json`；可选 `--token`  bearer 凭据与 `--write-log` 审计日志（见 `docs/接口说明.md`）
+- ✅ **可写 HTTP 入口（Phase 2/3）**：`POST /api/entry`（写卡）、`POST /api/event`（记账）、`POST /api/status`（升格/降级）；写完即审、红则回滚，写请求串行化，只收同源 `application/json`；可选 `--token`  bearer 凭据与 `--write-log` 审计日志（见 `docs/使用参考/接口说明.md`）
 - ⬜ **~~酒馆互操作~~** —— SillyTavern 世界书导入导出的旧规划，随转型冻结：「第一条真实入口」
   已改定为事件抽取基准（见 [CHARTER.md](CHARTER.md) §5），酒馆适配器是否以新形态复活由宪章修订记录决定
 - ✅ **classlint 的判定包已拆出** —— `core-cl` 与 `pe` 经 Registry 执行，扫描/建索引与逐规则判定分离。读卡也只有 `store/parse.py` 一份（`tests/test_store.py` 的结构锁 + 行为锁守着）。classlint 仍是仓库内独立可执行文件，**必须和仓库一起用、从仓库根调用**，不能单独拷走 `classlint/classlint.py`；它自己的字段政策与 canonlint 有一处真实分歧（`depends_on` 收裸字符串，canonlint 要求 `{id, kind, critical}`）
@@ -119,6 +119,6 @@ legacy 退役已完成（2026-11-22，见「现状」）。
 ## 参与贡献
 
 从 **[CONTRIBUTING.md](CONTRIBUTING.md)** 开始：里面有给 AI 助手的上下文段、30 分钟做完第一处改动的路径，
-以及会被测试抓住的几条线。协作机制（PR / 分支保护 / CI）见 [docs/协作流程.md](docs/协作流程.md)。
+以及会被测试抓住的几条线。协作机制（PR / 分支保护 / CI）见 [docs/使用参考/协作流程.md](docs/使用参考/协作流程.md)。
 
 授权：代码 [MIT](LICENSE)；协议文本 [CC BY 4.0](LICENSE-PROTOCOL.md)（实现不受限，引用需署名）。
