@@ -93,11 +93,11 @@ python3 serve.py ~/worlds/grey-harbor --port 8000 --writable        # 默认只�
 
 - ✅ **能存**：init / new / link、frontmatter 格式、id 规则、`x-` 扩展、econ 扩展包
 - ✅ **能判**：47 条 CA 规则（结构 / 引用 / 承重链条 / 事件流水 / 重复 / 影响报告）+ CL1xx + PE001–PE016
-- ✅ **有回归网**：`tests/` 五套（106 + 12 + 33 + 33 + 15 项检查）+ `classlint/tests/` 一套（31 个夹具世界），
+- ✅ **有回归网**：`tests/` 五套（106 + 12 + 33 + 33 + 15 项检查）+ `classlint/tests/` 一套（31 个夹具世界）+ `spine/tests/` 一套（5 项，2.0 事件脊柱），
 
   四个受保护检查在 Python 3.12 与 3.14 上跑（见 `.github/workflows/canonlint.yml`）
 - ✅ **判定器注册表**：`judges/` 用统一 Rule/Pack 元数据装载 CA/CL/PE/econ，Registry 是唯一判定后端（legacy 已于 2026-11-22 签核删除）；CLI 与 serve 共用同一 Pack 加载入口
-- ✅ **界面 v0.2**：`web/index.html`（台账 / 审计 / 流水三视图 + 记账表单 + 升格/降级工单，零依赖零构建，`serve.py` 同源伺候）；默认只读，`--writable` 时界面才显示写入口
+- ✅ **界面 v0.2**：`web/index.html`（五个视图：台账 / 审计 / 流水 / 工单 / 记账；工单承载升格/降级，记账是流水写入表单。零依赖零构建，`serve.py` 同源伺候）；默认只读，`--writable` 时界面才显示写入口
 - ✅ **可写 HTTP 入口（Phase 2/3）**：`POST /api/entry`（写卡）、`POST /api/event`（记账）、`POST /api/status`（升格/降级）；写完即审、红则回滚，写请求串行化，只收同源 `application/json`；可选 `--token`  bearer 凭据与 `--write-log` 审计日志（见 `docs/使用参考/接口说明.md`）
 - ⬜ **~~酒馆互操作~~** —— SillyTavern 世界书导入导出的旧规划，随转型冻结：「第一条真实入口」
   已改定为事件抽取基准（见 [CHARTER.md](CHARTER.md) §5），酒馆适配器是否以新形态复活由宪章修订记录决定

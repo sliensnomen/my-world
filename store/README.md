@@ -54,10 +54,10 @@
 ### 改完必须跑的命令
 
 ```sh
-python3 tests/run_tests.py            # 15 种快照跑法 + 意图断言，共 75 项检查
+python3 tests/run_tests.py            # 15 种快照跑法 + 意图断言，共 106 项检查
 python3 tests/test_schema.py          # 契约与代码常量不漂移（12 项）
-python3 tests/test_store.py           # 存储层边界，包括本文件的规矩（30 项）
-python3 tests/test_serve.py           # 接口与前端数据合同（35 项）
+python3 tests/test_store.py           # 存储层边界，包括本文件的规矩（33 项）
+python3 tests/test_serve.py           # 接口与前端数据合同（33 项）
 python3 tests/test_docs.py            # 文档数字、链接与总索引（15 项）
 python3 classlint/tests/run_tests.py  # classlint 的 31 个夹具世界
 ```

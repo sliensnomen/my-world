@@ -1,6 +1,7 @@
 # classlint 正文别名识别设计
 
 > 状态：已确认并实施。2026-10-29。
+> 时效说明：本文是当时的实施记录；版本号、规则数与 `docs/` 扁平路径均为当时值。现行数字见 `classlint/README.md` 与 `docs/使用参考/判定规则总表.md`，现行文档索引见 `docs/README.md`。
 > 一句话：把 `codex/entities.yaml` 中的别名确定性映射到稳定 id，并在 `check --json` 的每个条目里报告正文提及。
 
 ## 1. 背景与目标

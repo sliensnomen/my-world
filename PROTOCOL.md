@@ -1,6 +1,6 @@
 # 世界观治理协议（World Governance Protocol）v1.0.1
 
-**状态：历史规范散文（2026-09-23 冻结时的快照） ｜ 日期：2026-09-23**
+**状态：现行（正文为 2026-09-23 冻结时的快照；§6.3 规则表与修订记录随协议更新） ｜ 日期：2026-09-23**
 **本文件的读者：协议实现者。条款用词"必须/应当/可以"为规范性词汇，含义同 RFC 2119 的 MUST/SHOULD/MAY。**
 
 > **本文档不是权威。** 权威按此顺序：
@@ -10,10 +10,11 @@
 > 3. 本文档 —— 规则表（§6.3，**47 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
 > 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.32"`（即 JSON 输出里的 `protocol_version`）。
+> 契约版本只有一个来源：`world.schema.json` 的 `x-contract-version = "0.9"`（即 JSON 输出里的 `contract_version`）；下文修订记录里提到的 `0.2` 等是当时值。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
 
-**v1.1 修订记录（2026-10，进行中；编号见上文第 12 行）：**
+**v1.1 起的修订记录（2026-10 起，随协议小版本持续增补）：**
 1. **`type` 允许 `x-` 实验类型**（§5.2 五值词表的泄压阀）：写成 `x-<命名空间>-<名称>` 即合法，能存、不判错，CA102 记 **info** 级并计入案例收集。词表本身不动——确定普适的类型进词表是收紧（§9.1），不能顺手做。放宽按 §9.1 升 minor。
 2. **规范形 `relations` 与旧具名字段判定等价**：审计器把两种写法归一化到同一张边表再判定（CA108 kind、CA401/CA402/CA403/CA404/CA405 引用与状态、CA501 层级方向、CA502 环、CA503 物质族 critical、CA504 影响闭包），**同一条边写在哪、报的都一样**。此前实现只读旧字段（`depends_on`/`conflicts_with`/`canon_refs`），写成 `relations:` 会静默不判——这是实现缺口补齐。
    这条等价承诺在第一版里有个反例：规范形曾经**不强制** `kind`，而 CA501/CA502/CA503 都以 `kind` 为门禁，于是「规范形省略 `kind`」= 合法地关掉整族承重链条判定。§5.4 说的是 `depends_on` 对象的 `kind`/`critical` 必填，与写法无关，所以现在**两种写法一致**：规范形的 `depends_on` 项缺 `kind` 或 `critical` 同样报 CA107，不再跳过。
@@ -265,10 +266,10 @@ ai_assisted: false
 | `date` | 必须 | date | ISO 8601（YYYY-MM-DD），首次创建日期 |
 | `status` | 必须 | enum | 见 §3 状态机 |
 | `load_bearing` | 必须 | bool | `true` = 显式声明为承重墙条目，触发 §5 全部义务 |
-| `canon_refs` | 必须 | id 列表 | 本条目语义依赖的已定档条目，可以为空列表 |
-| `conflicts_with` | 必须 | 列表 | 元素为 id 或对象（§4.1），可以为空列表 |
+| `canon_refs` | 条件必填 | id 列表 | 与规范形 `relations` 二选一（CA101，协议 1.30）；本条目语义依赖的已定档条目，可以为空列表 |
+| `conflicts_with` | 条件必填 | 列表 | 与规范形 `relations` 二选一（CA101，协议 1.30）；元素为 id 或对象（§4.1），可以为空列表 |
 | `exchanges_with` | 可选 | 列表 | 元素为 id 或对象（`{id, what?}`）；**流通**关系，不参与承重判定（§4.3） |
-| `derives_legitimacy_from` | 可选 | 列表 | 元素为 id 或对象（`{id, critical?, note?}`）；**名分依据**（§4.5）。与旧写法 `B legitimizes A` 同义（方向相反），判定完全一致；不进承重图，只查存在性 |
+| `derives_legitimacy_from` | 可选 | 列表 | 元素为 id 或对象（`{id, critical?, note?}`）；**名分依据**（§4.5）。与旧写法 `B legitimizes A` 同义（方向相反），判定完全一致；不进承重图，只查存在性（CA401）与目标状态（CA404：canon 条目的名分依据目标必须是 canon） |
 | `owns` | 可选 | 列表 | 元素为 id 或对象（`{id, note?}`）；**占有**（A 占有 B，区别于控制：管家控制、领主占有）。判定（PE001）归 classlint 那一层；本层只建边并查目标存在性（CA401） |
 | `controls` | 可选 | 列表 | 元素为 id 或对象（`{id, note?}`）；**控制**（A 控制 B）。判定（PE001/PE002）归 classlint；本层只建边并查存在性（CA401） |
 | `extracts` | 可选 | 列表 | 元素为 id 或对象（`{id, what?, note?}`）；**抽取**（地租、税、剩余劳动…）。判定（PE001/PE004/PE005）归 classlint；本层只建边并查存在性（CA401） |
@@ -433,8 +434,7 @@ v1.1 起，名分依据**不再借用 `depends_on` 的 `kind`**（§4.5）：它
   `tests/world-*` 与 `classlint/tests/legit-canonical-*` 夹具守着这条。
 - **不进任何承重图**：CA501 / CA502 / CA503 / CA504 都不看它。名分来源断了是叙事问题，
   不是供应链断裂。
-- **只查存在性**（CA401）：目标条目必须存在；目标**状态**不参与判定（与 `conflicts_with`、
-  `exchanges_with` 同口径）——来源条目归档不等于这个说法失效，所以既不报 CA402 也不报 CA405。
+- **查存在性与状态门禁**：目标条目必须存在（CA401）；`canon` 条目的名分依据目标必须是 `canon`（CA404，协议 1.31），否则报 error。它不套用 `conflicts_with`/`exchanges_with` 的「归档即失效」口径——不报 CA402，也不报 CA405。
 - **它不冒充生产关系**：classlint 的 PE001 / PE004 / PE005（抽取/供给）不看它；PE003
   （合法性闭环）看它，这正是它存在的意义。
 
@@ -569,7 +569,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA111 | warning | 旧写法迁移提示：某个关系名拆分前用「旧关系名 + 某个注解值」表达（见契约 `x-relation-vocabulary.deprecations`）。工具**已按新关系名判定**（结论与迁移后逐条相同），本条只提示作者改写，例如把 `depends_on` 里 `kind: legitimacy` 的那一条改写成关系名 `derives_legitimacy_from`。字段名按契约登记的每一种拼法都认（`depends_on` / `depends-on` / `dependson`，协议 1.17，issue #45）。这是唯一允许的迁移提示；迁移完成后本条不再触发 |
 | CA112 | error | YAML frontmatter 里有**重复键**。PyYAML 是 last-wins 且一声不响：`depends_on` 写两遍时，写在前面的那一条边在解析结果里彻底消失，而所有规则都看不见它——「写了两遍」与「只写一遍」在工具眼里完全一样。本条规定必须报出来；写入命令（`link`）遇到重复键直接拒绝改写 |
 | CA114 | error | `id` 重复（两张卡撞同一个 id）。按路径序首个入索引：别人引用这个 id 时指的是前者，**被遮蔽那一份自己的出边照旧检查**（它没进索引不等于没写错） |
-| CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复；**豁免只认声明方 `status: archived`**——canon 等其它状态写 `superseded_by` 不免查重（协议 1.13） |；**精确重复不设 100 字下限**：≥40 字的两张卡正文完全一样照报
+| CA201 | warning | 两条目正文相似度 ≥ 阈值（默认 0.85；预处理与最短长度见 §6.6）。**降级承接对豁免**：`superseded_by` 声明的两方相似是要求的，不是疑似重复；**豁免只认声明方 `status: archived`**——canon 等其它状态写 `superseded_by` 不免查重（协议 1.13）；**精确重复不设 100 字下限**：≥40 字的两张卡正文完全一样照报 |
 | CA301 | warning | 命中附录 A 关键词但 `load_bearing` 非 `true`（提示考虑声明）。**只对已定档条目（trial/canon）发出**：draft 还没到做决定的时候，而 `--strict` 会把 warning 当失败 |
 | CA302 | error | `load_bearing: true` 但缺 `layer`，或既没有 `depends_on` 字段也没有规范形 `relations` 字段（显式空列表仍算已声明） |
 | CA401 | error | 引用指向不存在的 `id`（坏 YAML 的卡若原文还能认出 `id:`，不报本条——由那张卡的 CA100 负责，协议 1.18，issue #40 F3）；或引用为 `world:id` 形式（本版未支持，**禁止静默忽略**）。**覆盖契约列过的每一种关系**：`canon_refs`/`conflicts_with`/`depends_on`/`exchanges_with`/`derives_legitimacy_from`/`superseded_by`，以及语义归 classlint 那一层管的生产关系 `owns`/`controls`/`extracts`/`coerces`/`legitimizes`/`owes`，和协议 1.2/1.4/1.7 的事件腿 `by`/`to`/`object`/`from`/`result` 与保管断言 `custody_of`、归属断言 `member_of`。规则归属不改变一件事：指向不存在的 id 是结构问题，判定层不许看不见它。**自由档的自定义关系名同样查**（`relations: [{type: mentor-of, target: ghost}]` 报 CA401，与 classlint 的 CL105 一致） |
@@ -589,13 +589,13 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA705 | warning | 死人做活事：事件的 `by` 里有人在**严格更早**（`when_sort` 较小）的事件里已 `death`；同刻不算。**`death` 事件自身也查**（协议 1.8）：死者不能再当任何事件的施动者，包括另一笔 `death` |
 | CA706 | warning | 半截事件：`when` 与 `event_kind` 只给了一个。两个都给才是完整事件，都不给就是普通史料卡（协议 1.1 的世界在 1.2 下不红） |
 | CA707 | warning | `owns` 断言互搏：同一客体被多张卡断言持有。派生状态按 id 序取第一个只是「报告需要一个确定答案」，不是裁决；请统一到一张卡上断言，或改用流水表达流转。与有无流水无关 |
-| CA708 | warning | 不存在的东西在动弹：客体的事件落在它自己的存在窗口外——`create`/`birth` 开窗、`death`/`destroy` 关窗、`transform` 关旧窗开新窗（取最早的边界；缺 `when_sort` 的边界不产生窗口）。端点事件自身豁免。`modify` 是普通客体事件，不是端点；同一 id 的变化不关闭或打开窗口。CA705 管 `by` 腿，本条管 `object` 腿；端点事件自身豁免；死后 `by` 施动者归 CA705，本条不双报（协议 1.16，issue #44） |
+| CA708 | warning | 不存在的东西在动弹：客体的事件落在它自己的存在窗口外——`create`/`birth` 开窗、`death`/`destroy` 关窗、`transform` 关旧窗开新窗（取最早的边界；缺 `when_sort` 的边界不产生窗口）。`modify` 是普通客体事件，不是端点；同一 id 的变化不关闭或打开窗口。非端点事件查 `object`/`by`/`from`/`to` 四腿，端点事件只查 `by`；端点事件自身豁免；`by` 腿的死后施动者归 CA705，本条不双报（协议 1.16，issue #44） |
 | CA709 | error/warning | 结论与流水打架（保管版）：手写 `custody_of` 断言与 custody 流水推出的最终保管人不一致。custody 不改变持有者、只改保管；多值受方与 CA704 同口径（最终那笔 `to` 列表里任一受方放行）。同刻多笔 custody 且受方集合不同 → warning「未定序」（协议 1.8/1.10，与 CA704 对称：**与有没有断言无关，每客体一条**）。**未定序时断言仍须落在全部候选保管人的交集里，否则照报 error（1.14）** |
 | CA710 | warning | `custody_of` 断言互搏：同一客体被多张卡断言保管（CA707 的保管版） |
 | CA711 | warning | 轨迹断裂：`move` 的 `from` 对不上链上当前位置（上一笔 `move` 的 `to`）。只查存在窗口内的 `move`（窗外归 CA708，不双报）；上一笔 `to` 多值则位置「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时当前位置在列表里即放行；缺 `from`/`when_sort` 不查。**同刻多笔 `move`**（协议 1.8）之间没有先后：同刻先合并位置（目的地一致才确定，不一致即「未定」），只有**严格更晚**的 `move` 才与它比对 |
 | CA712 | error | 结论与流水打架（成员版）：手写 `member_of` 断言，但该人流水里对那个组织的最后一个动作是 `leave`——要么补一笔 `join`，要么撤断言。组织没有流水时断言即全部历史，不判。`member_of` 多值合法（一个人可以在多个组织），所以只有对账、没有互搏规则。**同刻 join 与 leave 并存**时最后动作未定序 → fail-open，不报（协议 1.8）。**类型门禁**：主体须 `character`/`faction`，目标须 `faction`（目标悬空交 CA401）（协议 1.15） |
 | CA713 | warning | 转让起点断裂：`transfer`/`grant` 的 `from` 对不上链上上一笔的受方（上一笔 `to`）。口径同 CA711：上一笔 `to` 多值则起点「未定」，跳过校验直到单值 `to` 重新锚定；`from` 多值时落点在列表里即放行；缺 `from`/`when_sort` 不查；同刻转让不排序、不互为「上一笔」 |
-| CA715 | warning | canon 条目通过 `canon_refs`/`depends_on` 之外的关系（`owns`、`conflicts_with`、`exchanges_with`、`derives_legitimacy_from` 等）引用了非 canon 目标——要么把目标升格，要么把这条关系写成 x- |
+| CA715 | warning | canon 条目通过 `canon_refs`/`depends_on`/`derives_legitimacy_from` 之外的关系（`owns`、`conflicts_with`、`exchanges_with` 等）引用了非 canon 目标——要么把目标升格，要么把这条关系写成 x-。名分依据目标的状态由 CA404 单独判，本条不重复 |
 | CA719 | error | 成员链断了：`leave` 之前没有 `join`，卡上也没有 `member_of` 断言——退会必须有入会（同刻 join/leave 不排序，fail-open） |
 | CA720 | error | 自己转给自己：`transfer` 的 `from` 与 `to` 是同一实体——转让必须换持有者（同刻不排序；`grant` 不在此列） |
 | CA718 | error | 承接链不成立：承接者未定档（draft/archived）、类型与原条目不同、或 `superseded_by` 互相承接成环——降级处置没有终点 |
@@ -658,7 +658,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 3. 剥除全部空白字符与 Unicode 标点（`P*` 类别）。
 
 **正文长度** = 预处理后剩余字符数（每个 CJK 字符计 1）。
-**相似度** = 预处理后文本的 `difflib.SequenceMatcher.ratio()`；参与比较的两条文本均须 ≥ 100 字符，否则该对跳过 CA201（短文本相似度无意义）。
+**相似度** = 预处理后文本的 `difflib.SequenceMatcher.ratio()`；参与比较的两条文本均须 ≥ 100 字符，否则该对跳过 CA201（短文本相似度无意义）。例外是**精确重复**：两张卡正文完全一样且各 ≥40 字时照报（协议 1.26）。
 
 ### 6.7 AI 规则段（CA9xx）
 

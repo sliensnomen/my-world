@@ -25,7 +25,7 @@
 >   在 PR 里单独说明，并把「改期望值」做成一个独立提交。
 > - **自定义字段必须 `x-` 前缀；引用只认 id，不认文件路径。**
 > - **不要改 CI 里的检查名**（`canonlint (3.12)` 等四个名字被分支保护依赖）。
-> - **提交前必须跑完 §4 的六条命令**，并把输出摘要写进 PR 描述。
+> - **提交前必须跑完 §4 的六条核心命令（2.0 分支再加 spine 第七条）**，并把输出摘要写进 PR 描述。
 
 ---
 
@@ -52,16 +52,17 @@ pip install pyyaml
 git clone https://github.com/sliensnomen/my-world && cd my-world
 git switch -c fix/your-topic
 
-# ① 建立基线：六条命令都该绿
+# ① 建立基线：六条核心命令都该绿
 python3 tests/run_tests.py
 python3 tests/test_schema.py
 python3 tests/test_store.py
 python3 tests/test_serve.py
 python3 tests/test_docs.py
 python3 classlint/tests/run_tests.py
+# 2.0 分支再加一条：python3 spine/tests/run_tests.py
 ```
 
-② 挑改动（菜谱见下）→ ③ 改 → ④ 重跑那六条 → ⑤ 提交 → ⑥ 开 PR（见 §5）。
+② 挑改动（菜谱见下）→ ③ 改 → ④ 重跑那六条核心（2.0 分支连 spine 一起）→ ⑤ 提交 → ⑥ 开 PR（见 §5）。
 
 ### 菜谱 A：加一个字段
 
@@ -97,7 +98,7 @@ python3 classlint/tests/run_tests.py
 3. 在 `judges/registry.py` 登记内置模块并继续经统一 `select_packs` 加载；实验 Pack 必须显式选择，
    本期不加入口点发现或热重载。重复规则 id、重复 order、非法 scope/级别和当前选择集的
    `ca106_fields` 冲突都要在审计前失败；classlint Pack 不得占用 canonlint 的 CA106 字段命名空间。
-4. 跑 §4 的六套。新规则或判语文案属于协议变更，
+4. 跑 §4 的六套核心（2.0 分支再加 spine）。新规则或判语文案属于协议变更，
    不得混进「等价迁移」提交；版本、规则表、快照和文档按实际变化单独说明。
 
 ---
@@ -127,9 +128,9 @@ python3 classlint/tests/run_tests.py  # 31 个 classlint 夹具
 python3 spine/tests/run_tests.py      # （2.0 分支）事件脊柱：契约自检 + 依赖方向锁 + 迁移对账
 ```
 
-以上命令直接走 Registry（唯一判定后端）。改判定加载或执行日程时，六条命令就是
-回归网本身；快照逐字节钉死输出，意图断言钉死守卫生效。2.0 分支上动 `spine/`
-时第七条同样必须绿（CI 对七个脚本一视同仁）。
+以上命令直接走 Registry（唯一判定后端）。改判定加载或执行日程时，六条核心命令就是
+回归网本身；快照逐字节钉死输出，意图断言钉死守卫生效。2.0 分支上第七条同样必须绿
+（CI 对七个脚本一视同仁）。
 
 两个 Python 版本都要过（CI 跑 3.12 与 3.14；本机可用
 `~/.pyenv/versions/3.12.10/bin/python3` 交叉验证）。

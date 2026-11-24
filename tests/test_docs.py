@@ -36,6 +36,7 @@ DOCS = (
     "classlint/项目文书.md",
     "classlint/tests/world-arrakis/README.md",
     "classlint/tests/world-westeros/README.md",
+    "spine/README.md",
 )
 
 CORE_SRC = (ROOT / "canonlint.py", ROOT / "serve.py",
@@ -63,7 +64,7 @@ def project_document_paths() -> set[str]:
     paths = set(ROOT.glob("*.md"))
     paths.add(ROOT / "LICENSE")
     for pattern in ("docs/**/*.md", "store/*.md", "classlint/*.md",
-                    "classlint/tests/*/README.md"):
+                    "classlint/tests/*/README.md", "spine/*.md"):
         paths.update(ROOT.glob(pattern))
     discovered = {p.relative_to(ROOT).as_posix() for p in paths if p.is_file()}
     return discovered - LOCAL_ONLY_DOCS

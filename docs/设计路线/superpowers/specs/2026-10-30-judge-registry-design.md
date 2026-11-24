@@ -1,6 +1,7 @@
 # 判定器注册表设计
 
 > 状态：已确认并实施。2026-10-30。
+> 时效说明：本文是当时的实施记录；版本号、规则数与 `docs/` 扁平路径均为当时值。现行数字见 `README.md` 与 `docs/使用参考/判定规则总表.md`，现行文档索引见 `docs/README.md`。
 > 一句话：用统一 Rule/Pack 元数据和加载入口组合条目规则与世界规则，分期迁移 CA/CL/PE/econ，迁移期间判定不变且随时可回退。
 
 ## 1. 目标与边界
@@ -72,7 +73,7 @@ Pack 固定包含 `name`、`version`、`engine`、`ca106_fields` 和有序 Rule 
 | Pack | engine | 内容 |
 |---|---|---|
 | `core-ca` | canonlint | 全部 core CA；包内保持现有规则族顺序 |
-| `core-cl` | classlint | CL100–CL107 逐规则注册 |
+| `core-cl` | classlint | CL100–CL110 逐规则注册 |
 | `pe` | classlint | 全部 PE 规则 |
 | `econ` | canonlint | figures 与 CA601/CA602 |
 
@@ -94,7 +95,7 @@ Pack 内 `order` 只约束该包的局部顺序，重复即加载失败；它不
 - classlint 先扫描建索引，再按 collect 的 CL 发现顺序拼接 CL105，最后按编号执行 PE；
 - 各引擎出口再做既有稳定排序。
 
-CL 的扫描/建索引必须与逐规则判定分开，CL100–CL107 各自注册；不得把 collect 整体包成一个
+CL 的扫描/建索引必须与逐规则判定分开，CL100–CL110 各自注册；不得把 collect 整体包成一个
 复合 Rule 黑盒。适配器只适配函数签名和 Finding，不得绕过逐 Rule 加载、查询与开关校验。
 
 迁移期必须保持这些顺序；未来新增规则可插中间，但若改变 Finding 顺序，必须作为有意行为变更

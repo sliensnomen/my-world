@@ -40,7 +40,7 @@ python3 classlint/classlint.py fork ~/worlds/econ alt-history     # 反事实推
 
 ### 视图与反事实推演（Sprint 9）
 
-`view` 生成一个**自包含 HTML**（默认 `<repo>/view.html`，`--out` 可改路径）：两页签——**关系图**（节点 = 条目，边 = 七种生产关系 + 个人关系）与**时间线**（`moment` 点上事件、`shift` 结构变迁区间）。没有外链、没有 CDN，世界目录拷到离线机器也能双击打开；渲染用原生 SVG，不引 D3/Cytoscape（视图数据在 `<script id="view-data">` 里，想换库/接前端直接读它）。
+`view` 生成一个**自包含 HTML**（默认 `<repo>/view.html`，`--out` 可改路径）：两页签——**关系图**（节点 = 条目，边 = 全部已建关系：契约关系 + 规范形自定义关系 + 个人关系）与**时间线**（`moment` 点上事件、`shift` 结构变迁区间）。没有外链、没有 CDN，世界目录拷到离线机器也能双击打开；渲染用原生 SVG，不引 D3/Cytoscape（视图数据在 `<script id="view-data">` 里，想换库/接前端直接读它）。
 
 `fork` 把世界当前状态开成一条 Git 分支——**反事实推演就是 Git 分支**：
 
@@ -71,7 +71,7 @@ git -C ~/worlds/econ diff main..alt-history                     # 看两条世�
 ## 审计规则（协议 v0.10，见 [PROTOCOL.md](PROTOCOL.md)）
 
 - **CL1xx 结构规则**（不可关）：解析失败、缺必填字段、id 非法/重复、未定义字段、关系 schema 违规、关系目标不存在、流量条目格式（CL108）、时间线格式（CL109）、关系/断言字段显式 null（CL110）。
-- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）；**PE004** 剩余必须收敛（extracts 子图无环；有 `surplus` 时按量判抽取是否超过剩余）；**PE005** 劳动者必须被覆盖（被抽取者须有来源侧边；有 `surplus` 时须有该物资流入）；**PE009** 债务必须收得回来（`owes` 要有收账通道：债主能支配/强制/抽取/撤回正当性，或债务人对债主持有 `critical: true` 或带物质类别 `kind` 的 `depends_on`，warning）；**PE010** 物流守恒（同单位流入 ≥ 需求，缺数据报 warning 不静默）；**PE011** 补给律（暴力线驻军地必须有物流线到达；有 `needs` 时按量判断粮）；**PE012** 人口律（流失要有可对账的端点）；**PE006** 危机积累（剩余刚好够活 + `tax`/`tribute` 外流上升）；**PE007** 结构性压力（人口上升 + 占有关系未变）；**PE008** 镇压自己的基础（`coerces` 的对象同时用物流供养自己）；**PE013** 亲情与镇压矛盾（镇压供养者 + `kin`/`allegiance`）；**PE014** 庇护关系缓冲危机（抽取上升 + 被抽取方余量不足 + `allegiance`）；**PE015** 时延倒挂（信息线 `when` + `delay` 抵达前，目的地已发生变故）。
+- **PE001** 抽取必须有基础（`controls`/`coerces`/`owns`）；**PE002** 不能镇压自己的供养者（critical 依赖 = error，否则 warning）；**PE003** 合法性不得无锚闭环（有外部锚点的互锁合法）；**PE004** 剩余必须收敛（extracts 子图无环；有 `surplus` 时按量判抽取是否超过剩余）；**PE005** 劳动者必须被覆盖（被抽取者须有来源侧边；有 `surplus` 时须有该物资流入）；**PE009** 债务必须收得回来（`owes` 要有收账通道：债主能支配/强制/抽取/撤回正当性，或债务人对债主持有 `critical: true` 或带物质类别 `kind` 的 `depends_on`，warning）；**PE010** 物流守恒（同单位流入 ≥ 需求，缺数据报 warning 不静默）；**PE011** 补给律（暴力线驻军地必须有物流线到达；有 `needs` 时按量判断粮）；**PE012** 人口律（流失要有可对账的端点）；**PE006** 危机积累（剩余刚好够活 + `tax`/`tribute` 外流上升）；**PE007** 结构性压力（人口上升 + 占有关系未变）；**PE008** 镇压自己的基础（`coerces` 的对象同时用物流供养自己）；**PE013** 亲情与镇压矛盾（镇压供养者 + `kin`）；**PE014** 庇护关系缓冲危机（抽取上升 + 被抽取方余量不足 + `allegiance`）；**PE015** 时延倒挂（信息线 `when` + `delay` 抵达前，目的地已发生变故）；**PE016** 运输自环（`logistics`/`violence` 线的 `from == to`，v0.9）。
 
 PE 规则可在 `classlint.yaml` 关闭（`rules: {PE003: off}`）——可以关，不能改定义。
 
