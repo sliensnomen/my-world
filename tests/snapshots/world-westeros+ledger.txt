@@ -10,8 +10,16 @@ robb-host-army: 持有者 - | 保管 - | 位置 the-twins【流水结论】
 stannis-loan-gold: 持有者 stannis-baratheon（来自 `ev-stannis-loan`）【流水结论】 | 保管 - | 位置 -
 the-wall-scale: 持有者 - | 保管 - | 位置 -
 
-== 账本族告警（没算平的 + 参考口径）==
+== 账本族告警（没算平的）==
 (账平)
+
+== 事件覆盖（CA721 参考口径）==
+[CA721] entries/braavos-free-port.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] entries/kings-landing.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] entries/roseroad-grain.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] entries/the-north.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] entries/the-others-magic.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] entries/wight-army.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
 
 == 组织归属（join/leave 流水）==
 jon-snow: 在 night-watch-order

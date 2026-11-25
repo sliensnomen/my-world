@@ -1,0 +1,5 @@
+exit=1
+[CA721] warning entries/draft-potion.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/hermit-sage.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+
+11 个条目 | 0 错误 | 2 警告

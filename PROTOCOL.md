@@ -7,9 +7,9 @@
 >
 > 1. `world.schema.json` —— 条目格式的唯一契约；
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
-> 3. 本文档 —— 规则表（§6.3，**47 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
+> 3. 本文档 —— 规则表（§6.3，**48 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.32"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.33"`（即 JSON 输出里的 `protocol_version`）。
 > 契约版本只有一个来源：`world.schema.json` 的 `x-contract-version = "0.9"`（即 JSON 输出里的 `contract_version`）；下文修订记录里提到的 `0.2` 等是当时值。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
@@ -104,6 +104,10 @@
 **v1.14 修订记录（2026-11-12，漏洞审计 §2.1：同刻未定序不再吞掉断言对账）：**
 
 37. **CA704/CA709 的「归属未定序」不再是对账的一键降级器**。漏洞审计 §2.1：作者只要补一笔同刻（`when_sort` 相同）、受方不同的 transfer，CA704 就会从 error 降成 warning——因为旧实现把 ambiguous 客体的**全部** `owns` 对账一起跳过。修法：未定序仍然不挑赢家，但断言照样对账——断言者必须同时落在全部候选受方的交集里（也就是对任何同刻结局都成立），否则照报 error「未定序时断言必须同时落在全部候选里（交集：…）」。CA709 的 `custody_of` 同口径。**多值受方（单笔 `to` 列表）不受影响**：单笔的受方列表仍按各受方逐个放行，只有「同刻多笔、集合不同」才走交集。§9.1 升 minor，规则编号不变，契约不动。
+
+**v1.33 修订记录（2026-11-25，1.4 事件优先：CA721 实体卡未被事件引用）：**
+
+56. **新增 CA721（warning）**：`type: event` 卡存在的世界里，未被任何事件引用的实体卡报「未被事件引用」——引用口径按拍板只数**事件五腿**（`by`/`to`/`object`/`from`/`result`）与**事件卡的 `canon_refs`**（规范形写法同判）；实体间关系与正文 mention 不计入。豁免三面：archived 实体卡（降级处置已由 CA405/CA718 终结它的账）、事件卡自身（它是主叙述，不要求被引用）、**没有 `type: event` 卡的 1.x 存量世界整体沉默**（与协议 1.2「旧世界一条不红」同一套 fail-open）。draft 照报——warning 只提示不决定，与 CA301 的「不替作者做决定」不同：这里提示的是事实不是承诺。回归 `check_event_first_unreferenced_entities`（含 CA401 事件腿悬空显式回归）。按 §9.1 升 minor，契约不动。
 
 **v1.32 修订记录（2026-11-23，#38：转让不能自己转给自己）：**
 
@@ -598,6 +602,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 | CA715 | warning | canon 条目通过 `canon_refs`/`depends_on`/`derives_legitimacy_from` 之外的关系（`owns`、`conflicts_with`、`exchanges_with` 等）引用了非 canon 目标——要么把目标升格，要么把这条关系写成 x-。名分依据目标的状态由 CA404 单独判，本条不重复 |
 | CA719 | error | 成员链断了：`leave` 之前没有 `join`，卡上也没有 `member_of` 断言——退会必须有入会（同刻 join/leave 不排序，fail-open） |
 | CA720 | error | 自己转给自己：`transfer` 的 `from` 与 `to` 是同一实体——转让必须换持有者（同刻不排序；`grant` 不在此列） |
+| CA721 | warning | 实体卡未被任何事件引用（1.4 事件优先）：引用口径只数事件五腿（`by`/`to`/`object`/`from`/`result`）与事件卡 `canon_refs`（规范形同判），实体间关系与正文 mention 不计。archived 实体卡豁免；事件卡自身不查；没有 `type: event` 卡的世界整体沉默；draft 照报 |
 | CA718 | error | 承接链不成立：承接者未定档（draft/archived）、类型与原条目不同、或 `superseded_by` 互相承接成环——降级处置没有终点 |
 | CA717 | error | 事件腿指向的实体类型与事件语义不符（`by` 只收 character/faction；`join` 的 to 只收 faction；`move` 的 to/from 只收 location；`birth` 的 object 只收 character；`destroy` 的 object 只收 item/location 等）——不是所有 id 都能当所有腿 |
 | CA716 | warning | `when` 是数字且与 `when_sort` 方向相反：同一客体的两个事件，编号小的 when 更大——故事时间与排序号对不上 |
@@ -632,7 +637,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.32",
+  "protocol_version": "1.33",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

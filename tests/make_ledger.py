@@ -11,10 +11,16 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 
 
-def card(id, type_, extra="", depends="[]", _i=[0]):
-    """一张合法卡。正文用每张卡不同的字铺够 200+ 字——同一段样板会让 CA201 刷屏。"""
-    _i[0] += 1
-    body = f"{id} 的夹具正文。\n" + chr(0x4E00 + _i[0]) * 220 + "\n"
+def card(id, type_, extra="", depends="[]", _i=[0], body_char=None):
+    """一张合法卡。正文用每张卡不同的字铺够 200+ 字——同一段样板会让 CA201 刷屏。
+
+    body_char 显式指定铺字字符时不消耗 _i 计数：往 CLEAN 中间插卡就不会让
+    后续全部卡（含 BAD 世界）的正文偏移一位——不该动的世界一个字节不变。
+    """
+    if body_char is None:
+        _i[0] += 1
+        body_char = chr(0x4E00 + _i[0])
+    body = f"{id} 的夹具正文。\n" + body_char * 220 + "\n"
     return f"""---
 id: {id}
 title: {id}
@@ -33,11 +39,11 @@ ai_assisted: false
 {body}"""
 
 
-def event(id, kind, when_sort, legs="", depends="[]"):
+def event(id, kind, when_sort, legs="", depends="[]", body_char=None):
     return card(id, "event",
                 f"when: 第 {when_sort:g} 年\nwhen_sort: {when_sort}\n"
                 f"event_kind: {kind}\n{legs}",
-                depends=depends)
+                depends=depends, body_char=body_char)
 
 
 CLEAN = {
@@ -51,7 +57,11 @@ CLEAN = {
     "watch-command": card("watch-command", "item"),
     "fox-host": card("fox-host", "faction"),
     "east-gate": card("east-gate", "location"),
-    # 流水（8 笔，覆盖全部八类 event_kind）
+    # 1.4 事件优先（协议 1.33）：grey-rock 须有事件引用，否则 CA721 打破全绿基准。
+    # body_char 不消耗计数：本卡插入后其余卡逐字节不变。
+    "ev-rock-founded": event("ev-rock-founded", "create", 0,
+                             "object:\n  - grey-rock\n", body_char="龍"),
+    # 流水（9 笔，覆盖全部八类 event_kind）
     "ev-bob-born": event("ev-bob-born", "birth", 0, "object:\n  - squire-bob\n"),
     "ev-blade-forged": event("ev-blade-forged", "create", 1, "object:\n  - fox-blade\n"),
     "ev-blade-to-anna": event(

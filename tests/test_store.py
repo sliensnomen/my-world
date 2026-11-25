@@ -1325,14 +1325,20 @@ def check_new_writes_event_cards():
                             "--when", "元年", "--when-sort", "0", "--root", str(world)])
         assert rc == 0, f"event create 失败：{out} {err}"
         rc, out, err = run(["event", "transfer", "剑易手", "--id", "ev-1",
-                            "--by", "anna", "--to", "steward", "--object", "sword-x",
+                            "--by", "anna", "bob", "--to", "steward", "--object", "sword-x",
                             "--when", "元年", "--when-sort", "1", "--root", str(world)])
         assert rc == 0, f"event 命令失败：{out} {err}"
+        # 1.4 事件优先（CA721）：建的实体卡都要编进事件——bob 已在 ev-1 的 by 里，
+        # night-watch 由一笔 join 入账（steward 的 member_of 断言与流水对账一致）
+        rc, out, err = run(["event", "join", "管家入职", "--id", "ev-join",
+                            "--by", "steward", "--to", "night-watch",
+                            "--when", "二年", "--when-sort", "2", "--root", str(world)])
+        assert rc == 0, f"event join 失败：{out} {err}"
         got = store.parse_entry(world / "entries/events/ev-1.md", world)
         assert not got.parse_error, got.parse_error
         assert got.meta["type"] == "event" and got.meta["event_kind"] == "transfer"
         assert got.meta["when"] == "元年" and got.meta["when_sort"] == 1
-        assert got.meta["by"] == ["anna"] and got.meta["to"] == ["steward"]
+        assert got.meta["by"] == ["anna", "bob"] and got.meta["to"] == ["steward"]
         assert got.meta["object"] == ["sword-x"]
         # 审计全绿（事件腿与断言指向的卡都存在，断言与流水一致）
         rc, out, err = run(["--strict", str(world)])

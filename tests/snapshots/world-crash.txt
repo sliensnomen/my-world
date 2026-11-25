@@ -2,5 +2,8 @@ exit=1
 [CA100] error   entries/bad-utf8.md: 文件无法读取: 'utf-8' codec can't decode byte 0xff in position 236: invalid start byte
 [CA102] error   entries/list-stance.md: stance=['official'] 非法，须为 ['heretic', 'official', 'unknown']
 [CA102] error   entries/list-type.md: type=['faction'] 非法，须为 ['character', 'event', 'faction', 'item', 'location']（实验类型须形如 `x-<命名空间>-<名称>`，如 `x-mine-weather`）
+[CA721] warning entries/bom.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/list-type.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/ok-node.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
 
-4 个条目 | 3 错误 | 0 警告
+4 个条目 | 3 错误 | 3 警告

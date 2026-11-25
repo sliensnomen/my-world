@@ -17,6 +17,9 @@ exit=1
 [CA708] warning entries/ev-ghost.md: 不存在的东西在动弹：`sword-y` 在 when_sort=9 已死亡/被毁/被转化，本事件却在更晚的 when_sort=11 拿它当客体
 [CA710] warning entries/keeper-d.md: custody_of 断言互搏：`orphan-item` 同时被 `keeper-c` 与本卡断言保管（派生状态按 id 序取 `keeper-c`；请统一到一张卡上断言，或用 custody 流水表达移交）
 [CA713] warning entries/ev-relay-2.md: 转让起点断裂：`relay-item` 上一笔账落在 `house-b`（when_sort=12），本笔却声称从 `house-a` 交出（不写 from 就不查；同刻转让不排序）
+[CA721] warning entries/keeper-c.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/keeper-d.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/keeper-old.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
 [CA102] info    entries/ev-x-kind.md: event_kind='x-mine-teleport' 为实验值（x- 前缀），已计入案例收集
 
-32 个条目 | 8 错误 | 10 警告
+32 个条目 | 8 错误 | 13 警告

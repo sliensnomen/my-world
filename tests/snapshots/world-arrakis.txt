@@ -22,6 +22,20 @@ exit=0
 [CA104] warning entries/spice-melange.md: 正文 78 字，canon 档建议 ≥200 字
 [CA104] warning entries/water-rings.md: 正文 53 字，canon 档建议 ≥200 字
 [CA301] warning entries/choam-dividends.md: 命中承重墙关键词 ['财政']，但未声明 load_bearing——请考虑声明
+[CA721] warning entries/bene-gesserit.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/choam.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/corrino-imperium.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/fremen.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/harkonnen-fief.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/missionaria-protectiva.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/navigator-dune.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/navigator-messiah.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/paul-muaddib.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/salusa-secundus.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/sardaukar.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/spacing-guild.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/spice-melange.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
+[CA721] warning entries/water-rings.md: 实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明
 [CA108] info    entries/bene-gesserit.md: kind='x-faith-engineering' 为实验值，已计入案例收集
 
-22 个条目 | 0 错误 | 23 警告
+22 个条目 | 0 错误 | 37 警告

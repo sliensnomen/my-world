@@ -47,7 +47,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点；本文件全量�
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.32"  # 1.30：#40 F4 规范形 relations 与旧字段二选一  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id；1.25：#38 新增 CA716（when 数字与 when_sort 反向）；1.26：#38 CA201 精确短重复不设长度豁免；1.27：#38 事件腿类型表 CA717（by/join/move/birth/destroy 等）
+PROTOCOL_VERSION = "1.33"  # 1.33：1.4 事件优先——CA721 实体卡未被事件引用（warning，archived/无事件卡世界豁免）  # 1.30：#40 F4 规范形 relations 与旧字段二选一  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id；1.25：#38 新增 CA716（when 数字与 when_sort 反向）；1.26：#38 CA201 精确短重复不设长度豁免；1.27：#38 事件腿类型表 CA717（by/join/move/birth/destroy 等）
 CONTRACT_VERSION = "0.9"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -127,12 +127,18 @@ def ledger_report(root: Path, packs=()) -> int:
         print(f"{obj}: 持有者 {holder}"
               f" | 保管 {_mark(st.custodian, st.certainty)}"
               f" | 位置 {_mark(st.location, st.certainty)}")
-    ledger_findings = [f for f in findings if f.rule.startswith("CA7")]
-    print("\n== 账本族告警（没算平的 + 参考口径）==")
+    coverage_findings = [f for f in findings if f.rule == "CA721"]
+    ledger_findings = [f for f in findings
+                       if f.rule.startswith("CA7") and f.rule != "CA721"]
+    print("\n== 账本族告警（没算平的）==")
     if not ledger_findings:
         print("(账平)")
     for f in ledger_findings:
         print(f"[{f.rule}] {f.entry}: {f.message}")
+    if coverage_findings:
+        print("\n== 事件覆盖（CA721 参考口径）==")
+        for f in coverage_findings:
+            print(f"[{f.rule}] {f.entry}: {f.message}")
     membership = ledger.derive_membership(index)
     print("\n== 组织归属（join/leave 流水）==")
     if not membership:

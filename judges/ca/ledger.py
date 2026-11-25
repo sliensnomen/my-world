@@ -464,6 +464,37 @@ def check_ca720(world: dict, emit) -> None:
                  "转让必须换持有者；只是想更新位置请用 move")
 
 
+def check_ca721(world: dict, emit) -> None:
+    """1.4 事件优先：实体卡未被任何事件引用（事件五腿 ∪ 事件卡 canon_refs）。
+
+    只判「有 type: event 卡的世界」——没有事件卡的 1.x 存量世界整体沉默
+    （与协议 1.2「旧世界一条不红」同一套 fail-open）。archived 实体卡豁免：
+    降级处置（CA405/CA718）已终结它的账，不再收新债。事件卡自身不是检查
+    对象——它是主叙述，不要求被别的事件引用。写坏的腿由 CA109 负责，这里
+    不捡进引用集；悬空 id 的存在性由 CA401 负责，这里只管「引用有没有发生」。
+    """
+    index = world["index"]
+    event_cards = [e for e in index.values() if event_ledger.is_event_card(e)]
+    if not event_cards:
+        return
+    referenced: set[str] = set()
+    for e in event_cards:
+        view = event_ledger.event_view(e)
+        for leg in event_ledger.LEG_FIELDS:
+            referenced.update(view.legs.get(leg, ()))
+        referenced.update(r.target for r in e.edges_of("canon_refs"))
+    for e in index.values():
+        if e.parse_error or not e.id or event_ledger.is_event_card(e):
+            continue
+        if e.meta.get("status") == "archived":
+            continue
+        if e.id in referenced:
+            continue
+        emit("warning", e.rel,
+             "实体卡未被任何事件引用（口径：事件腿 by/to/object/from/result 与 "
+             "事件卡 canon_refs）——把它编进事件，或确认它是有意的背景声明")
+
+
 def check_ca711(world: dict, emit) -> None:
     index = world["index"]
     windows = event_ledger.existence_windows(index)
@@ -568,7 +599,7 @@ def check_ca714(world: dict, emit) -> None:
 
 SCHEDULE = ("CA701", "CA703", "CA704", "CA705", "CA707", "CA708",
             "CA709", "CA710", "CA712", "CA711", "CA713", "CA714", "CA716", "CA717",
-            "CA719", "CA720")
+            "CA719", "CA720", "CA721")
 
 
 def apply(run_world) -> None:

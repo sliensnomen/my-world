@@ -59,6 +59,10 @@ CASES: list[tuple[str, list[str]]] = [
     ("world-ledger+ledger", ["ledger", "tests/world-ledger"]),
     # 真实作品的流水：冰火世界补了期初与 9 笔账，ledger 输出是 dogfood 的验收物
     ("world-westeros+ledger", ["ledger", "tests/world-westeros"]),
+    # 1.4 事件优先（协议 1.33）：未被事件引用的实体卡报 CA721（warning）。
+    # 默认 exit=0 与 --strict exit=1 一起钉住「warning 是真的 warning」。
+    ("world-event-first", ["tests/world-event-first"]),
+    ("world-event-first+strict", ["tests/world-event-first", "--strict"]),
 ]
 
 # 崩溃守卫的意图断言：(说明, 规则编号, 必须出现在同一条发现里的条目路径)
@@ -3009,6 +3013,131 @@ def check_self_transfer_is_reported() -> list[str]:
     return problems
 
 
+def check_event_first_unreferenced_entities() -> list[str]:
+    """1.4 事件优先（协议 1.33）：CA721 的引用口径矩阵、豁免与 CA401 回归。
+
+    引用口径（拍板）：事件五腿（by/to/object/from/result）∪ 事件卡 canon_refs
+    （规范形写法同判）；实体间关系与正文 mention 不计入。
+    豁免：archived 实体卡（降级处置已终结它的账）；事件卡自身；无 type: event
+    卡的 1.x 存量世界整体沉默。draft 照报（warning 不替作者做决定，只提示）。
+    """
+    problems = []
+
+    def ev(eid: str, extra: str, template_relations: bool = True) -> str:
+        return _card(eid, extra=extra, template_relations=template_relations).replace(
+            "type: location", "type: event")
+
+    def run(cards: dict[str, str]) -> str:
+        tmp, world = _temp_world("canonlint-ca721-", cards)
+        with tmp:
+            _code, out, err = _judge(world)
+            if err:
+                problems.append(f"CA721 断言世界 traceback：\n{err}")
+            return out
+
+    def has721(out: str, name: str) -> bool:
+        return any("[CA721]" in ln and f"entries/{name}.md" in ln
+                   for ln in out.splitlines())
+
+    def expect(out: str, name: str, want: bool, why: str) -> None:
+        if has721(out, name) != want:
+            state = "应报" if want else "不应报"
+            problems.append(f"CA721：{name} {state}（{why}）：\n{out}")
+
+    create_b = "event_kind: create\nwhen: 元年\nwhen_sort: 1\nobject:\n  - b\n"
+
+    # 1) 基本守卫：有事件卡的世界里，未被引用的实体卡必须报；被 object 引用的不报
+    out = run({"a": _card("a"), "b": _card("b"), "ev1": ev("ev1", create_b)})
+    expect(out, "a", True, "未被任何事件引用")
+    expect(out, "b", False, "被事件 object 腿引用")
+
+    # 2) 腿口径：from（transfer）与 result（transform）引用的实体不报
+    out = run({
+        "a": _card("a"), "s": _card("s"), "u": _card("u"), "v": _card("v"),
+        "ev1": ev("ev1", "event_kind: transfer\nwhen: 元年\nwhen_sort: 1\n"
+                         "by:\n  - u\nfrom:\n  - a\nto:\n  - v\nobject:\n  - s\n"),
+    })
+    expect(out, "a", False, "被 transfer 的 from 腿引用")
+    out = run({
+        "a": _card("a"), "old-x": _card("old-x"),
+        "ev1": ev("ev1", "event_kind: transform\nwhen: 元年\nwhen_sort: 1\n"
+                         "object:\n  - old-x\nresult:\n  - a\n"),
+    })
+    expect(out, "a", False, "被 transform 的 result 腿引用")
+
+    # 3) 事件卡 canon_refs 引用（旧写法与规范形同判）：被引用的实体不报
+    out = run({
+        "a": _card("a"),
+        "ev1": ev("ev1", "when: 元年\n", ).replace(
+            "canon_refs: []", "canon_refs: [a]"),
+    })
+    expect(out, "a", False, "被事件卡 canon_refs 引用")
+    out = run({
+        "a": _card("a"),
+        "ev1": ev("ev1", "when: 元年\nrelations:\n"
+                         "  - type: canon_refs\n    target: a\n"),
+    })
+    expect(out, "a", False, "被事件卡规范形 relations 的 canon_refs 引用")
+
+    # 4) 豁免：archived 未被引用不报；draft 照报；事件卡自身不是检查对象
+    out = run({
+        "a": _card("a", status="archived"), "b": _card("b"),
+        "ev1": ev("ev1", create_b),
+    })
+    expect(out, "a", False, "archived 豁免（账已由 CA405/CA718 处置）")
+    out = run({
+        "a": _card("a", status="draft"), "b": _card("b"),
+        "ev1": ev("ev1", create_b),
+    })
+    expect(out, "a", True, "draft 照报（warning 只提示不决定）")
+    out = run({
+        "ev1": ev("ev1", "when: 元年\n"),
+        "ev2": ev("ev2", "when: 二年\n"),
+    })
+    expect(out, "ev1", False, "事件卡不要求被引用（它是主叙述）")
+    expect(out, "ev2", False, "事件卡不要求被引用（它是主叙述）")
+
+    # 5) 1.x 存量豁免：没有 type: event 卡的世界整体沉默
+    out = run({"a": _card("a"), "b": _card("b")})
+    if "[CA721]" in out:
+        problems.append(f"无事件卡的世界 CA721 应整体沉默：\n{out}")
+
+    # 6) 口径边界：实体间关系（depends_on）不计入「事件引用」
+    out = run({
+        "a": _card("a", extra="depends_on:\n"
+                              "  - id: b\n    kind: economy\n    critical: true\n"),
+        "b": _card("b"),
+        "ev1": ev("ev1", "when: 元年\n"),
+    })
+    expect(out, "b", True, "被实体 depends_on 引用不算被事件引用")
+    expect(out, "a", True, "有 depends_on 出边的实体自己也要被事件引用才算")
+
+    # 6b) 反向边界：实体卡 canon_refs、事件卡 depends_on/conflicts_with 都不算事件引用
+    out = run({
+        "a": _card("a"),
+        "b": _card("b", extra="relations:\n"
+                              "  - type: canon_refs\n    target: a\n",
+                  template_relations=False),
+        "ev1": ev("ev1", "when: 元年\ndepends_on:\n"
+                         "  - id: a\n    kind: economy\n    critical: false\n"),
+        "ev2": ev("ev2", "when: 元年\nrelations:\n"
+                         "  - type: conflicts_with\n    target: a\n",
+                  template_relations=False),
+    })
+    expect(out, "a", True, "实体 canon_refs 与事件 depends_on/conflicts_with 都不算事件引用")
+
+    # 7) CA401 显式回归（1.4 计划 §5.1.3）：事件腿指向不存在的 id 必须报
+    out = run({
+        "x": _card("x"),
+        "ev1": ev("ev1", "event_kind: move\nwhen: 元年\nwhen_sort: 1\n"
+                         "object:\n  - x\nto:\n  - ghost-place\n"),
+    })
+    if not any("[CA401]" in ln and "ghost-place" in ln
+               for ln in out.splitlines()):
+        problems.append(f"事件腿悬空 id（ghost-place）应报 CA401：\n{out}")
+    return problems
+
+
 def check_member_chain_is_paired() -> list[str]:
     """#38 成员链：leave 之前必须有过 join，或用 member_of 说明初始成员。"""
     problems = []
@@ -3789,7 +3918,7 @@ def check_registry_caches_econ_module_but_keeps_duplicate_selection() -> list[st
 
 
 def check_registry_core_ca_pack() -> list[str]:
-    """core-ca 的注册面：44 条规则逐条登记、遍历域与级别齐全；CA504 只进 report。"""
+    """core-ca 的注册面：48 条规则逐条登记、遍历域与级别齐全；CA504 只进 report。"""
     problems = []
     try:
         import canonlint
@@ -3806,13 +3935,13 @@ def check_registry_core_ca_pack() -> list[str]:
         "CA501", "CA502", "CA503", "CA504", "CA505",
         "CA701", "CA702", "CA703", "CA704", "CA705", "CA706",
         "CA707", "CA708", "CA709", "CA710", "CA711", "CA712", "CA713",
-        "CA714", "CA715", "CA716", "CA717", "CA718", "CA719", "CA720",
+        "CA714", "CA715", "CA716", "CA717", "CA718", "CA719", "CA720", "CA721",
     }
     world_rules = {
         "CA114", "CA201", "CA403", "CA405", "CA502", "CA504", "CA505",
         "CA701", "CA703", "CA704", "CA705", "CA707", "CA708", "CA709",
         "CA710", "CA711", "CA712", "CA713", "CA714", "CA715", "CA716", "CA717",
-        "CA718", "CA719", "CA720",
+        "CA718", "CA719", "CA720", "CA721",
         "CA718",
     }
     index_rules = {"CA501", "CA503"}
@@ -4057,6 +4186,8 @@ def main() -> int:
         ("issue #38 承接链要落在定档且同类的条目上（CA718）", check_supersede_chain_is_checked),
         ("issue #38 成员链 join/leave 必须配对（CA719）", check_member_chain_is_paired),
         ("issue #38 自己转给自己报 CA720", check_self_transfer_is_reported),
+        ("1.4 事件优先：未被事件引用的实体卡报 CA721（口径/豁免矩阵 + CA401 回归）",
+         check_event_first_unreferenced_entities),
         ("issue #40 F4：规范形 relations 与旧字段二选一（协议 1.30）", check_canonical_relations_satisfy_required_fields),
         ("issue #38 泄压阀：CA505 不认 event 卡的 layer", check_ca505_ignores_event_layer),
         ("issue #38 名分依据也过状态门（CA404 看 derives_legitimacy_from）", check_ca404_covers_legitimacy_relations),
@@ -4067,7 +4198,7 @@ def main() -> int:
         ("Registry 加载失败矩阵与不可变元数据", check_registry_loading_matrix),
         ("econ 模块只加载一次且重复选择保留两次",
          check_registry_caches_econ_module_but_keeps_duplicate_selection),
-        ("core-ca 注册面：44 条规则登记齐全、CA504 只进 report、econ 重复执行两次",
+        ("core-ca 注册面：48 条规则登记齐全、CA504 只进 report、econ 重复执行两次",
          check_registry_core_ca_pack),
         ("econ 只遍历 index_parseable（不审被遮蔽条目）",
          check_registry_econ_skips_shadowed_entries),
