@@ -22,6 +22,10 @@ def check_ca602(meta, rel, add) -> None:
     _check_rule("CA602", meta, rel, add)
 
 
+def check_ca603(world, add) -> None:
+    econ.check_world(world, add)
+
+
 PACK = Pack(
     name=econ.PACK_NAME,
     version=econ.PACK_VERSION,
@@ -34,5 +38,8 @@ PACK = Pack(
         Rule(id="CA602", pack="econ", scope="entry",
              entry_domain="index_parseable", check=check_ca602,
              default_level="warning", levels=frozenset({"warning"}), order=2),
+        Rule(id="CA603", pack="econ", scope="world",
+             entry_domain="", check=check_ca603,
+             default_level="warning", levels=frozenset({"error", "warning"}), order=3),
     ),
 )

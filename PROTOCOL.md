@@ -9,7 +9,7 @@
 > 2. 代码 + 测试 —— 行为由 `tests/snapshots/` 与 `classlint/tests/` 钉死；
 > 3. 本文档 —— 规则表（§6.3，**48 条**）与代码逐条互证，其余叙述是当时的意图；与代码不一致时以代码为准。
 >
-> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.33"`（即 JSON 输出里的 `protocol_version`）。
+> 版本号只有一个来源：`canonlint.py` 的 `PROTOCOL_VERSION = "1.34"`（即 JSON 输出里的 `protocol_version`）。
 > 契约版本只有一个来源：`world.schema.json` 的 `x-contract-version = "0.9"`（即 JSON 输出里的 `contract_version`）；下文修订记录里提到的 `0.2` 等是当时值。
 > 标题里的 v1.0.1 是这份文档当年的修订号，不再表示「已冻结」的承诺——**先有工具，才有协议**。
 > 下面的修订记录（v0.2 → v1.0.1）原样保留，作为当时的决策依据。
@@ -104,6 +104,10 @@
 **v1.14 修订记录（2026-11-12，漏洞审计 §2.1：同刻未定序不再吞掉断言对账）：**
 
 37. **CA704/CA709 的「归属未定序」不再是对账的一键降级器**。漏洞审计 §2.1：作者只要补一笔同刻（`when_sort` 相同）、受方不同的 transfer，CA704 就会从 error 降成 warning——因为旧实现把 ambiguous 客体的**全部** `owns` 对账一起跳过。修法：未定序仍然不挑赢家，但断言照样对账——断言者必须同时落在全部候选受方的交集里（也就是对任何同刻结局都成立），否则照报 error「未定序时断言必须同时落在全部候选里（交集：…）」。CA709 的 `custody_of` 同口径。**多值受方（单笔 `to` 列表）不受影响**：单笔的受方列表仍按各受方逐个放行，只有「同刻多笔、集合不同」才走交集。§9.1 升 minor，规则编号不变，契约不动。
+
+**v1.34 修订记录（2026-11-27，1.4 econ 食物链：CA603）：**
+
+57. **新增 CA603（warning/error，econ 扩展）**：世界根 `econ.yaml` 的 `params.food_per_person_day`（value 有限正数、unit 非空字符串）× 卡上 `figures.population` 得口粮需求；`figures.grain_supply` 加可选的 `figures.grain_import` 低于需求时，报 warning「食物缺口」，补 `grain_import` 或写 `justification` 放行。配置本身坏（缺 `params`/参数、value 非正、unit 非字符串）报 error。没有 `econ.yaml` 时整条规则沉默；推导只报告，不写回卡。仍需 `--pack econ`。回归 `check_econ_food_chain`。按 §9.1 升 minor，契约不动。
 
 **v1.33 修订记录（2026-11-25，1.4 事件优先：CA721 实体卡未被事件引用）：**
 
@@ -637,7 +641,7 @@ v0.5–v1.0 期间 `legitimacy` 也占一个 kind、自成一族（规范族：�
 
 ```json
 {
-  "protocol_version": "1.33",
+  "protocol_version": "1.34",
   "entries": 12,
   "findings": [
     {"rule": "CA402", "level": "error", "entry": "gray-harbor-fleet",

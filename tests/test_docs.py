@@ -322,6 +322,7 @@ def check_doc_paths_exist():
     skip = {
         "CONSTITUTION.md": "由 canonlint init 在世界仓库里生成，本仓库不该有",
         "classlint.yaml": "由 classlint init 在世界仓库里生成，本仓库不该有",
+        "econ.yaml": "世界仓库根的可选参数文件，由作者按 PROTOCOL-ECON.md §2.1 创建；本仓库不该有",
         "codex/entities.yaml": "世界仓库的实体别名表（classlint mentions 已实现），本仓库不该有",
         "AGENTS.md": "仓库主本地代理规矩，明确不入库（.gitignore）；仅在本地存在，索引与发现范围都排除",
         "01_Requirements.md": "classlint 早期规划里的文档名，从未进仓库",
@@ -356,6 +357,8 @@ def check_doc_paths_exist():
         "CONSTITUTION.md 的豁免失效：store/write.py 里已经没有它了"
     assert "classlint.yaml" in (ROOT / "classlint/classlint.py").read_text(encoding="utf-8"), \
         "classlint.yaml 的豁免失效：classlint.py 里已经没有它了"
+    assert "econ.yaml" in (ROOT / "econ.py").read_text(encoding="utf-8"), \
+        "econ.yaml 的豁免失效：econ.py 里已经没有它了"
 
 
 def check_doc_commands_exist():

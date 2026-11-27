@@ -24,7 +24,7 @@
 | [spine/README.md](../spine/README.md) | 设计路线 | 历史 | 2.0 事件脊柱冻结区的目录纪律、文件清单与历史证据 | 目录冻结；不再投入 |
 | [LICENSE](../LICENSE) | 授权与治理 | 授权 | 代码 MIT 授权 | 授权政策变化时才改 |
 | [LICENSE-PROTOCOL.md](../LICENSE-PROTOCOL.md) | 授权与治理 | 授权 | 协议文本 CC BY 4.0 授权 | 授权政策变化时才改 |
-| [PROTOCOL-ECON.md](../PROTOCOL-ECON.md) | 权威契约 | 草案 | econ 数值扩展的字段与两条规则草案 | 以 `econ.py` 实测为限，不夸大为完整数值系统 |
+| [PROTOCOL-ECON.md](../PROTOCOL-ECON.md) | 权威契约 | 草案 | econ 数值扩展的字段与三条规则草案 | 以 `econ.py` 实测为限，不夸大为完整数值系统 |
 | [PROTOCOL.md](../PROTOCOL.md) | 权威契约 | 现行 | core 规则表、治理语义与协议演进史 | CA 规则变化按仓库协议流程同步 |
 | [README.md](../README.md) | 使用参考 | 现行 | 项目总入口、命令、现状与下一步 | 命令、规则数、测试数和实现状态变化时同步 |
 | [项目文书.md](../项目文书.md) | 设计路线 | 历史 | 2026-09 的原始定位与架构设想 | 历史留档，以现行 README 为准 |

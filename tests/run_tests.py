@@ -643,6 +643,79 @@ def check_econ_figures_are_shape_checked() -> list[str]:
     return problems
 
 
+def check_econ_food_chain() -> list[str]:
+    """1.4 econ 食物链（CA603）：缺口只报告、不写回卡；import/justification 放行。
+
+    世界根 `econ.yaml` 给一组 `food_per_person_day`，卡上 `figures.population` ×
+    该比例得需求，`grain_supply`（可加 `grain_import`）低于需求时 warning。
+    配置本身坏（缺 params / value / unit）是 error，不再推缺口。
+    """
+    problems = []
+    config = (
+        "params:\n"
+        "  food_per_person_day:\n"
+        "    value: 0.6\n"
+        "    unit: kg_grain/person/day\n"
+    )
+
+    def run(entries: dict[str, str], conf: str | None = config) -> str:
+        tmp, world = _temp_world("canonlint-econ-food-", entries)
+        with tmp:
+            if conf is not None:
+                (world / "econ.yaml").write_text(conf, encoding="utf-8")
+            _code, out, err = _judge(world, "--pack", "econ")
+            if err:
+                problems.append(f"CA603 断言世界 traceback：\n{err}")
+            return out
+
+    def figs(pop: int, supply: int, extra: str = "",
+             supply_extra: str = "") -> str:
+        return ("figures:\n"
+                f"  population: {{value: {pop}, unit: persons}}\n"
+                f"  grain_supply: {{value: {supply}, unit: kg_grain/day"
+                f"{supply_extra}}}\n"
+                f"{extra}")
+
+    def has603(out: str, word: str = "食物缺口") -> bool:
+        return any("[CA603]" in ln and word in ln for ln in out.splitlines())
+
+    # 1) 1000 人 × 0.6 = 600 > 500：缺口 warning
+    out = run({"a": _card("a", figs(1000, 500))})
+    if not has603(out):
+        problems.append(f"人口 1000、粮 500 应报 CA603 食物缺口：\n{out}")
+    if "[CA603] error" in out:
+        problems.append(f"食物缺口应是 warning，不是 error：\n{out}")
+
+    # 2) 700 粮足够：不报
+    out = run({"a": _card("a", figs(1000, 700))})
+    if "CA603" in out:
+        problems.append(f"粮 700 足够（需求 600），不应报 CA603：\n{out}")
+
+    # 3) grain_import 补足 100：不报
+    out = run({"a": _card("a", figs(
+        1000, 500, "  grain_import: {value: 100, unit: kg_grain/day}\n"))})
+    if "CA603" in out:
+        problems.append(f"grain_import 100 补足后不应报 CA603：\n{out}")
+
+    # 4) justification 放行（偏差合法化）
+    out = run({"a": _card("a", figs(
+        1000, 500, supply_extra=", justification: \"海运未到，账上先记缺口\""))})
+    if "CA603" in out:
+        problems.append(f"带 justification 的缺口不应报 CA603：\n{out}")
+
+    # 5) 无 econ.yaml：整条规则沉默
+    out = run({"a": _card("a", figs(1000, 0))}, conf=None)
+    if "CA603" in out:
+        problems.append(f"没有 econ.yaml 时 CA603 应沉默：\n{out}")
+
+    # 6) 配置坏：缺 unit 是 error，且不再推缺口
+    out = run({"a": _card("a", figs(1000, 0))},
+              conf="params:\n  food_per_person_day:\n    value: 0.6\n")
+    if not has603(out, "econ.yaml") or not has603(out, "unit"):
+        problems.append(f"econ.yaml 缺 unit 应报 CA603 error（含 econ.yaml/unit）：\n{out}")
+    return problems
+
+
 def check_non_world_directory_is_a_usage_error() -> list[str]:
     """指错目录要直说「这不是世界」，而不是把每篇文档都当坏条目（评审：752 条假错误）。"""
     problems = []
@@ -4107,6 +4180,7 @@ def main() -> int:
     ("拼错一个字符的关系名按规范名判定（自定义名仍 fail-open）",
      check_near_miss_names_are_judged_under_the_canonical_name),
     ("econ 的 figures 形状（非映射 / unit 非字符串）都报 CA601", check_econ_figures_are_shape_checked),
+    ("econ 食物链缺口只报告（CA603），import/justification 放行", check_econ_food_chain),
         ("--dup-threshold 越界是用法错误（不退化成静默关规则）", check_dup_threshold_range_is_usage_error),
         ("--impact 从不把主体列进自己的下游", check_impact_never_lists_the_subject),
         ("提示性规则不阻断 draft（CA301 只对定档条目报）", check_advisory_rules_do_not_gate_drafts),

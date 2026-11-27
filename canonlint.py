@@ -47,7 +47,7 @@ from judges.ca.vocab import (  # 协议词表唯一定义点；本文件全量�
     REQUIRED_FIELDS, VALID_STANCE, VALID_STATUS, VALID_TYPES, WORLD_REF_RE,
     X_TYPE_RE, _RELATIONS_WITH_OWN_REFERENCE_RULES)
 
-PROTOCOL_VERSION = "1.33"  # 1.33：1.4 事件优先——CA721 实体卡未被事件引用（warning，archived/无事件卡世界豁免）  # 1.30：#40 F4 规范形 relations 与旧字段二选一  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id；1.25：#38 新增 CA716（when 数字与 when_sort 反向）；1.26：#38 CA201 精确短重复不设长度豁免；1.27：#38 事件腿类型表 CA717（by/join/move/birth/destroy 等）
+PROTOCOL_VERSION = "1.34"  # 1.34：1.4 econ 食物链——CA603 缺口/配置错误（warning/error）；1.33：CA721 实体卡未被事件引用  # 1.30：#40 F4 规范形 relations 与旧字段二选一  # 1.10：同刻未定序与断言解耦；1.11：from 腿语义 + certainty 导出；1.12：CA713 转让起点断裂；1.13：CA705 覆盖 destroy、CA708 查四腿、CA201 豁免限 archived；1.14：未定序不再吞掉断言对账；1.15：CA703 交出者来源、CA501 锚点 layer、CA708 端点施动者、CA712 类型门禁（#38）；1.16：CA703 的 create/birth 豁免只限第一笔转手（#42），端点事件死后 by 不再双报（#44）；1.17：显式 null 关系字段报 CA109（#43）、CA111 认契约历史拼法（#45）、CA103 拒收 datetime（#46）；1.18：#40 F1/F2/F3——规范形注解键按关系名校验、非事件卡 when/when_sort 报 CA109、坏 YAML 不制造假悬空引用；1.19：#49 CA504 闭包从全部条目建图、#50 扫描判据统一（扁平散文不误报、条目子目录不跳过）；1.20：#38 端点类 CA714（重复/顺序端点事件）；1.21：#38 元数据/自指/CA505 泄压阀；1.22：#38 状态门禁 CA715（canon 引用非 canon）；1.23：#38 x- 实验类别成环也报 CA502；1.24：#38 CA301 补军事/财政同义词、CA704/709 文案改用客体 id；1.25：#38 新增 CA716（when 数字与 when_sort 反向）；1.26：#38 CA201 精确短重复不设长度豁免；1.27：#38 事件腿类型表 CA717（by/join/move/birth/destroy 等）
 CONTRACT_VERSION = "0.9"   # 与 world.schema.json 的 x-contract-version 一致（tests/test_docs.py 钉住）
 
 # ---- 协议词表与阈值：唯一定义点在 judges/ca/vocab.py，文件头 import 转发 --------------
@@ -334,13 +334,27 @@ def _load_packs(names: list[str]):
     return list(registry.selected), registry.ca106_fields
 
 
-def _apply_registry_pack(pack: Pack, index: dict, findings: list[Finding]) -> None:
-    for e in index.values():
-        if e.parse_error:
+def _apply_registry_pack(pack: Pack, index: dict, findings: list[Finding],
+                        root: Path) -> None:
+    """调度扩展包：条目规则逐卡跑，世界规则整库跑一次（econ 的 CA603）。"""
+    world = {"all_entries": list(index.values()), "index": index,
+             "issues": [], "root": root}
+    for rule in sorted(pack.rules, key=lambda r: r.order):
+        if rule.scope == "world":
+            def add(level, rel, msg, rule=rule):
+                level = rule.default_level if level is None else level
+                if level not in rule.levels:
+                    raise RegistryError(f"规则 {rule.id} 发出未登记级别: {level!r}")
+                findings.append(Finding(rule.id, level, rel, msg))
+
+            rule.check(world, add)
             continue
-        for rule in sorted(pack.rules, key=lambda r: r.order):
-            if rule.scope != "entry" or rule.entry_domain != "index_parseable":
-                raise RegistryError(f"canonlint 当前不能调度规则 {rule.id}")
+        if rule.scope != "entry" or rule.entry_domain != "index_parseable":
+            raise RegistryError(f"canonlint 当前不能调度规则 {rule.id}")
+
+        for e in index.values():
+            if e.parse_error:
+                continue
 
             def add(level, msg, rule=rule, rel=e.rel):
                 level = rule.default_level if level is None else level
@@ -351,9 +365,9 @@ def _apply_registry_pack(pack: Pack, index: dict, findings: list[Finding]) -> No
             rule.check(e.meta, e.rel, add)
 
 
-def _apply_packs(packs, index: dict, findings: list[Finding]) -> None:
+def _apply_packs(packs, index: dict, findings: list[Finding], root: Path) -> None:
     for pack in packs:
-        _apply_registry_pack(pack, index, findings)
+        _apply_registry_pack(pack, index, findings, root)
 
 
 def _apply_core_ca(pack: Pack, all_entries, index, issues,
@@ -400,7 +414,7 @@ def run(root: Path, dup_threshold: float, impact_ids: list[str],
     _apply_core_ca(core_ca, all_entries, index, issues, known, findings, dup_threshold)
     extension_packs = [p for p in packs
                        if not (isinstance(p, Pack) and p.name == "core-ca")]
-    _apply_packs(extension_packs, index, findings)
+    _apply_packs(extension_packs, index, findings, root)
 
     if not impact_ids:
         reports = []

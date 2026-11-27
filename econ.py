@@ -1,16 +1,22 @@
-"""WGP-econ 扩展包 v0.2 —— 数值系统审计（CA6xx）。
+"""WGP-econ 扩展包 v0.3 —— 数值系统审计（CA6xx）。
 
 由 canonlint --pack econ 启用。core 不依赖本模块。
 """
 from __future__ import annotations
 
 import math
+from pathlib import Path
+
+import yaml
 
 PACK_NAME = "econ"
-PACK_VERSION = "0.2"
+PACK_VERSION = "0.3"
 
 # 启用本包时注入 core 的合法字段集
 KNOWN_FIELDS = {"figures"}
+
+ECON_CONFIG = "econ.yaml"
+FOOD_PARAM = "food_per_person_day"
 
 # 参数表 v0（PROTOCOL-ECON.md §4；每条注明出处）
 PARAM_TABLE = [
@@ -76,3 +82,89 @@ def check_entry(meta: dict, rel: str, add) -> None:
                     f"{s}={parsed[s]:g} / {b}={parsed[b]:g} = {ratio:.1%}，"
                     f"越参数表 {rule['id']} 上界 {rule['max_ratio']:.0%}"
                     f"（{rule['source']}），且无 justification")
+
+
+def _figure_value(figs: dict, name: str) -> float | None:
+    """取一个 figure 的数值；形状不对或负数交给 CA601，这里只做推导。"""
+    f = figs.get(name)
+    if not isinstance(f, dict):
+        return None
+    v = f.get("value")
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return None
+    try:
+        value = float(v)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return value
+
+
+def _figure_justification(figs: dict) -> str | None:
+    for name in ("population", "grain_supply", "grain_import"):
+        f = figs.get(name)
+        if not isinstance(f, dict):
+            continue
+        j = f.get("justification")
+        if isinstance(j, str) and j.strip():
+            return j
+    return None
+
+
+def check_world(world: dict, add) -> None:
+    """CA603：世界根 `econ.yaml` 的食物比例 × population 对 grain_supply。
+
+    `add(level, rel, message)` 与 core 的 world 规则同签名。配置错误报 error；
+    缺口报 warning。没有 `econ.yaml` 时整条规则沉默（缺数据不报错）。
+    """
+    root = world.get("root")
+    if root is None:
+        return
+    path = Path(root) / ECON_CONFIG
+    if not path.exists():
+        return
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001 —— YAML 解析错误要变成一条可读的 CA603
+        add("error", ECON_CONFIG, f"{ECON_CONFIG} 解析失败：{e}")
+        return
+    if not isinstance(data, dict) or not isinstance(data.get("params"), dict):
+        add("error", ECON_CONFIG, f"{ECON_CONFIG} 必须有 `params` 映射")
+        return
+    param = data["params"].get(FOOD_PARAM)
+    if not isinstance(param, dict):
+        add("error", ECON_CONFIG,
+            f"{ECON_CONFIG} 缺 `params.{FOOD_PARAM}`（每人每日口粮比例）")
+        return
+    value, unit = param.get("value"), param.get("unit")
+    if (not isinstance(value, (int, float)) or isinstance(value, bool)
+            or not math.isfinite(float(value)) or float(value) <= 0):
+        add("error", ECON_CONFIG,
+            f"`params.{FOOD_PARAM}.value` 必须是有限正数，实际 {value!r}")
+        return
+    if not isinstance(unit, str) or not unit.strip():
+        add("error", ECON_CONFIG,
+            f"`params.{FOOD_PARAM}.unit` 必须是非空字符串，实际 {unit!r}")
+        return
+    ratio = float(value)
+
+    for e in world.get("all_entries", []):
+        figs = e.meta.get("figures")
+        if not isinstance(figs, dict):
+            continue
+        population = _figure_value(figs, "population")
+        supply = _figure_value(figs, "grain_supply")
+        if population is None or supply is None:
+            continue  # 缺数据不报错：世界永远是大部未量化的
+        imported = _figure_value(figs, "grain_import") or 0.0
+        need = population * ratio
+        if supply + imported >= need:
+            continue
+        if _figure_justification(figs):
+            continue  # 偏差合法化：有理由就放行
+        add("warning", e.rel,
+            f"食物缺口：population={population:g} × {FOOD_PARAM}={ratio:g} "
+            f"= 需求 {need:g}，grain_supply={supply:g} + grain_import={imported:g} "
+            f"= {supply + imported:g}，缺 {need - supply - imported:g}；"
+            f"补 grain_import 或写 justification 放行")
