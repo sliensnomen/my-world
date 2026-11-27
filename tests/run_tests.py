@@ -46,6 +46,10 @@ CASES: list[tuple[str, list[str]]] = [
     ("world-middle-earth", ["tests/world-middle-earth"]),
     ("world-econ", ["tests/world-econ"]),
     ("world-econ+pack-econ", ["tests/world-econ", "--pack", "econ"]),
+    # 1.4 econ 食物链（协议 1.34）：缺口 warning 与 import/justification 放行一起钉住。
+    # 默认 exit=0、--strict exit=1，证明 CA603 缺口确实是 warning。
+    ("world-econ-food+pack-econ", ["tests/world-econ-food", "--pack", "econ"]),
+    ("world-econ-food+pack-econ+strict", ["tests/world-econ-food", "--pack", "econ", "--strict"]),
     ("world-crash", ["tests/world-crash"]),
     # CA504 只能靠 --impact 触发；这是它的第一条覆盖。
     # 钉住的是「报告行长什么样」与「它仍然是 exit=0」。
@@ -620,6 +624,8 @@ def check_econ_figures_are_shape_checked() -> list[str]:
          "不是有限数字"),
         ("value 是 inf", "figures:\n  grain:\n    value: .inf\n    unit: 石\n",
          "不是有限数字"),
+        ("value 超出浮点范围", "figures:\n  grain:\n    value: " + "9" * 400
+         + "\n    unit: 石\n", "不是有限数字"),
         ("value 为负", "figures:\n  grain:\n    value: -5\n    unit: 石\n",
          "不能为负"),
         ("零人口有军队", "figures:\n  population:\n    value: 0\n    unit: 人\n"
@@ -629,7 +635,9 @@ def check_econ_figures_are_shape_checked() -> list[str]:
     for label, extra, want in cases:
         tmp, world = _temp_world("canonlint-econ-", {"a-node": _card("a-node", extra)})
         with tmp:
-            _, out, _ = _judge(world, "--pack", "econ")
+            _, out, err = _judge(world, "--pack", "econ")
+            if err:
+                problems.append(f"{label}：CA601 把 traceback 写到了 stderr：\n{err.strip()}")
             rule = "CA602" if want == "零人口不可能供养军队" else "CA601"
             if rule not in out or want not in out:
                 problems.append(f"{label}：应当报 {rule}（含「{want}」）\n{out.strip()}")
@@ -708,11 +716,36 @@ def check_econ_food_chain() -> list[str]:
     if "CA603" in out:
         problems.append(f"没有 econ.yaml 时 CA603 应沉默：\n{out}")
 
-    # 6) 配置坏：缺 unit 是 error，且不再推缺口
-    out = run({"a": _card("a", figs(1000, 0))},
-              conf="params:\n  food_per_person_day:\n    value: 0.6\n")
-    if not has603(out, "econ.yaml") or not has603(out, "unit"):
-        problems.append(f"econ.yaml 缺 unit 应报 CA603 error（含 econ.yaml/unit）：\n{out}")
+    # 6) grain_import 形状坏：CA601 负责，CA603 不得把它当成 0 伪造缺口
+    out = run({"a": _card("a", figs(
+        1000, 500, "  grain_import: {value: nope, unit: kg_grain/day}\n"))})
+    if "CA601" not in out:
+        problems.append(f"坏的 grain_import 应报 CA601：\n{out}")
+    if "CA603" in out:
+        problems.append(f"坏的 grain_import 不该再伪造 CA603 缺口：\n{out}")
+
+    # 7) 配置错误分支：每条都必须是 CA603 error，且不再推缺口
+    bad_configs = [
+        ("缺 params", "food_per_person_day:\n  value: 0.6\n  unit: kg\n", "params"),
+        ("params 不是映射", "params: 1\n", "params"),
+        ("缺 food_per_person_day", "params: {}\n", "food_per_person_day"),
+        ("value 非数字", config.replace("value: 0.6", "value: nope"), "有限正数"),
+        ("value 为 0", config.replace("value: 0.6", "value: 0"), "有限正数"),
+        ("value 为负", config.replace("value: 0.6", "value: -0.6"), "有限正数"),
+        ("value 是 bool", config.replace("value: 0.6", "value: true"), "有限正数"),
+        ("value 溢出", config.replace("value: 0.6", "value: " + "9" * 400), "有限正数"),
+        ("unit 非字符串", config.replace("unit: kg_grain/person/day", "unit: 1"),
+         "非空字符串"),
+        ("unit 为空", config.replace("unit: kg_grain/person/day", "unit: \"\""),
+         "非空字符串"),
+        ("YAML 解析失败", "params: [\n", "解析失败"),
+    ]
+    for label, conf, want in bad_configs:
+        out = run({"a": _card("a", figs(1000, 0))}, conf=conf)
+        if not has603(out, "econ.yaml") or not has603(out, want):
+            problems.append(f"{label}：应报 CA603 error（含 econ.yaml/{want}）：\n{out}")
+        if has603(out):
+            problems.append(f"{label}：配置坏了不该继续推食物缺口：\n{out}")
     return problems
 
 

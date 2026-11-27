@@ -4,6 +4,15 @@ from __future__ import annotations
 import re
 
 import ledger as event_ledger
+from judges.ca.vocab import VALID_TYPES, X_TYPE_RE
+
+
+def _is_entity_type(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    if value in VALID_TYPES:
+        return value != "event"
+    return bool(X_TYPE_RE.match(value))
 
 
 def _is_event(view) -> bool:
@@ -484,7 +493,7 @@ def check_ca721(world: dict, emit) -> None:
             referenced.update(view.legs.get(leg, ()))
         referenced.update(r.target for r in e.edges_of("canon_refs"))
     for e in index.values():
-        if e.parse_error or not e.id or event_ledger.is_event_card(e):
+        if e.parse_error or not e.id or not _is_entity_type(e.meta.get("type")):
             continue
         if e.meta.get("status") == "archived":
             continue

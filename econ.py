@@ -29,6 +29,17 @@ PARAM_TABLE = [
 ]
 
 
+def _finite_number(value) -> float | None:
+    """把 YAML 数值转成有限 float；bool、超大整数与 nan/inf 都返回 None。"""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def check_entry(meta: dict, rel: str, add) -> None:
     """meta: 条目 frontmatter；rel: 条目定位；add(rule, level, msg) 收集发现。"""
     figs = meta.get("figures")
@@ -55,13 +66,15 @@ def check_entry(meta: dict, rel: str, add) -> None:
         if not isinstance(v, (int, float)) or isinstance(v, bool):
             add("CA601", "error", f"figures.{name}.value={v!r} 非数字")
             continue
-        if not math.isfinite(float(v)):
-            add("CA601", "error", f"figures.{name}.value={v!r} 不是有限数字（nan/inf 不能当世界数）")
+        value = _finite_number(v)
+        if value is None:
+            add("CA601", "error",
+                f"figures.{name}.value={v!r} 不是有限数字（nan/inf/超出范围不能当世界数）")
             continue
-        if float(v) < 0:
+        if value < 0:
             add("CA601", "error", f"figures.{name}.value={v!r} 不能为负（数量没有负值）")
             continue
-        parsed[name] = float(v)
+        parsed[name] = value
 
     # CA602：参数表硬边界。缺数据不报错——subject/base 缺一即跳过。
     for rule in PARAM_TABLE:
@@ -89,14 +102,8 @@ def _figure_value(figs: dict, name: str) -> float | None:
     f = figs.get(name)
     if not isinstance(f, dict):
         return None
-    v = f.get("value")
-    if not isinstance(v, (int, float)) or isinstance(v, bool):
-        return None
-    try:
-        value = float(v)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(value) or value < 0:
+    value = _finite_number(f.get("value"))
+    if value is None or value < 0:
         return None
     return value
 
@@ -138,8 +145,8 @@ def check_world(world: dict, add) -> None:
             f"{ECON_CONFIG} 缺 `params.{FOOD_PARAM}`（每人每日口粮比例）")
         return
     value, unit = param.get("value"), param.get("unit")
-    if (not isinstance(value, (int, float)) or isinstance(value, bool)
-            or not math.isfinite(float(value)) or float(value) <= 0):
+    ratio = _finite_number(value)
+    if ratio is None or ratio <= 0:
         add("error", ECON_CONFIG,
             f"`params.{FOOD_PARAM}.value` 必须是有限正数，实际 {value!r}")
         return
@@ -147,7 +154,6 @@ def check_world(world: dict, add) -> None:
         add("error", ECON_CONFIG,
             f"`params.{FOOD_PARAM}.unit` 必须是非空字符串，实际 {unit!r}")
         return
-    ratio = float(value)
 
     for e in world.get("all_entries", []):
         figs = e.meta.get("figures")
@@ -157,7 +163,12 @@ def check_world(world: dict, add) -> None:
         supply = _figure_value(figs, "grain_supply")
         if population is None or supply is None:
             continue  # 缺数据不报错：世界永远是大部未量化的
-        imported = _figure_value(figs, "grain_import") or 0.0
+        if "grain_import" not in figs:
+            imported = 0.0
+        else:
+            imported = _figure_value(figs, "grain_import")
+            if imported is None:
+                continue  # 形状坏的 import 交给 CA601，别在这里伪造缺口
         need = population * ratio
         if supply + imported >= need:
             continue

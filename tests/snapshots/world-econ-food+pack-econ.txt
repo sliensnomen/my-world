@@ -1,0 +1,5 @@
+exit=0
+[CA603] warning entries/food-gap.md: 食物缺口：population=1000 × food_per_person_day=0.6 = 需求 600，grain_supply=500 + grain_import=0 = 500，缺 100；补 grain_import 或写 justification 放行
+[CA603] warning entries/food-partial-import.md: 食物缺口：population=1000 × food_per_person_day=0.6 = 需求 600，grain_supply=500 + grain_import=50 = 550，缺 50；补 grain_import 或写 justification 放行
+
+6 个条目 | 0 错误 | 2 警告
